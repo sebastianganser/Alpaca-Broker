@@ -364,6 +364,31 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 
 ---
 
+### Entscheidung: Alpaca als Source of Truth für Handelbarkeit
+
+**Datum:** 12. April 2026
+**Sprint:** 1 (Nacharbeit)
+
+**Kontext:** WBA (Walgreens) lieferte keine yfinance-Daten. Unklar ob delisted, umbenannt oder temporärer Fehler.
+
+**Entscheidung:** Die Alpaca Assets-API (`GET /v2/assets`) ist die autoritative Quelle für die Frage, ob ein Ticker handelbar ist. Nicht-handelbare Ticker werden im Universe deaktiviert. Script `scripts/validate_universe.py` prüft das.
+
+**Begründung:** Wir können nur traden, was Alpaca anbietet. Daten für nicht-handelbare Titel zu sammeln wäre verschwendet. Alpaca liefert Status, Exchange und Name – besser als Raten.
+
+---
+
+### Entscheidung: Docker-Deployment erst nach allen Datenquellen + UI
+
+**Datum:** 12. April 2026
+
+**Kontext:** Der Collector ist funktionsfähig, aber Sebastian möchte die Datensammlung nachvollziehen können.
+
+**Entscheidung:** Kein Docker-Deployment auf Unraid, bis (a) alle geplanten Datenquellen angebunden sind und (b) ein UI zur Übersicht existiert. Bis dahin laufen Collector-Tests lokal.
+
+**Begründung:** Ein halb-fertiges System blind laufen zu lassen bringt keinen Nutzen. Besser: alle Quellen + Monitoring-UI, dann deployen.
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.
