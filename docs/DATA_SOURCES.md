@@ -14,8 +14,8 @@
 | **ARK Funds CSVs** | Smart Money | Kostenlos | Täglich EOD | ~1 Tag | 2 |
 | **SEC EDGAR – Form 4** | Insider-Trades | Kostenlos | Rolling | 2 Werktage (gesetzlich) | 3 |
 | **SEC EDGAR – Form 13F** | Institutionelle Holdings | Kostenlos | Quartalsweise | Bis 45 Tage | 3 |
-| **Capitol Trades** | Politiker-Trades | Kostenlos (Scraping) | Rolling | 30–45 Tage | 4 |
-| **Quiver Quantitative** | Alternative für Politiker | Freemium | Rolling | 30–45 Tage | 4 (Alt.) |
+| **Capitol Trades** | Politiker-Trades | Kostenlos (Scraping) | Rolling | 30–45 Tage | – (ersetzt) |
+| **Quiver Quantitative** | Politiker-Trades | Freemium (API) | Rolling | 30–45 Tage | 4 |
 | **yfinance – Fundamentals** | P/E, Revenue, EPS | Kostenlos | Unregelmäßig | – | 5 |
 | **yfinance – Ratings** | Analyst-Empfehlungen | Kostenlos | Rolling | – | 5 |
 
@@ -269,9 +269,9 @@ Capitol Trades hat **keine offizielle API**. Scraping ist:
 
 ### Empfehlung
 
-- **Option A:** Scraping von Capitol Trades mit Respekt vor robots.txt
-- **Option B:** Quiver Quantitative API (kostenpflichtig oder Free Tier)
-- **Entscheidung:** Bei Sprint 4 konkret evaluieren
+- ~~**Option A:** Scraping von Capitol Trades~~ → Verworfen (fragile Infrastruktur, ToS-Grauzone)
+- **Option B: Quiver Quantitative API** → **Gewählt** (offizielle API, saubere JSON-Responses, Free Tier verfügbar)
+- Siehe [DECISIONS.md](DECISIONS.md), Eintrag vom 2026-04-12: "Politiker-Trades-Quelle → Quiver Quantitative API"
 
 ### Realistische Einschätzung
 

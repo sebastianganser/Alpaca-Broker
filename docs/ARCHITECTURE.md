@@ -38,7 +38,7 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Netzwerk:** Alle Container laufen in einem eigenen Docker-Netzwerk `trading-signals-net`. 
+**Netzwerk:** Der Collector-Container verbindet sich direkt zur bestehenden PostgreSQL-Instanz via Host-IP.
 **Backup:** Tägliches pg_dump via Cron auf Unraid, in den bestehenden Backup-Ordner.
 
 ---
@@ -46,7 +46,7 @@
 ## Projektstruktur (Zielbild)
 
 ```
-trading-signals/
+Alpaca-Broker/
 ├── CLAUDE.md                      # Projekt-Einstiegspunkt
 ├── README.md                      # GitHub-Übersicht
 ├── docs/                          # Alle Dokumentation
@@ -56,66 +56,66 @@ trading-signals/
 │   ├── DECISIONS.md
 │   └── LEARNINGS.md
 ├── infra/                         # Deployment
-│   ├── docker-compose.yml
-│   ├── docker-compose.override.yml.example  # Für lokale Entwicklung
-│   ├── Dockerfile.collector
-│   ├── Dockerfile.api             # später
-│   └── .env.example
+│   ├── docker-compose.yml         # Nur Collector-Service (DB läuft separat)
+│   └── Dockerfile.collector
 ├── src/
 │   ├── trading_signals/           # Python-Paket
 │   │   ├── __init__.py
 │   │   ├── config.py              # Pydantic Settings
 │   │   ├── db/                    # Datenbank-Layer
 │   │   │   ├── __init__.py
-│   │   │   ├── base.py            # SQLAlchemy Base
-│   │   │   ├── session.py         # Session-Factory
+│   │   │   ├── base.py            # SQLAlchemy Base (Schema: signals)
+│   │   │   ├── session.py         # Engine + Session-Factory
 │   │   │   └── models/            # ORM-Modelle pro Tabelle
-│   │   │       ├── prices.py
-│   │   │       ├── ark.py
-│   │   │       ├── insider.py
-│   │   │       ├── politicians.py
-│   │   │       ├── fundamentals.py
-│   │   │       ├── universe.py
-│   │   │       └── features.py
+│   │   │       ├── universe.py    # ✅ implementiert
+│   │   │       ├── prices.py      # Sprint 1
+│   │   │       ├── ark.py         # Sprint 2
+│   │   │       ├── insider.py     # Sprint 3
+│   │   │       ├── politicians.py # Sprint 4
+│   │   │       ├── fundamentals.py# Sprint 5
+│   │   │       └── features.py    # Sprint 7
 │   │   ├── collectors/            # Daten-Sammler (ein Modul pro Quelle)
 │   │   │   ├── __init__.py
-│   │   │   ├── base.py            # Abstract BaseCollector
-│   │   │   ├── prices_yfinance.py
-│   │   │   ├── ark_holdings.py
-│   │   │   ├── sec_form4.py
-│   │   │   ├── sec_form13f.py
-│   │   │   ├── politicians.py
-│   │   │   ├── fundamentals_yf.py
-│   │   │   └── analyst_ratings.py
+│   │   │   ├── base.py            # Abstract BaseCollector (Sprint 1)
+│   │   │   ├── prices_yfinance.py # Sprint 1
+│   │   │   ├── ark_holdings.py    # Sprint 2
+│   │   │   ├── sec_form4.py       # Sprint 3
+│   │   │   ├── sec_form13f.py     # Sprint 3
+│   │   │   ├── politicians.py     # Sprint 4
+│   │   │   ├── fundamentals_yf.py # Sprint 5
+│   │   │   └── analyst_ratings.py # Sprint 5
 │   │   ├── derived/               # Berechnete Features
 │   │   │   ├── __init__.py
-│   │   │   ├── ark_deltas.py
-│   │   │   ├── insider_clusters.py
-│   │   │   ├── technical_indicators.py
-│   │   │   └── feature_pipeline.py  # Aggregiert alles zu feature_snapshots
+│   │   │   ├── ark_deltas.py      # Sprint 2
+│   │   │   ├── insider_clusters.py# Sprint 3
+│   │   │   ├── technical_indicators.py # Sprint 6
+│   │   │   └── feature_pipeline.py# Sprint 7
 │   │   ├── universe/              # Dynamisches Titel-Universum
 │   │   │   ├── __init__.py
-│   │   │   └── manager.py
+│   │   │   └── manager.py         # ✅ implementiert
 │   │   ├── scheduler/             # Job-Orchestrierung
 │   │   │   ├── __init__.py
-│   │   │   └── jobs.py
+│   │   │   └── jobs.py            # Sprint 1
 │   │   └── utils/
-│   │       ├── logging.py
-│   │       └── retry.py
+│   │       ├── __init__.py
+│   │       ├── logging.py         # ✅ implementiert
+│   │       └── retry.py           # Sprint 1
 │   └── alembic/                   # Datenbank-Migrationen
 │       ├── env.py
+│       ├── script.py.mako
 │       └── versions/
 ├── tests/
-│   ├── unit/
+│   ├── unit/                      # ✅ 11 Tests
 │   ├── integration/
 │   └── fixtures/
 ├── scripts/                       # Einmal-Skripte
-│   ├── init_universe.py           # Startuniversum befüllen
-│   └── db_health_check.py
-├── pyproject.toml                 # Poetry oder uv
+│   └── init_universe.py           # ✅ implementiert (103 Ticker)
+├── pyproject.toml                 # uv Paketmanager
+├── uv.lock                        # uv Lockfile
+├── alembic.ini                    # Alembic-Konfiguration
+├── .env.example                   # Env-Template (Credentials)
 ├── .gitignore
-├── .env.example
-└── .python-version
+└── .python-version                # 3.12
 ```
 
 ---

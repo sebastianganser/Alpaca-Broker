@@ -1,4 +1,4 @@
-# trading-signals
+# Alpaca-Broker
 
 > Privates Research- und Lernprojekt: Aufbau eines Signal Warehouse für quantitative Trading-Signale mit anschließender Strategie-Entwicklung auf Alpaca Paper Trading.
 
@@ -26,15 +26,17 @@ Datenquellen → Collectors → PostgreSQL (Raw) → Derived Layer → Feature S
 - **Smart Money:** ARK Invest ETF Holdings (täglich)
 - **Insider-Trades:** SEC EDGAR Form 4
 - **Institutionelle:** SEC EDGAR Form 13F
-- **Politiker:** Capitol Trades
+- **Politiker:** Quiver Quantitative API
 - **Analyst-Ratings:** yfinance
 - **Technische Indikatoren:** Berechnet aus OHLCV
 
 ## Technologie-Stack
 
 - Python 3.12+
+- uv (Paketmanager)
 - PostgreSQL 18
 - SQLAlchemy 2.0 + Alembic
+- Pydantic Settings
 - APScheduler
 - Docker Compose (Unraid)
 - FastAPI (später)
@@ -53,7 +55,8 @@ Die vollständige Dokumentation liegt im Projekt selbst:
 
 ## Status
 
-🟡 **Phase 1:** Dokumentation abgeschlossen, Implementierung Sprint 0 steht bevor.
+🟢 **Sprint 0 abgeschlossen** – Projektfundament steht (DB, Migrationen, Universe, Tests).
+Nächster Schritt: Sprint 1 (Price Collector mit yfinance).
 
 ## Lizenz
 

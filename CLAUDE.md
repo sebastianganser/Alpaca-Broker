@@ -1,4 +1,4 @@
-# CLAUDE.md – Trading Signals Project
+# CLAUDE.md – Alpaca-Broker Project
 
 > **Einstiegspunkt für jede Claude-Session zu diesem Projekt.**
 > Lies dieses Dokument zuerst, dann bei Bedarf die verlinkten Detail-Dokumente.
@@ -7,7 +7,7 @@
 
 ## Projekt-Identität
 
-**Projektname:** `trading-signals` (Arbeitstitel)
+**Projektname:** `Alpaca-Broker` (Python-Paket: `trading-signals`)
 **Owner:** Sebastian
 **Gestartet:** April 2026
 **Repository:** [github.com/sebastianganser/Alpaca-Broker](https://github.com/sebastianganser/Alpaca-Broker) (privat)
@@ -61,11 +61,12 @@ Siehe [ROADMAP.md](docs/ROADMAP.md) für den detaillierten Fortschritt.
 | **Web-Framework** | FastAPI (später, für API-Layer) |
 | **ORM** | SQLAlchemy 2.0 |
 | **Migrations** | Alembic |
-| **Datenbank** | PostgreSQL 18 (separater Container) |
-| **Scheduler** | APScheduler (im Python-Prozess) oder cron |
+| **Datenbank** | PostgreSQL 18 (`postgresql18-alpaca`, 192.168.1.93:5435, DB: `broker_data`, Schema: `signals`) |
+| **Paketmanager** | uv |
+| **Scheduler** | APScheduler (im Python-Prozess) |
 | **Deployment** | Docker Compose auf Unraid |
 | **Broker (später)** | Alpaca Paper Trading (NIEMALS Live!) |
-| **Versionskontrolle** | Git, GitHub (sebastianganser) |
+| **Versionskontrolle** | Git, [GitHub (sebastianganser/Alpaca-Broker)](https://github.com/sebastianganser/Alpaca-Broker) |
 
 ---
 
