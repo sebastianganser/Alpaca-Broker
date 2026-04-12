@@ -333,4 +333,11 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
 - 150 neue Ticker aus ARK-ETFs via Alpaca validiert ins Universe (102 → 252)
 - ARKDeltaComputer implementiert (new/closed/increased/decreased/unchanged)
 - 71 Tests gesamt (alle grün)
+- **Sprint 1b (Alpaca Prices + Universe)**: yfinance durch Alpaca Market Data API ersetzt
+- Universe erweitert: S&P 500 (503) + Nasdaq 100 (101) → 644 aktive Ticker
+- `index_membership` ARRAY-Spalte in universe (sp500, nasdaq100)
+- IndexSyncer: Wikipedia-basierter Index-Sync mit Alpaca-Validierung
+- PriceCollectorAlpaca: Multi-Symbol-Batch (100/Request), adjustment=all, IEX feed
+- Erster Alpaca-Lauf: 2.700 neue Records fur 540 Ticker (<20s)
+- 87 Tests gesamt (alle grün)
 - Nächster Schritt: **Sprint 3 (SEC Insider Trades)**

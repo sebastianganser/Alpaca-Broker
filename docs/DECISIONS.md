@@ -402,6 +402,32 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 
 ---
 
+### Entscheidung: Alpaca Market Data API statt yfinance
+
+**Datum:** 12. April 2026
+**Sprint:** 1b
+
+**Kontext:** yfinance ist inoffiziell und kann jederzeit brechen. Wir handeln nur Alpaca-Instrumente – die Preisdaten sollten von der gleichen Quelle kommen.
+
+**Entscheidung:** PriceCollectorAlpaca ersetzt PriceCollectorYFinance als primäre Preisdatenquelle. Multi-Symbol-Endpoint (`/v2/stocks/bars`) mit `adjustment=all` und `feed=iex`. yfinance bleibt als Code (Fallback), wird aber nicht mehr im Scheduler registriert.
+
+**Begründung:** Offizielle API, stabil, Kurs-Konsistenz mit Trading-Plattform. `adj_close = close` (da adjustiert). Batch-Endpoint: 100 Ticker pro Request, 644 Ticker in 7 Requests (<10s).
+
+---
+
+### Entscheidung: Universe-Erweiterung auf S&P 500 + Nasdaq 100
+
+**Datum:** 12. April 2026
+**Sprint:** 1b
+
+**Kontext:** Mit 102 Tickern (S&P 100 + SPY) fehlte viel Marktbreite. ARK-Titel uberlappen stark mit S&P 500/Nasdaq 100.
+
+**Entscheidung:** Universe enthalt S&P 500 (503) + Nasdaq 100 (101) + ARK-Erganzungen. Wikipedia als Quelle fur Index-Listen (kostenlos, aktuell genug bei ~4 Rebalancings/Jahr). Neue `index_membership` ARRAY-Spalte in universe fur Filterung.
+
+**Ergebnis:** 644 aktive Ticker. ~80% der ARK-Titel waren bereits abgedeckt.
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.

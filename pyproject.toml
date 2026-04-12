@@ -15,6 +15,7 @@ dependencies = [
     "pandas>=2.0",
     "pandas-market-calendars>=4.0",
     "scipy>=1.11",
+    "lxml>=6.0.4",
 ]
 
 [project.optional-dependencies]
