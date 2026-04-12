@@ -95,24 +95,30 @@ Erst einsetzen, wenn yfinance mal ausfällt oder Spezialdaten nötig werden.
 
 ---
 
-## 3. ARK Funds – Fund Holdings CSVs
+## 3. ARK Funds – Holdings via arkfunds.io API
 
 **Kategorie:** Smart Money (aktiv gemanagte ETFs)
-**URL-Schema:** `https://www.ark-funds.com/downloads/fund-holdings/{ETF_NAME}.csv`
-**Landingpage:** https://www.ark-funds.com/download-fund-materials
+**API-Endpoint:** `https://arkfunds.io/api/v2/etf/holdings?symbol={ETF}`
+**API-Doku:** https://arkfunds.io/api
+**Status:** ✅ Implementiert (Sprint 2)
+
+> **Hinweis:** Die direkte CSV-URL von ark-funds.com gibt 403 zurück (Cloudflare-Schutz).
+> Stattdessen nutzen wir die kostenlose arkfunds.io JSON-API (Drittanbieter, nicht offiziell von ARK).
 
 ### Was es liefert
 
-Für jeden aktiven ARK-ETF eine CSV-Datei mit:
+JSON-Response pro ETF mit Holdings-Array:
 
+- `fund`: ETF-Ticker (ARKK, ARKQ, ...)
 - `date`: Snapshot-Datum
-- `fund`: ETF-Ticker (ARKX, ARKK, ...)
-- `company`: Firmenname
 - `ticker`: Aktien-Ticker
+- `company`: Firmenname
 - `cusip`: CUSIP-Identifier
 - `shares`: Anzahl gehaltener Shares
-- `market value ($)`: Marktwert
-- `weight (%)`: Gewichtung im ETF
+- `market_value`: Marktwert in USD
+- `share_price`: Aktienkurs
+- `weight`: Gewichtung im ETF (%)
+- `weight_rank`: Rang nach Gewichtung
 
 ### Aktuelle ETFs (Stand April 2026)
 
@@ -132,29 +138,14 @@ Für jeden aktiven ARK-ETF eine CSV-Datei mit:
 ### Frequenz
 
 - **Täglich nach US-Börsenschluss** (ca. 22:00 MEZ / 16:00 ET)
-- Aktualisierung meist bis 01:00 MEZ am nächsten Tag abgeschlossen
-
-### Beispiel-Code (Pseudocode)
-
-```python
-import pandas as pd
-
-ARK_ETFS = ["ARKK", "ARKQ", "ARKW", "ARKG", "ARKF", "ARKX", "PRNT", "IZRL"]
-BASE_URL = "https://www.ark-funds.com/downloads/fund-holdings/{}.csv"
-
-for etf in ARK_ETFS:
-    url = BASE_URL.format(etf)
-    df = pd.read_csv(url)
-    # ... parsen, validieren, in DB schreiben
-```
+- arkfunds.io Aggregation meist bis 23:00 MEZ abgeschlossen
+- Collector läuft um 23:00 MEZ
 
 ### Bekannte Stolpersteine
 
-- **CSV-Format kann sich ändern** – Header-Namen flexibel parsen
-- **Gelegentlich leere Dateien oder 404s** → Retry-Logik
-- **Cash-Positionen** wie "GOLDMAN FS TRSY OBLIG INST 468" sind keine Aktien → filtern oder speziell markieren
-- **Internationale Titel** wie Komatsu (6301), Thales (HO) haben ausländische Ticker → Universum-Mapping nötig
-- **User-Agent-Header** setzen, um Blocker zu vermeiden
+- **Cash-Positionen** wie "GOLDMAN FS TRSY OBLIG INST 468" sind keine Aktien → werden per Regex gefiltert
+- **Internationale Titel** wie Komatsu (KMTUY), BYD (BYDDY) haben OTC-Ticker → nur aufgenommen wenn bei Alpaca handelbar
+- **Drittanbieter-Risiko:** arkfunds.io ist keine offizielle ARK-Quelle, könnte ausfallen
 
 ---
 

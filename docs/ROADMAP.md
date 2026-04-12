@@ -84,20 +84,21 @@
 
 ---
 
-### Sprint 2 – ARK Holdings Tracker
+### Sprint 2 – ARK Holdings Tracker ✅
 
 **Ziel:** Tägliche Snapshots aller aktiven ARK-ETFs.
 
 **Aufgaben:**
-- [ ] ARK-Funds-Download-URLs recherchieren und dokumentieren
-- [ ] CSV-Parser mit Robustheit gegen Format-Änderungen
-- [ ] `ARKHoldingsCollector` implementieren
-- [ ] Automatische Universum-Erweiterung (neue Titel werden angelegt)
-- [ ] `ARKDeltaComputer` für Derived Layer
-- [ ] Tests mit realen ARK-CSVs als Fixtures
-- [ ] Error-Handling: Was wenn ARK mal keine Datei publiziert?
+- [x] Datenquelle recherchiert: arkfunds.io JSON-API statt CSV-Scraping (ark-funds.com gibt 403)
+- [x] `ARKHoldingsCollector` implementieren (8 ETFs, arkfunds.io API)
+- [x] Cash-/Treasury-Positionen filtern (Regex)
+- [x] Automatische Universum-Erweiterung mit Alpaca-Validierung
+- [x] `ARKDeltaComputer` für Derived Layer (new/closed/increased/decreased/unchanged)
+- [x] Tests mit Fixtures + Mocks (25 neue Tests, 71 gesamt)
+- [x] Error-Handling: Retry-Logik, graceful bei API-Fehlern
+- [x] APScheduler-Job (23:00 MEZ)
 
-**Definition of Done:** Nach einer Woche Laufzeit enthält die DB 7 Tages-Snapshots aller ARK-ETFs, und die Delta-Tabelle zeigt sinnvolle Veränderungen.
+**Definition of Done:** ✅ 322 Holdings-Positionen für alle 8 ARK-ETFs (Snapshot 10.04.2026) in der DB. 150 neue Ticker via Alpaca validiert ins Universe aufgenommen (102 → 252 aktive Ticker). Delta-Berechnung bereit (läuft ab 2. Snapshot).
 
 ---
 
@@ -327,4 +328,9 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
 - APScheduler Entrypoint: `main.py` mit BlockingScheduler, CronTrigger 22:15, Graceful Shutdown
 - Dockerfile CMD auf Scheduler-Entrypoint aktualisiert
 - Grundsatzentscheidung: Organisches Datenwachstum (kein Backfill), Dynamische Feature-Aktivierung
-- Nächster Schritt: **Sprint 2 (ARK Holdings Tracker)** oder **Docker-Deployment auf Unraid**
+- Alpaca-Universum-Validierung: WBA bei Alpaca nicht gefunden → deaktiviert (102 aktive Ticker)
+- **Sprint 2 (ARK Holdings)**: arkfunds.io API statt CSV (403), 322 Holdings für 8 ETFs geladen
+- 150 neue Ticker aus ARK-ETFs via Alpaca validiert ins Universe (102 → 252)
+- ARKDeltaComputer implementiert (new/closed/increased/decreased/unchanged)
+- 71 Tests gesamt (alle grün)
+- Nächster Schritt: **Sprint 3 (SEC Insider Trades)**

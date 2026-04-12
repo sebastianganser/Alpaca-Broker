@@ -22,3 +22,32 @@ def run_price_collector() -> None:
         f"price_collector_job finished: status={log.status}, "
         f"written={log.records_written}"
     )
+
+
+def run_ark_holdings_collector() -> None:
+    """Daily ARK holdings snapshot + delta computation.
+
+    Scheduled for 23:00 Europe/Berlin (ARK publishes after US close,
+    arkfunds.io needs time to aggregate).
+    """
+    from trading_signals.collectors.ark_holdings import ARKHoldingsCollector
+    from trading_signals.db.session import get_session
+    from trading_signals.derived.ark_deltas import ARKDeltaComputer
+
+    logger.info("Scheduler triggered: ark_holdings_job")
+
+    # Step 1: Collect holdings
+    collector = ARKHoldingsCollector()
+    log = collector.run()
+    logger.info(
+        f"ark_holdings_job collect: status={log.status}, "
+        f"written={log.records_written}"
+    )
+
+    # Step 2: Compute deltas (only if collection succeeded)
+    if log.status == "success":
+        with get_session() as session:
+            computer = ARKDeltaComputer(session)
+            deltas = computer.compute_all()
+            logger.info(f"ark_holdings_job deltas: {deltas} records computed")
+

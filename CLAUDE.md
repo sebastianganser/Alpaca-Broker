@@ -45,8 +45,8 @@ Die kritischen Pfade (Daten-Fetching, Berechnungen, später Order-Ausführung) s
 
 ## Aktueller Status
 
-**Phase:** 🟢 Sprint 1 abgeschlossen
-**Aktueller Sprint:** Sprint 2 (ARK Holdings Tracker) – steht bevor
+**Phase:** 🟢 Sprint 2 abgeschlossen
+**Aktueller Sprint:** Sprint 3 (SEC Insider Trades) – steht bevor
 **Letzte Aktualisierung:** 12. April 2026
 
 Siehe [ROADMAP.md](docs/ROADMAP.md) für den detaillierten Fortschritt.

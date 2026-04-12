@@ -389,6 +389,19 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 
 ---
 
+### Entscheidung: arkfunds.io API statt ARK CSV-Scraping
+
+**Datum:** 12. April 2026
+**Sprint:** 2
+
+**Kontext:** Die direkte CSV-URL `ark-funds.com/downloads/fund-holdings/{ETF}.csv` gibt 403/404 zurück (Cloudflare-Schutz). CSV-Scraping wäre fragil gegenüber Format-Änderungen.
+
+**Entscheidung:** arkfunds.io JSON-API als Datenquelle für ARK-Holdings. Endpoint: `GET /api/v2/etf/holdings?symbol={ETF}`.
+
+**Begründung:** Sauberes JSON statt CSV-Parsing. Kostenlos, keine Auth nötig, Swagger-Doku. Enthält zusätzlich `share_price` und `weight_rank`. Nachteil: Drittanbieter-Abhängigkeit (nicht offizielle ARK-Quelle).
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.

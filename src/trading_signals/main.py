@@ -13,7 +13,7 @@ import sys
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from trading_signals.scheduler.jobs import run_price_collector
+from trading_signals.scheduler.jobs import run_ark_holdings_collector, run_price_collector
 from trading_signals.utils.logging import get_logger, setup_logging
 
 setup_logging()
@@ -37,6 +37,14 @@ def create_scheduler() -> BlockingScheduler:
         CronTrigger(hour=22, minute=15),
         id="price_collector",
         name="Daily OHLCV Price Collector (yfinance)",
+    )
+
+    # ── ARK Holdings: Daily at 23:00 (after arkfunds.io aggregation) ──
+    scheduler.add_job(
+        run_ark_holdings_collector,
+        CronTrigger(hour=23, minute=0),
+        id="ark_holdings",
+        name="Daily ARK ETF Holdings Snapshot",
     )
 
     return scheduler

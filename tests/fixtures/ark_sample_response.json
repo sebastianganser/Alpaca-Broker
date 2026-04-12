@@ -1,0 +1,55 @@
+{
+  "symbol": "ARKK",
+  "date_from": "2026-04-10",
+  "date_to": "2026-04-10",
+  "holdings": [
+    {
+      "fund": "ARKK",
+      "date": "2026-04-10",
+      "ticker": "TSLA",
+      "company": "TESLA INC",
+      "cusip": "88160R101",
+      "shares": 1668128,
+      "market_value": 576538399.4,
+      "share_price": 345.62,
+      "weight": 9.68,
+      "weight_rank": 1
+    },
+    {
+      "fund": "ARKK",
+      "date": "2026-04-10",
+      "ticker": "COIN",
+      "company": "COINBASE GLOBAL INC",
+      "cusip": "19260Q107",
+      "shares": 1234567,
+      "market_value": 234567890.1,
+      "share_price": 190.05,
+      "weight": 5.42,
+      "weight_rank": 2
+    },
+    {
+      "fund": "ARKK",
+      "date": "2026-04-10",
+      "ticker": "ROKU",
+      "company": "ROKU INC",
+      "cusip": "77543R102",
+      "shares": 987654,
+      "market_value": 98765432.1,
+      "share_price": 100.0,
+      "weight": 3.21,
+      "weight_rank": 3
+    },
+    {
+      "fund": "ARKK",
+      "date": "2026-04-10",
+      "ticker": "",
+      "company": "GOLDMAN FS TRSY OBLIG INST 468",
+      "cusip": "",
+      "shares": 50000000,
+      "market_value": 50000000.0,
+      "share_price": 1.0,
+      "weight": 1.5,
+      "weight_rank": 10
+    }
+  ]
+}

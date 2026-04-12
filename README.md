@@ -55,8 +55,8 @@ Die vollständige Dokumentation liegt im Projekt selbst:
 
 ## Status
 
-🟢 **Sprint 1 abgeschlossen** – Price Collector läuft (102 Ticker, täglicher OHLCV-Download via yfinance mit Gap Detection).
-Nächster Schritt: Sprint 2 (ARK Holdings Tracker).
+🟢 **Sprint 2 abgeschlossen** – Price Collector + ARK Holdings Tracker (252 Ticker, 8 ARK-ETFs, tägliche Deltas).
+Nächster Schritt: Sprint 3 (SEC Insider Trades).
 
 ## Lizenz
 
