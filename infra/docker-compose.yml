@@ -1,0 +1,31 @@
+# =============================================================================
+# Trading Signals – Docker Compose (Collector only)
+# =============================================================================
+# Die PostgreSQL-Datenbank läuft als separater Container (postgresql18-alpaca)
+# auf dem Unraid-Server und wird NICHT hier verwaltet.
+#
+# Deployment auf Unraid:
+#   1. Compose Manager → Neuen Stack anlegen
+#   2. Diesen Inhalt einfügen
+#   3. .env Datei im gleichen Verzeichnis ablegen
+#
+# Für lokale Entwicklung: docker compose -f infra/docker-compose.yml up --build
+
+services:
+  trading-signals-collector:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.collector
+    container_name: trading-signals-collector
+    env_file:
+      - ../.env
+    environment:
+      # Innerhalb von Docker-Netzwerken auf Unraid:
+      # DB_HOST wird über .env gesetzt (192.168.1.93)
+      TZ: Europe/Berlin
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

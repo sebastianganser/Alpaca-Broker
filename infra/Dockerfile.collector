@@ -1,0 +1,52 @@
+# =============================================================================
+# Trading Signals Collector – Dockerfile
+# =============================================================================
+# Multi-stage build: uv for dependency resolution, slim runtime image.
+
+FROM python:3.12-slim AS builder
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Copy dependency files first (cache layer)
+COPY pyproject.toml ./
+COPY .python-version ./
+
+# Install dependencies (without the project itself yet)
+RUN uv sync --no-install-project --frozen 2>/dev/null || uv sync --no-install-project
+
+# Copy source code
+COPY src/ ./src/
+COPY alembic.ini ./
+COPY scripts/ ./scripts/
+
+# Install the project
+RUN uv sync --frozen 2>/dev/null || uv sync
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Runtime stage
+# ─────────────────────────────────────────────────────────────────────────────
+FROM python:3.12-slim
+
+# Install PostgreSQL client (for pg_isready health checks)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the virtual environment from builder
+COPY --from=builder /app /app
+
+# Add uv to runtime for running scripts
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Health check: verify DB is reachable
+HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
+    CMD pg_isready -h ${DB_HOST:-localhost} -p ${DB_PORT:-5432} || exit 1
+
+# Run the collector (for Sprint 0: just verify setup and exit)
+# In Sprint 1 this becomes the APScheduler entry point
+CMD ["uv", "run", "python", "-c", "from trading_signals.config import get_settings; s = get_settings(); print(f'Trading Signals Collector ready. DB: {s.DB_HOST}:{s.DB_PORT}/{s.DB_NAME}'); import time; time.sleep(86400)"]
