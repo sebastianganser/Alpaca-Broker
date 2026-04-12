@@ -67,49 +67,50 @@ Alpaca-Broker/
 │   │   │   ├── base.py            # SQLAlchemy Base (Schema: signals)
 │   │   │   ├── session.py         # Engine + Session-Factory
 │   │   │   └── models/            # ORM-Modelle pro Tabelle
-│   │   │       ├── universe.py    # ✅ implementiert
-│   │   │       ├── prices.py      # Sprint 1
-│   │   │       ├── ark.py         # Sprint 2
+│   │   │       ├── universe.py    # ✅ implementiert (644 Ticker)
+│   │   │       ├── prices.py      # ✅ Sprint 1
+│   │   │       ├── ark.py         # ✅ Sprint 2
 │   │   │       ├── insider.py     # Sprint 3
 │   │   │       ├── politicians.py # Sprint 4
 │   │   │       ├── fundamentals.py# Sprint 5
 │   │   │       └── features.py    # Sprint 7
 │   │   ├── collectors/            # Daten-Sammler (ein Modul pro Quelle)
 │   │   │   ├── __init__.py
-│   │   │   ├── base.py            # Abstract BaseCollector (Sprint 1)
-│   │   │   ├── prices_yfinance.py # Sprint 1
-│   │   │   ├── ark_holdings.py    # Sprint 2
-│   │   │   ├── sec_form4.py       # Sprint 3
-│   │   │   ├── sec_form13f.py     # Sprint 3
-│   │   │   ├── politicians.py     # Sprint 4
-│   │   │   ├── fundamentals_yf.py # Sprint 5
-│   │   │   └── analyst_ratings.py # Sprint 5
+│   │   │   ├── base.py            # ✅ Abstract BaseCollector
+│   │   │   ├── prices_alpaca.py   # ✅ Sprint 1b (primär)
+│   │   │   ├── prices_yfinance.py # ✅ Sprint 1 (Fallback)
+│   │   │   ├── ark_holdings.py    # ✅ Sprint 2
+│   │   │   ├── gap_detector.py    # ✅ Sprint 1
 │   │   ├── derived/               # Berechnete Features
 │   │   │   ├── __init__.py
-│   │   │   ├── ark_deltas.py      # Sprint 2
+│   │   │   ├── ark_deltas.py      # ✅ Sprint 2
 │   │   │   ├── insider_clusters.py# Sprint 3
 │   │   │   ├── technical_indicators.py # Sprint 6
 │   │   │   └── feature_pipeline.py# Sprint 7
 │   │   ├── universe/              # Dynamisches Titel-Universum
 │   │   │   ├── __init__.py
-│   │   │   └── manager.py         # ✅ implementiert
+│   │   │   ├── manager.py         # ✅ implementiert
+│   │   │   ├── alpaca_validator.py # ✅ Alpaca-Validierung
+│   │   │   └── index_sync.py      # ✅ Sprint 1b (S&P/Nasdaq sync)
 │   │   ├── scheduler/             # Job-Orchestrierung
 │   │   │   ├── __init__.py
-│   │   │   └── jobs.py            # Sprint 1
+│   │   │   └── jobs.py            # ✅ Alpaca Prices + ARK Holdings
 │   │   └── utils/
 │   │       ├── __init__.py
 │   │       ├── logging.py         # ✅ implementiert
-│   │       └── retry.py           # Sprint 1
-│   └── alembic/                   # Datenbank-Migrationen
+│   │       └── retry.py           # ✅ implementiert
+│   └── alembic/                   # Datenbank-Migrationen (001-005)
 │       ├── env.py
 │       ├── script.py.mako
 │       └── versions/
 ├── tests/
-│   ├── unit/                      # ✅ 11 Tests
+│   ├── unit/                      # ✅ 87 Tests
 │   ├── integration/
 │   └── fixtures/
 ├── scripts/                       # Einmal-Skripte
-│   └── init_universe.py           # ✅ implementiert (103 Ticker)
+│   ├── init_universe.py           # ✅ S&P 100 + SPY
+│   ├── validate_universe.py       # ✅ Alpaca-Validierung
+│   └── sync_universe_indexes.py   # ✅ S&P 500 + Nasdaq 100
 ├── pyproject.toml                 # uv Paketmanager
 ├── uv.lock                        # uv Lockfile
 ├── alembic.ini                    # Alembic-Konfiguration
@@ -148,9 +149,10 @@ CREATE TABLE signals.universe (
   sector          VARCHAR(100),
   industry        VARCHAR(100),
   added_date      DATE NOT NULL,
-  added_by        VARCHAR(50),        -- 'ark_etf', 'form4', 'manual', ...
+  added_by        VARCHAR(50),        -- 'sp500', 'nasdaq100', 'ark_etf', 'manual'
   is_active       BOOLEAN DEFAULT TRUE,
   last_seen       DATE,
+  index_membership VARCHAR(20)[],     -- {sp500, nasdaq100}
   metadata        JSONB
 );
 
@@ -168,9 +170,10 @@ CREATE TABLE signals.prices_daily (
   high            NUMERIC(16,4),
   low             NUMERIC(16,4),
   close           NUMERIC(16,4),
-  adj_close       NUMERIC(16,4),
+  adj_close       NUMERIC(16,4),      -- = close bei Alpaca (adjustment=all)
   volume          BIGINT,
-  source          VARCHAR(50),       -- 'yfinance', 'alpaca'
+  source          VARCHAR(50),        -- 'alpaca', 'yfinance'
+  is_extrapolated BOOLEAN DEFAULT FALSE,
   fetched_at      TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (ticker, trade_date)
 );
@@ -184,14 +187,16 @@ Tägliche Snapshots der ARK-ETF-Holdings.
 ```sql
 CREATE TABLE signals.ark_holdings (
   snapshot_date   DATE NOT NULL,
-  etf_ticker      VARCHAR(10) NOT NULL,   -- ARKX, ARKK, ARKQ, ...
+  etf_ticker      VARCHAR(10) NOT NULL,
   ticker          VARCHAR(20) NOT NULL,
   company_name    VARCHAR(200),
   cusip           VARCHAR(20),
   shares          NUMERIC(20,4),
   market_value    NUMERIC(20,2),
   weight_pct      NUMERIC(8,4),
-  source_url      TEXT,
+  weight_rank     INTEGER,
+  share_price     NUMERIC(16,4),
+  source          VARCHAR(50) DEFAULT 'arkfunds.io',
   fetched_at      TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (snapshot_date, etf_ticker, ticker)
 );
@@ -496,13 +501,14 @@ CREATE TABLE signals.collection_log (
 
 ```
 ┌────────────────┐  ┌────────────────┐  ┌────────────────┐
-│ ARK Funds CSV  │  │ SEC EDGAR API  │  │ yfinance       │
+│ Alpaca Market  │  │ arkfunds.io    │  │ SEC EDGAR API  │
+│ Data API ⭐    │  │ (ARK Holdings) │  │ (Form 4/13F)   │
 └────────┬───────┘  └────────┬───────┘  └────────┬───────┘
          │                   │                   │
          ▼                   ▼                   ▼
 ┌─────────────────────────────────────────────────────────┐
 │                    Collectors (Python)                  │
-│  [ark] [form4] [form13f] [prices] [fundamentals] [news] │
+│  [prices_alpaca] [ark_holdings] [form4] [fundamentals]  │
 └────────────────────────┬────────────────────────────────┘
                          │ INSERT
                          ▼
@@ -536,18 +542,16 @@ CREATE TABLE signals.collection_log (
 
 ## Ausführungs-Zeitplan
 
-**Täglich 22:00 Unraid-Zeit (nach US-Börsenschluss 22:00 MEZ = 16:00 ET):**
+**Täglich nach US-Börsenschluss:**
 
-1. `prices_collector` – OHLCV für das gesamte Universum
-2. `ark_collector` – Alle ARK-ETF-CSVs herunterladen und parsen
-3. `form4_collector` – Neue Form-4-Filings der letzten 24h
-4. `fundamentals_collector` – Fundamentaldaten aktualisieren (nicht jeden Tag nötig)
-5. `analyst_collector` – Analyst-Ratings
-6. `ark_deltas_computer` – Deltas berechnen
-7. `technical_indicators_computer` – TA-Indikatoren berechnen
-8. `insider_clusters_computer` – Cluster-Erkennung
-9. `feature_pipeline` – Feature Snapshot für den Tag erzeugen
-10. `target_backfill` – Returns für ältere Snapshots nachtragen
+1. `prices_alpaca` – OHLCV für das gesamte Universum (22:15 MEZ, Alpaca Multi-Symbol-Batch)
+2. `ark_holdings` – ARK-ETF-Holdings via arkfunds.io + Delta-Berechnung (23:00 MEZ)
+3. `form4_collector` – Neue Form-4-Filings der letzten 24h (Sprint 3)
+4. `fundamentals_collector` – Fundamentaldaten aktualisieren (Sprint 5)
+5. `analyst_collector` – Analyst-Ratings (Sprint 5)
+6. `technical_indicators_computer` – TA-Indikatoren berechnen (Sprint 6)
+7. `feature_pipeline` – Feature Snapshot für den Tag erzeugen (Sprint 7)
+8. `target_backfill` – Returns für ältere Snapshots nachtragen (Sprint 7)
 
 **Wöchentlich (Sonntag):**
 - `form13f_collector` – Neue 13F-Filings (falls Quartalsende gewesen)
@@ -564,5 +568,8 @@ Siehe [DECISIONS.md](DECISIONS.md) für Begründungen.
 - **Append-only Raw Layer**: Rückverfolgbarkeit, Schema-Änderungen ohne Datenverlust
 - **APScheduler statt Cron**: Bessere Kontrolle aus Python, Logging, Fehlerbehandlung
 - **SQLAlchemy 2.0 statt Raw SQL**: Type-Safety, Migrations, Testbarkeit
-- **yfinance als erste Preis-Quelle**: Kostenlos, ausreichend für EOD-Daten, leicht ersetzbar
+- **Alpaca als primäre Preisquelle** (Sprint 1b): Kurs-Konsistenz mit Trading-Plattform, stabil, offiziell
+- **yfinance als Fallback**: Code bleibt erhalten, nicht mehr im Scheduler
+- **arkfunds.io statt ARK CSV**: CSV gibt 403, JSON-API ist robuster
+- **Wikipedia für Index-Listen**: Kostenlos, aktuell genug bei ~4 Rebalancings/Jahr
 - **Separater Container statt geteilte DB**: Isolation von GynOrg, unabhängige Backups

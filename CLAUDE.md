@@ -45,9 +45,9 @@ Die kritischen Pfade (Daten-Fetching, Berechnungen, später Order-Ausführung) s
 
 ## Aktueller Status
 
-**Phase:** 🟢 Sprint 2 abgeschlossen
+**Phase:** 🟢 Sprint 2 + Sprint 1b abgeschlossen
 **Aktueller Sprint:** Sprint 3 (SEC Insider Trades) – steht bevor
-**Letzte Aktualisierung:** 12. April 2026
+**Letzte Aktualisierung:** 13. April 2026
 
 Siehe [ROADMAP.md](docs/ROADMAP.md) für den detaillierten Fortschritt.
 
@@ -64,6 +64,8 @@ Siehe [ROADMAP.md](docs/ROADMAP.md) für den detaillierten Fortschritt.
 | **Datenbank** | PostgreSQL 18 (`postgresql18-alpaca`, 192.168.1.93:5435, DB: `broker_data`, Schema: `signals`) |
 | **Paketmanager** | uv |
 | **Scheduler** | APScheduler (im Python-Prozess) |
+| **Preisdaten** | Alpaca Market Data API (IEX feed, Multi-Symbol-Batch) |
+| **Universe** | 644 aktive Ticker (S&P 500 + Nasdaq 100 + ARK) |
 | **Deployment** | Docker Compose auf Unraid |
 | **Broker (später)** | Alpaca Paper Trading (NIEMALS Live!) |
 | **Versionskontrolle** | Git, [GitHub (sebastianganser/Alpaca-Broker)](https://github.com/sebastianganser/Alpaca-Broker) |

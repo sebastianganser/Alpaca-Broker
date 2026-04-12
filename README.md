@@ -22,8 +22,9 @@ Datenquellen → Collectors → PostgreSQL (Raw) → Derived Layer → Feature S
 
 ## Datenquellen (geplant)
 
-- **Marktdaten:** yfinance (OHLCV, Fundamentals)
-- **Smart Money:** ARK Invest ETF Holdings (täglich)
+- **Marktdaten:** Alpaca Market Data API (OHLCV, IEX feed) – *yfinance als Fallback*
+- **Smart Money:** ARK Invest ETF Holdings via arkfunds.io API (täglich)
+- **Universe:** S&P 500 + Nasdaq 100 + ARK-Ergänzungen (644 aktive Ticker)
 - **Insider-Trades:** SEC EDGAR Form 4
 - **Institutionelle:** SEC EDGAR Form 13F
 - **Politiker:** Quiver Quantitative API
@@ -38,9 +39,9 @@ Datenquellen → Collectors → PostgreSQL (Raw) → Derived Layer → Feature S
 - SQLAlchemy 2.0 + Alembic
 - Pydantic Settings
 - APScheduler
+- Alpaca API (Market Data + Paper Trading)
 - Docker Compose (Unraid)
 - FastAPI (später)
-- Alpaca API (Paper Trading)
 
 ## Dokumentation
 
@@ -55,7 +56,7 @@ Die vollständige Dokumentation liegt im Projekt selbst:
 
 ## Status
 
-🟢 **Sprint 2 abgeschlossen** – Price Collector + ARK Holdings Tracker (252 Ticker, 8 ARK-ETFs, tägliche Deltas).
+🟢 **Sprint 2 + 1b abgeschlossen** – Alpaca Price Collector + ARK Holdings Tracker (644 Ticker, 8 ARK-ETFs, S&P 500 + Nasdaq 100).
 Nächster Schritt: Sprint 3 (SEC Insider Trades).
 
 ## Lizenz

@@ -7,91 +7,65 @@
 
 ## Übersicht
 
-| Quelle | Kategorie | Kosten | Frequenz | Verzögerung | Sprint |
-|---|---|---|---|---|---|
-| **yfinance** | Preise, Fundamentals | Kostenlos | Täglich | ~20 Min. EOD | 1, 5 |
-| **Alpaca Market Data** | Preise (Alternative) | Kostenlos mit Account | Echtzeit (Paper) | Sekunden | Backup |
-| **ARK Funds CSVs** | Smart Money | Kostenlos | Täglich EOD | ~1 Tag | 2 |
-| **SEC EDGAR – Form 4** | Insider-Trades | Kostenlos | Rolling | 2 Werktage (gesetzlich) | 3 |
-| **SEC EDGAR – Form 13F** | Institutionelle Holdings | Kostenlos | Quartalsweise | Bis 45 Tage | 3 |
-| **Capitol Trades** | Politiker-Trades | Kostenlos (Scraping) | Rolling | 30–45 Tage | – (ersetzt) |
-| **Quiver Quantitative** | Politiker-Trades | Freemium (API) | Rolling | 30–45 Tage | 4 |
-| **yfinance – Fundamentals** | P/E, Revenue, EPS | Kostenlos | Unregelmäßig | – | 5 |
-| **yfinance – Ratings** | Analyst-Empfehlungen | Kostenlos | Rolling | – | 5 |
+| Quelle | Kategorie | Kosten | Frequenz | Verzögerung | Sprint | Status |
+|---|---|---|---|---|---|---|
+| **Alpaca Market Data** | Preise (OHLCV) | Kostenlos (IEX) | Täglich | ~Minuten nach Close | 1b | ✅ Primär |
+| **yfinance** | Preise (Fallback), Fundamentals | Kostenlos | Täglich | ~20 Min. EOD | 1 | ⏸ Fallback |
+| **arkfunds.io** | Smart Money (ARK ETFs) | Kostenlos | Täglich EOD | ~1 Stunde | 2 | ✅ Aktiv |
+| **SEC EDGAR – Form 4** | Insider-Trades | Kostenlos | Rolling | 2 Werktage (gesetzlich) | 3 | 📋 Geplant |
+| **SEC EDGAR – Form 13F** | Institutionelle Holdings | Kostenlos | Quartalsweise | Bis 45 Tage | 3 | 📋 Geplant |
+| **Quiver Quantitative** | Politiker-Trades | Freemium (API) | Rolling | 30–45 Tage | 4 | 📋 Geplant |
+| **yfinance – Fundamentals** | P/E, Revenue, EPS | Kostenlos | Unregelmäßig | – | 5 | 📋 Geplant |
+| **yfinance – Ratings** | Analyst-Empfehlungen | Kostenlos | Rolling | – | 5 | 📋 Geplant |
 
 ---
 
-## 1. yfinance (Yahoo Finance)
+## 1. Alpaca Market Data API (Primäre Preisquelle)
 
-**Kategorie:** Marktdaten (Preise, Fundamentals, Ratings)
-**Python-Paket:** `yfinance`
-**Offizielle Doku:** https://github.com/ranaroussi/yfinance
+**Kategorie:** Marktdaten (OHLCV)
+**API-Endpoint:** `https://data.alpaca.markets/v2/stocks/bars`
+**Doku:** https://docs.alpaca.markets/reference/stockbars
+**Status:** ✅ Implementiert (Sprint 1b)
 
 ### Was es liefert
 
-- **Preise:** Tägliche OHLCV-Daten für praktisch alle gelisteten Aktien weltweit
-- **Fundamentals:** P/E, P/S, Market Cap, Revenue, EPS, Margins, etc.
-- **Analyst-Ratings:** Konsens-Bewertungen und Kursziele
-- **Earnings-Kalender:** Termine und historische Earnings
-- **Dividenden, Splits, Actions**
+Multi-Symbol-Batch-Endpoint mit täglichen OHLCV-Daten:
 
-### Beispiel-Code
+- `o` = Open, `h` = High, `l` = Low, `c` = Close (adjustiert mit `adjustment=all`)
+- `v` = Volume, `vw` = VWAP, `n` = Trade Count
+- **adj_close = close** (Alpaca liefert mit `adjustment=all` bereits split- und dividenden-adjustierte Werte)
 
-```python
-import yfinance as yf
+### Konfiguration
 
-# Preise abrufen
-ticker = yf.Ticker("AAPL")
-hist = ticker.history(period="1y", interval="1d")
-
-# Fundamentals
-info = ticker.info
-pe_ratio = info.get("trailingPE")
-market_cap = info.get("marketCap")
-
-# Analyst-Ratings
-recommendations = ticker.recommendations
-```
-
-### Einschränkungen
-
-- **Inoffizielle API**: Yahoo kann jederzeit Änderungen vornehmen, die den Scraper brechen
-- **Rate-Limiting**: Yahoo drosselt aggressiv bei vielen Anfragen → Batch-Modus nutzen (`yf.download(tickers_list)`)
-- **Datenqualität**: Meist gut, aber gelegentliche Fehler (besonders bei Small Caps)
-- **Keine Intraday-Daten für kostenlose Nutzung** – nur EOD
-- **Keine SLA** – produktiver Einsatz auf eigenes Risiko
+- **Feed:** `iex` (kostenlos im Free Tier)
+- **Batch-Size:** 100 Ticker pro Request
+- **644 Ticker in 7 Requests (<10s Gesamtlaufzeit)**
+- **Rate Limit:** 200 req/min (Free Tier) → kein Problem
 
 ### Best Practices
 
-- Batch-Downloads verwenden: `yf.download(["AAPL", "MSFT", ...], period="5d")`
-- Retries mit exponentiellem Backoff
-- Periodisch prüfen, ob das Paket noch aktuelle Daten liefert
-- Als Fallback Alpaca Market Data vorhalten
+- Multi-Symbol-Endpoint bevorzugen (vs. Einzelabfragen)
+- `adjustment=all` für split+dividend-adjustierte Werte
+- Pagination via `next_page_token` bei großen Zeiträumen
+- Retry mit exponentiellem Backoff bei 429/5xx
 
 ---
 
-## 2. Alpaca Market Data (Backup)
+## 2. yfinance (Fallback für Preise + Fundamentals)
 
-**Kategorie:** Marktdaten (Backup zu yfinance)
-**Python-Paket:** `alpaca-py`
-**Doku:** https://alpaca.markets/docs/market-data/
+**Kategorie:** Marktdaten (Fallback), Fundamentals, Ratings
+**Python-Paket:** `yfinance`
+**Status:** ⏸ Fallback (nicht mehr im Scheduler, Code bleibt erhalten)
 
-### Was es liefert
+> **Seit Sprint 1b:** yfinance wurde als primäre Preisquelle durch Alpaca ersetzt.
+> Grund: Alpaca ist die offizielle Trading-Plattform, liefert konsistente Kurse.
+> yfinance wird weiterhin für Fundamentals und Analyst-Ratings genutzt (Sprint 5).
 
-- Echtzeit- und historische Kursdaten (US-Märkte)
-- Trades, Quotes, Bars in verschiedenen Intervallen
-- Begrenzt auf US-Titel
+### Einschränkungen
 
-### Warum als Backup
-
-- Benötigt API-Key (hat Sebastian eh für Paper Trading)
-- Offizielle API mit SLA
-- Aber: teilweise Latenz oder Einschränkungen im Free-Tier
-- yfinance ist breiter (inkl. europäische Titel)
-
-### Nutzung
-
-Erst einsetzen, wenn yfinance mal ausfällt oder Spezialdaten nötig werden.
+- **Inoffizielle API**: Yahoo kann jederzeit Änderungen vornehmen
+- **Rate-Limiting**: Aggressiv bei vielen Anfragen
+- **Keine SLA** – produktiver Einsatz auf eigenes Risiko
 
 ---
 
