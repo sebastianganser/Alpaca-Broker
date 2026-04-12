@@ -325,6 +325,45 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 
 ---
 
+### Entscheidung: Organisches Datenwachstum statt historischem Backfill
+
+**Datum:** 12. April 2026
+**Sprint:** 1
+
+**Kontext:** yfinance bietet 2+ Jahre historische Daten kostenlos. Andere Quellen (SEC EDGAR, Quiver Quantitative, ARK) bieten keinen kostenlosen Zugang zu tiefer Historie.
+
+**Entscheidung:** Kein Backfill. Alle Datenquellen starten ab dem gleichen Zeitpunkt und wachsen synchron/organisch mit.
+
+**Begründung:** Synchrone Datenbasis über alle Quellen hinweg. Features wie SMA 200 erst aktivieren, wenn 200 Tage Daten vorliegen. Verhindert "Pseudo-Alpha" aus Backfill-Daten, die bei anderen Quellen nicht verfügbar sind.
+
+---
+
+### Entscheidung: Dynamische Feature-Aktivierung
+
+**Datum:** 12. April 2026
+**Sprint:** 1
+
+**Kontext:** Ohne Backfill dauert es Monate, bis genug Daten für langfristige Indikatoren (SMA 200, 52-Wochen-Hoch) vorliegen.
+
+**Entscheidung:** Jedes abgeleitete Feature definiert eine `min_data_days`-Schwelle. Das Feature wird erst in den Feature-Store geschrieben, wenn genug Daten vorhanden sind.
+
+**Begründung:** Verhindert fehlerhafte Signale aus unvollständigen Daten. Features "schalten sich selbst ein" sobald die Datenbasis reicht.
+
+---
+
+### Entscheidung: Gap-Extrapolation mit Forward-Fill
+
+**Datum:** 12. April 2026
+**Sprint:** 1
+
+**Kontext:** Bei ungeplanten Datenlücken (Server-Ausfall, API-Fehler) muss die Zeitreihe lückenlos bleiben, damit technische Indikatoren korrekt berechnet werden.
+
+**Entscheidung:** 3-stufiger Prozess: (1) Lücken erkennen via NYSE-Kalender, (2) von Quelle nachladen, (3) Forward-Fill mit `is_extrapolated=TRUE`-Flag.
+
+**Begründung:** Forward-Fill (letzter Close als Open/High/Low/Close, Volume=0) ist der konservativste Ansatz – erzeugt kein falsches Signal. Das Flag ermöglicht Downstream-Filtern in Analysen.
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.

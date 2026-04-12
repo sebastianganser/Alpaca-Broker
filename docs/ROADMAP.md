@@ -64,21 +64,23 @@
 
 ## Nächste Sprints im Detail
 
-### Sprint 1 – Price Collector (yfinance)
+### Sprint 1 – Price Collector (yfinance) ✅
 
 **Ziel:** Täglicher OHLCV-Download für das gesamte Universum.
 
 **Aufgaben:**
-- [ ] `BaseCollector`-Klasse definieren (Abstract)
-- [ ] `PriceCollectorYFinance` implementieren
-- [ ] Batch-Fetching (nicht pro Ticker einzeln)
-- [ ] Rate-Limiting und Retry-Logik
-- [ ] Upsert-Pattern für `prices_daily`
-- [ ] Logging in `collection_log`
-- [ ] Unit-Tests mit Mock-Daten
-- [ ] APScheduler-Job für tägliche Ausführung
+- [x] `BaseCollector`-Klasse definieren (Abstract, Template-Method-Pattern)
+- [x] `PriceCollectorYFinance` implementieren
+- [x] Batch-Fetching (50er-Batches, nicht pro Ticker einzeln)
+- [x] Rate-Limiting und Retry-Logik (`@retry` Decorator mit Exponential Backoff)
+- [x] Idempotentes Insert-Pattern für `prices_daily` (`ON CONFLICT DO NOTHING`)
+- [x] Logging in `collection_log` (inkl. Gap-Statistiken)
+- [x] Gap Detection & Repair (NYSE-Kalender, Forward-Fill-Extrapolation)
+- [x] Unit-Tests mit Mock-Daten (29 neue Tests, 40 gesamt)
+- [x] APScheduler-Job für tägliche Ausführung (22:15 MEZ)
+- [x] Ticker-Mapping für Sonderfälle (BRK.B → BRK-B)
 
-**Definition of Done:** Nach manueller Ausführung sind OHLCV-Daten für alle Universums-Titel der letzten 10 Handelstage in der DB.
+**Definition of Done:** ✅ 1.020 OHLCV-Datenpunkte für 102/103 Ticker (10 Handelstage) in der DB. WBA (Walgreens) ist bei Yahoo delisted.
 
 ---
 
@@ -310,3 +312,19 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
 - Docker Compose + Dockerfile für Collector erstellt
 - ARCHITECTURE.md mit echten DB-Details aktualisiert
 - Nächster Schritt: **Git Push, dann Sprint 1 (Price Collector)**
+
+### Session 3 – 12. April 2026 – Sprint 1 Implementierung
+- Dokumentations-Audit: 20 Inkonsistenzen in CLAUDE.md, README.md, ARCHITECTURE.md, DATA_SOURCES.md gefunden und behoben
+- Dependencies: yfinance, pandas, pandas-market-calendars, scipy hinzugefügt
+- Migration 003: `prices_daily` (mit `is_extrapolated`-Flag + Partial Index) + `collection_log` (mit Gap-Statistiken)
+- `@retry`-Decorator mit exponentiellem Backoff (nur transiente Fehler)
+- **GapDetector**: NYSE-Kalender-basierte Lückenerkennung → Nachladen → Forward-Fill-Extrapolation
+- **BaseCollector**: Template-Method-Pattern mit integriertem Gap-Check, Session-Expunge für detached Log-Objekte
+- **PriceCollectorYFinance**: Batch-Download (50er-Batches), Ticker-Mapping (BRK.B→BRK-B), ON CONFLICT DO NOTHING
+- Erster Live-Lauf: 1.020 Datenpunkte für 102 Ticker (10 Handelstage) erfolgreich geladen
+- WBA (Walgreens) bei Yahoo delisted → kein Datenabruf möglich
+- 29 neue Unit-Tests (40 gesamt, alle grün)
+- APScheduler Entrypoint: `main.py` mit BlockingScheduler, CronTrigger 22:15, Graceful Shutdown
+- Dockerfile CMD auf Scheduler-Entrypoint aktualisiert
+- Grundsatzentscheidung: Organisches Datenwachstum (kein Backfill), Dynamische Feature-Aktivierung
+- Nächster Schritt: **Sprint 2 (ARK Holdings Tracker)** oder **Docker-Deployment auf Unraid**

@@ -55,8 +55,8 @@ Die vollständige Dokumentation liegt im Projekt selbst:
 
 ## Status
 
-🟢 **Sprint 0 abgeschlossen** – Projektfundament steht (DB, Migrationen, Universe, Tests).
-Nächster Schritt: Sprint 1 (Price Collector mit yfinance).
+🟢 **Sprint 1 abgeschlossen** – Price Collector läuft (102 Ticker, täglicher OHLCV-Download via yfinance mit Gap Detection).
+Nächster Schritt: Sprint 2 (ARK Holdings Tracker).
 
 ## Lizenz
 

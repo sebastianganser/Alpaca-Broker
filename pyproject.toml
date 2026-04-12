@@ -11,6 +11,10 @@ dependencies = [
     "alembic>=1.13",
     "pydantic-settings>=2.0",
     "apscheduler>=3.10,<4.0",
+    "yfinance>=0.2.40",
+    "pandas>=2.0",
+    "pandas-market-calendars>=4.0",
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]

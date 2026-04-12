@@ -47,6 +47,5 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
     CMD pg_isready -h ${DB_HOST:-localhost} -p ${DB_PORT:-5432} || exit 1
 
-# Run the collector (for Sprint 0: just verify setup and exit)
-# In Sprint 1 this becomes the APScheduler entry point
-CMD ["uv", "run", "python", "-c", "from trading_signals.config import get_settings; s = get_settings(); print(f'Trading Signals Collector ready. DB: {s.DB_HOST}:{s.DB_PORT}/{s.DB_NAME}'); import time; time.sleep(86400)"]
+# Run the APScheduler-based collector
+CMD ["uv", "run", "python", "-m", "trading_signals.main"]
