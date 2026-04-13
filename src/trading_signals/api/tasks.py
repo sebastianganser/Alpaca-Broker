@@ -420,7 +420,8 @@ class BackfillManager:
         try:
             from sqlalchemy import select, update
 
-            from trading_signals.collectors.yfinance_client import YFinanceClient
+            import yfinance as yf
+
             from trading_signals.db.models.universe import Universe
             from trading_signals.db.session import get_session
 
@@ -450,19 +451,47 @@ class BackfillManager:
             )
 
             start_time = time.time()
-            client = YFinanceClient(
-                batch_size=50,
-                delay_between_tickers=0.5,
-                delay_between_batches=3.0,
-            )
+            enriched: list[dict] = []
 
-            # Fetch sector data (uses internal progress tracking)
-            results = client.fetch_sector_info(missing)
+            # Process ticker by ticker with progress updates
+            for i, ticker_str in enumerate(missing):
+                self._update_progress(
+                    task_id,
+                    processed=i,
+                    total=len(missing),
+                    current_ticker=ticker_str,
+                    start_time=start_time,
+                )
+
+                try:
+                    t = yf.Ticker(ticker_str)
+                    info = t.info
+                    sector = info.get("sector") if info else None
+                    industry = info.get("industry") if info else None
+
+                    if sector or industry:
+                        enriched.append({
+                            "ticker": ticker_str,
+                            "sector": sector,
+                            "industry": industry,
+                        })
+                except Exception as e:
+                    logger.debug(
+                        f"[Enrichment {task_id}] Failed for {ticker_str}: "
+                        f"{type(e).__name__}: {e}"
+                    )
+
+                # Rate-limit: 0.5s between tickers
+                time.sleep(0.5)
+
+                # Batch pause every 50 tickers
+                if (i + 1) % 50 == 0 and i < len(missing) - 1:
+                    time.sleep(3.0)
 
             # Update universe
             updated = 0
             with get_session() as session:
-                for record in results:
+                for record in enriched:
                     session.execute(
                         update(Universe)
                         .where(Universe.ticker == record["ticker"])
@@ -474,7 +503,12 @@ class BackfillManager:
                     updated += 1
 
             # Final update
-            task.processed_items = len(missing)
+            self._update_progress(
+                task_id,
+                processed=len(missing),
+                total=len(missing),
+                start_time=start_time,
+            )
             task.progress_pct = 100.0
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.now(UTC)
