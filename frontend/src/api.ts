@@ -271,3 +271,6 @@ export const fetchDbStats = () =>
 
 export const runVacuum = () =>
   request<TriggerResponse>('/ops/db/vacuum', { method: 'POST' });
+
+export const resetDatabase = () =>
+  request<TriggerResponse>('/ops/db/reset', { method: 'POST' });

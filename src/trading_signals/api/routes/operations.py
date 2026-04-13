@@ -68,7 +68,7 @@ def get_alembic_status(db: Session = Depends(get_db)):
     """Get current Alembic migration status."""
     try:
         result = db.execute(
-            text("SELECT version_num FROM alembic_version LIMIT 1")
+            text("SELECT version_num FROM public.alembic_version LIMIT 1")
         ).first()
         current = result[0] if result else None
 
@@ -196,6 +196,51 @@ def run_vacuum(db: Session = Depends(get_db)):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"VACUUM failed: {e}")
+
+
+@router.post("/db/reset", response_model=TriggerResponse)
+def reset_database(db: Session = Depends(get_db)):
+    """Reset ALL data tables to empty state (factory reset).
+
+    Truncates all data tables in the signals schema EXCEPT
+    the universe table (ticker definitions) and alembic_version.
+    This is a destructive operation!
+    """
+    try:
+        # Tables to truncate (order matters for FK constraints)
+        tables_to_reset = [
+            "signals.technical_indicators",
+            "signals.analyst_ratings",
+            "signals.earnings_calendar",
+            "signals.fundamentals_snapshot",
+            "signals.politician_trades",
+            "signals.form13f_holdings",
+            "signals.insider_clusters",
+            "signals.insider_trades",
+            "signals.ark_deltas",
+            "signals.ark_holdings",
+            "signals.prices_daily",
+            "signals.collection_log",
+        ]
+
+        total_deleted = 0
+        for table in tables_to_reset:
+            result = db.execute(text(f"DELETE FROM {table}"))
+            total_deleted += result.rowcount
+
+        db.commit()
+
+        return TriggerResponse(
+            success=True,
+            message=(
+                f"Factory reset completed. {total_deleted} records deleted "
+                f"from {len(tables_to_reset)} tables. "
+                f"Universe ({len(tables_to_reset)} tables) preserved."
+            ),
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Reset failed: {e}")
 
 
 def _format_bytes(size: int) -> str:

@@ -7,8 +7,9 @@ import {
   startPriceBackfill,
   startIndicatorBackfill,
   runVacuum,
+  resetDatabase,
 } from '../api';
-import { Play, RefreshCw, Download, Wrench } from 'lucide-react';
+import { Play, RefreshCw, Download, Wrench, Trash2, AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
 
 export default function SettingsPage() {
@@ -136,13 +137,18 @@ function BackfillSection() {
     setLoading(null);
   };
 
+  const priceTask = status?.find((t) => t.operation === 'price_backfill' && t.status === 'running');
+  const taTask = status?.find((t) => t.operation === 'indicator_backfill' && t.status === 'running');
 
-  const isPriceRunning = status?.some(
-    (t) => t.operation === 'price_backfill' && t.status === 'running'
-  );
-  const isTaRunning = status?.some(
-    (t) => t.operation === 'indicator_backfill' && t.status === 'running'
-  );
+  const isPriceRunning = !!priceTask;
+  const isTaRunning = !!taTask;
+
+  const formatEta = (seconds: number | null) => {
+    if (!seconds || seconds <= 0) return '';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return mins > 0 ? `~${mins}m ${secs}s verbleibend` : `~${secs}s verbleibend`;
+  };
 
   return (
     <div>
@@ -159,23 +165,34 @@ function BackfillSection() {
           <button
             className="btn btn-primary btn-sm w-full"
             onClick={handlePriceBackfill}
-            disabled={!!isPriceRunning || loading === 'prices'}
+            disabled={isPriceRunning || loading === 'prices'}
           >
             {isPriceRunning ? 'Läuft...' : loading === 'prices' ? 'Starte...' : 'Backfill starten'}
           </button>
-          {isPriceRunning && (
+          {isPriceRunning && priceTask && (
             <div className="mt-md">
               <div className="progress-bar">
                 <div
                   className="progress-bar-fill"
                   style={{
-                    width: `${status?.find((t) => t.operation === 'price_backfill')?.progress_pct ?? 0}%`,
+                    width: `${priceTask.progress_pct}%`,
+                    transition: 'width 0.5s ease',
                   }}
                 />
               </div>
-              <div className="text-xs text-dim mt-md" style={{ textAlign: 'center' }}>
-                {status?.find((t) => t.operation === 'price_backfill')?.progress_pct?.toFixed(0)}%
+              <div className="flex justify-between mt-sm">
+                <span className="text-xs text-dim mono">
+                  {priceTask.current_ticker ?? '...'}
+                </span>
+                <span className="text-xs text-dim mono">
+                  {priceTask.progress_pct.toFixed(0)}%
+                </span>
               </div>
+              {priceTask.eta_seconds && (
+                <div className="text-xs text-dim mt-xs" style={{ textAlign: 'center' }}>
+                  {formatEta(priceTask.eta_seconds)}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -191,20 +208,34 @@ function BackfillSection() {
           <button
             className="btn btn-primary btn-sm w-full"
             onClick={handleTaBackfill}
-            disabled={!!isTaRunning || loading === 'indicators'}
+            disabled={isTaRunning || loading === 'indicators'}
           >
             {isTaRunning ? 'Läuft...' : loading === 'indicators' ? 'Starte...' : 'Backfill starten'}
           </button>
-          {isTaRunning && (
+          {isTaRunning && taTask && (
             <div className="mt-md">
               <div className="progress-bar">
                 <div
                   className="progress-bar-fill"
                   style={{
-                    width: `${status?.find((t) => t.operation === 'indicator_backfill')?.progress_pct ?? 0}%`,
+                    width: `${taTask.progress_pct}%`,
+                    transition: 'width 0.5s ease',
                   }}
                 />
               </div>
+              <div className="flex justify-between mt-sm">
+                <span className="text-xs text-dim mono">
+                  {taTask.current_ticker ?? '...'}
+                </span>
+                <span className="text-xs text-dim mono">
+                  {taTask.progress_pct.toFixed(0)}%
+                </span>
+              </div>
+              {taTask.eta_seconds && (
+                <div className="text-xs text-dim mt-xs" style={{ textAlign: 'center' }}>
+                  {formatEta(taTask.eta_seconds)}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -239,6 +270,8 @@ function DbSection() {
     queryFn: fetchDbStats,
   });
   const [vacuuming, setVacuuming] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const handleVacuum = async () => {
     setVacuuming(true);
@@ -251,19 +284,94 @@ function DbSection() {
     setVacuuming(false);
   };
 
+  const handleReset = async () => {
+    setResetting(true);
+    try {
+      await resetDatabase();
+      queryClient.invalidateQueries({ queryKey: ['db-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    } catch (e) {
+      console.error(e);
+    }
+    setResetting(false);
+    setShowResetConfirm(false);
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-md">
         <div className="label">Datenbank</div>
-        <button
-          className="btn btn-secondary btn-sm"
-          onClick={handleVacuum}
-          disabled={vacuuming}
-        >
-          <Wrench size={12} />
-          {vacuuming ? 'VACUUM läuft...' : 'VACUUM ANALYZE'}
-        </button>
+        <div className="flex gap-sm">
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={handleVacuum}
+            disabled={vacuuming}
+          >
+            <Wrench size={12} />
+            {vacuuming ? 'VACUUM läuft...' : 'VACUUM ANALYZE'}
+          </button>
+          <button
+            className="btn btn-sm"
+            style={{
+              background: 'var(--error)',
+              color: '#fff',
+              border: 'none',
+            }}
+            onClick={() => setShowResetConfirm(true)}
+            disabled={resetting}
+          >
+            <Trash2 size={12} />
+            Werkszustand
+          </button>
+        </div>
       </div>
+
+      {/* Reset Confirmation Dialog */}
+      {showResetConfirm && (
+        <div
+          className="card mb-lg"
+          style={{
+            border: '1px solid var(--error)',
+            background: 'rgba(239, 68, 68, 0.08)',
+          }}
+        >
+          <div className="flex items-center gap-sm mb-md">
+            <AlertTriangle size={20} style={{ color: 'var(--error)' }} />
+            <strong style={{ color: 'var(--error)' }}>Datenbank zurücksetzen?</strong>
+          </div>
+          <div className="text-sm mb-lg" style={{ lineHeight: 1.6 }}>
+            Diese Aktion löscht <strong>alle gesammelten Daten</strong> unwiderruflich:
+            <br />
+            Preise, Indikatoren, ARK-Holdings, Insider-Trades, Politiker-Trades,
+            Fundamentals, Analyst-Ratings, Earnings-Kalender und Collection-Logs.
+            <br />
+            <br />
+            Die <strong>Ticker-Universe</strong> (644 Ticker) bleibt erhalten.
+          </div>
+          <div className="flex gap-sm justify-end">
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setShowResetConfirm(false)}
+            >
+              Abbrechen
+            </button>
+            <button
+              className="btn btn-sm"
+              style={{
+                background: 'var(--error)',
+                color: '#fff',
+                border: 'none',
+              }}
+              onClick={handleReset}
+              disabled={resetting}
+            >
+              <Trash2 size={12} />
+              {resetting ? 'Lösche...' : 'Ja, alles löschen'}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         {isLoading ? (
           <div className="loading-pulse text-dim" style={{ padding: 'var(--space-xl)', textAlign: 'center' }}>

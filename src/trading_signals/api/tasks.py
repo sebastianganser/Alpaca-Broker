@@ -122,49 +122,165 @@ class BackfillManager:
         thread.start()
         return task_id
 
+    def _update_progress(
+        self,
+        task_id: str,
+        processed: int,
+        total: int,
+        current_ticker: str | None = None,
+        start_time: float | None = None,
+    ) -> None:
+        """Thread-safe progress update for a running task."""
+        task = self._tasks.get(task_id)
+        if not task:
+            return
+
+        with self._lock:
+            task.processed_items = processed
+            task.total_items = total
+            task.current_ticker = current_ticker
+            task.progress_pct = (processed / total * 100) if total > 0 else 0.0
+
+            # ETA calculation
+            if start_time and processed > 0:
+                elapsed = time.time() - start_time
+                rate = processed / elapsed  # items per second
+                remaining = total - processed
+                task.eta_seconds = remaining / rate if rate > 0 else None
+
     def _run_price_backfill(self, task_id: str, start_date: str) -> None:
-        """Execute price backfill in background thread."""
+        """Execute price backfill with per-batch progress tracking."""
         task = self._tasks[task_id]
         task.status = TaskStatus.RUNNING
         task.started_at = datetime.now(UTC)
 
         try:
-            from trading_signals.collectors.prices_alpaca import PriceCollectorAlpaca
-            from trading_signals.db.models import Universe
+            from trading_signals.collectors.prices_alpaca import (
+                BATCH_SIZE,
+                PriceCollectorAlpaca,
+                _fetch_bars_batch,
+            )
+            from trading_signals.db.models.prices import PriceDaily
+            from trading_signals.db.models.universe import Universe
             from trading_signals.db.session import get_session
-
-            with get_session() as session:
-                tickers = (
-                    session.query(Universe.ticker)
-                    .filter(Universe.is_active.is_(True))
-                    .all()
-                )
-                ticker_list = [t[0] for t in tickers]
-                task.total_items = len(ticker_list)
 
             # Calculate lookback days from start_date
             from datetime import date as date_type
+
+            from sqlalchemy import select
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
             start = date_type.fromisoformat(start_date)
-            lookback = (date_type.today() - start).days
+            end_date = date_type.today()
+            lookback = (end_date - start).days
+
+            # Get ticker list
+            with get_session() as session:
+                stmt = (
+                    select(Universe.ticker)
+                    .where(Universe.is_active.is_(True))
+                    .order_by(Universe.ticker)
+                )
+                tickers = [row[0] for row in session.execute(stmt).all()]
+
+            total_batches = (len(tickers) + BATCH_SIZE - 1) // BATCH_SIZE
+            task.total_items = total_batches
 
             logger.info(
                 f"[Backfill {task_id}] Starting price backfill: "
-                f"{len(ticker_list)} tickers, {lookback} days lookback"
+                f"{len(tickers)} tickers in {total_batches} batches, "
+                f"{lookback} days lookback"
             )
 
-            collector = PriceCollectorAlpaca(lookback_days=lookback)
             start_time = time.time()
+            collector = PriceCollectorAlpaca(lookback_days=lookback)
+            total_written = 0
 
-            # The collector processes all tickers in batches
-            log = collector.run()
+            # Process batch by batch with progress updates
+            for i in range(0, len(tickers), BATCH_SIZE):
+                batch = tickers[i : i + BATCH_SIZE]
+                batch_num = (i // BATCH_SIZE) + 1
 
+                self._update_progress(
+                    task_id,
+                    processed=batch_num - 1,
+                    total=total_batches,
+                    current_ticker=f"Batch {batch_num}/{total_batches} ({batch[0]}...{batch[-1]})",
+                    start_time=start_time,
+                )
+
+                try:
+                    bars = _fetch_bars_batch(
+                        symbols=batch,
+                        start=start.isoformat(),
+                        end=end_date.isoformat(),
+                        headers=collector._headers,
+                    )
+
+                    # Store the batch
+                    with get_session() as session:
+                        batch_written = 0
+                        for ticker, ticker_bars in bars.items():
+                            for bar in ticker_bars:
+                                close_val = bar.get("c")
+                                if close_val is None:
+                                    continue
+                                from trading_signals.collectors.prices_alpaca import (
+                                    _parse_bar_timestamp,
+                                )
+                                trade_date = _parse_bar_timestamp(bar.get("t", ""))
+                                if trade_date is None:
+                                    continue
+
+                                stmt = (
+                                    pg_insert(PriceDaily)
+                                    .values(
+                                        ticker=ticker,
+                                        trade_date=trade_date,
+                                        open=bar.get("o"),
+                                        high=bar.get("h"),
+                                        low=bar.get("l"),
+                                        close=close_val,
+                                        adj_close=close_val,
+                                        volume=bar.get("v"),
+                                        source="alpaca",
+                                        is_extrapolated=False,
+                                    )
+                                    .on_conflict_do_nothing(
+                                        index_elements=["ticker", "trade_date"]
+                                    )
+                                )
+                                result = session.execute(stmt)
+                                if result.rowcount > 0:
+                                    batch_written += 1
+
+                        total_written += batch_written
+
+                    logger.info(
+                        f"[Backfill {task_id}] Batch {batch_num}/{total_batches}: "
+                        f"{batch_written} records written"
+                    )
+
+                except Exception as e:
+                    logger.error(
+                        f"[Backfill {task_id}] Batch {batch_num} failed: {e}"
+                    )
+
+            # Final update
+            self._update_progress(
+                task_id,
+                processed=total_batches,
+                total=total_batches,
+                start_time=start_time,
+            )
             task.progress_pct = 100.0
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.now(UTC)
+            task.current_ticker = None
 
             logger.info(
                 f"[Backfill {task_id}] Price backfill completed: "
-                f"{log.records_written} records in "
+                f"{total_written} records in "
                 f"{time.time() - start_time:.0f}s"
             )
 
@@ -175,31 +291,92 @@ class BackfillManager:
             logger.error(f"[Backfill {task_id}] Price backfill failed: {e}")
 
     def _run_indicator_backfill(self, task_id: str) -> None:
-        """Execute technical indicator backfill in background thread."""
+        """Execute technical indicator backfill with per-ticker progress."""
         task = self._tasks[task_id]
         task.status = TaskStatus.RUNNING
         task.started_at = datetime.now(UTC)
 
         try:
+            from sqlalchemy import select
+
+            from trading_signals.db.models.universe import Universe
             from trading_signals.db.session import get_session
             from trading_signals.derived.technical_indicators import (
                 TechnicalIndicatorsComputer,
             )
 
-            logger.info(f"[Backfill {task_id}] Starting TA indicator backfill")
+            # Get ticker list for progress tracking
+            with get_session() as session:
+                stmt = (
+                    select(Universe.ticker)
+                    .where(Universe.is_active.is_(True))
+                    .order_by(Universe.ticker)
+                )
+                tickers = [row[0] for row in session.execute(stmt).all()]
+
+            task.total_items = len(tickers)
+
+            logger.info(
+                f"[Backfill {task_id}] Starting TA indicator backfill: "
+                f"{len(tickers)} tickers"
+            )
+
             start_time = time.time()
+            total_written = 0
+            errors = 0
 
             with get_session() as session:
                 computer = TechnicalIndicatorsComputer(session)
-                written = computer.compute_all(backfill=True)
 
+                # Pre-load SPY prices
+                computer._spy_df = computer._load_price_history("SPY")
+
+                for i, ticker in enumerate(tickers, 1):
+                    self._update_progress(
+                        task_id,
+                        processed=i - 1,
+                        total=len(tickers),
+                        current_ticker=ticker,
+                        start_time=start_time,
+                    )
+
+                    try:
+                        written = computer._compute_backfill(ticker)
+                        total_written += written
+                    except Exception as e:
+                        errors += 1
+                        logger.error(
+                            f"[Backfill {task_id}] Error for {ticker}: {e}"
+                        )
+                        continue
+
+                    # Flush every 50 tickers to avoid memory buildup
+                    if i % 50 == 0:
+                        session.flush()
+                        logger.info(
+                            f"[Backfill {task_id}] Progress: "
+                            f"{i}/{len(tickers)} tickers, "
+                            f"{total_written} records"
+                        )
+
+                session.flush()
+
+            # Final update
+            self._update_progress(
+                task_id,
+                processed=len(tickers),
+                total=len(tickers),
+                start_time=start_time,
+            )
             task.progress_pct = 100.0
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.now(UTC)
+            task.current_ticker = None
 
             logger.info(
                 f"[Backfill {task_id}] TA backfill completed: "
-                f"{written} records in {time.time() - start_time:.0f}s"
+                f"{total_written} records in {time.time() - start_time:.0f}s "
+                f"({errors} errors)"
             )
 
         except Exception as e:
