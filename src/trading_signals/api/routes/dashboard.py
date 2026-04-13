@@ -139,7 +139,7 @@ def get_dashboard_summary(
     if db_connected:
         try:
             result = db.execute(
-                text("SELECT version_num FROM public.alembic_version LIMIT 1")
+                text("SELECT version_num FROM signals.alembic_version LIMIT 1")
             ).first()
             if result:
                 alembic_rev = result[0]
