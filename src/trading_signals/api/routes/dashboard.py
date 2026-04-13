@@ -121,18 +121,23 @@ def get_dashboard_summary(
             )
 
     # ── System Health ────────────────────────────────────────────────
-    db_connected = True
+    db_connected = False
     alembic_rev = None
     try:
         db.execute(text("SELECT 1"))
-        # Get current Alembic revision
-        result = db.execute(
-            text("SELECT version_num FROM alembic_version LIMIT 1")
-        ).first()
-        if result:
-            alembic_rev = result[0]
+        db_connected = True
     except Exception:
-        db_connected = False
+        pass
+
+    if db_connected:
+        try:
+            result = db.execute(
+                text("SELECT version_num FROM public.alembic_version LIMIT 1")
+            ).first()
+            if result:
+                alembic_rev = result[0]
+        except Exception:
+            pass  # Table may not exist yet
 
     system_health = SystemHealth(
         db_connected=db_connected,
