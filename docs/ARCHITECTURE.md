@@ -152,7 +152,7 @@ frontend/                          # ✅ Sprint 7 (Vite + React SPA)
 └── src/
     ├── main.tsx
     ├── App.tsx                    # Router + QueryClient
-    ├── Layout.tsx                 # Sidebar + Outlet
+    ├── Layout.tsx                 # Sidebar + World Clock + Outlet
     ├── api.ts                     # Typed API Client (fetch-wrapper)
     ├── index.css                  # Precision Architect Design System
     └── pages/
@@ -625,11 +625,12 @@ CREATE TABLE signals.collection_log (
 - `politician_trades_collector` – Senate eFD PTR-Scraping (11:00 MEZ)
 
 **Monatlich (1. des Monats):**
-- `index_sync` – S&P 500 / Nasdaq 100 Mitgliedschaft aktualisieren (03:00 MEZ) ✅ Sprint 7+
+- `index_sync` – S&P 500 / Nasdaq 100 Mitgliedschaft aktualisieren + **Sektor-Enrichment** für neue Ticker (03:00 MEZ) ✅ Sprint 7+
 
 **Manuell (via UI):**
 - `price_backfill` – Historische Preise ab 2021-01-01 laden (Settings > Backfill)
 - `indicator_backfill` – Alle TA-Indikatoren neu berechnen (Settings > Backfill)
+- `sector_enrichment` – Fehlende Sektor-/Branchendaten von yfinance laden (Settings > Sektoren nachladen)
 - `db_reset` – Factory Reset: Alle Datentabellen löschen (Settings > Werkszustand)
 - `vacuum_analyze` – PostgreSQL VACUUM + ANALYZE (Settings > VACUUM)
 
@@ -657,3 +658,4 @@ Siehe [DECISIONS.md](DECISIONS.md) für Begründungen.
 - **FastAPI + Vite/React SPA statt Streamlit**: Volle Design-Kontrolle für Stitch „Precision Architect“ Design System
 - **Einzelner Container**: Collector + API + UI in einem Container auf Port 8090, Multi-Stage Docker Build
 - **Dashboard vor Feature Pipeline**: UI (Sprint 7) vor Backend-Aggregation (Sprint 8) für sofortiges grafisches Feedback
+- **yfinance für Sektor-Enrichment**: Alpaca liefert kein `sector`/`industry`; yfinance `ticker.info` als kostenlose Quelle, in monatlichen IndexSync integriert

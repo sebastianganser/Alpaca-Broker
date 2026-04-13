@@ -24,7 +24,7 @@ Datenquellen → Collectors → PostgreSQL (Raw) → Derived Layer → Feature S
 
 - **Marktdaten:** Alpaca Market Data API (OHLCV, IEX feed) – *yfinance als Fallback* ✅
 - **Smart Money:** ARK Invest ETF Holdings via arkfunds.io API (täglich) ✅
-- **Universe:** S&P 500 + Nasdaq 100 + ARK-Ergänzungen (644 aktive Ticker) ✅
+- **Universe:** S&P 500 + Nasdaq 100 + ARK-Ergänzungen (~845 aktive Ticker) ✅
 - **Insider-Trades:** SEC EDGAR Form 4 ✅
 - **Institutionelle:** SEC EDGAR Form 13F ✅
 - **Politiker:** Senate eFD (efdsearch.senate.gov, kostenlos) ✅
@@ -32,6 +32,7 @@ Datenquellen → Collectors → PostgreSQL (Raw) → Derived Layer → Feature S
 - **Analyst-Ratings:** yfinance (Upgrades/Downgrades) ✅
 - **Earnings-Kalender:** yfinance (EPS-Estimates, Surprises) ✅
 - **Technische Indikatoren:** pandas-ta (SMA, EMA, RSI, MACD, Bollinger, ATR, Volume SMA, RS vs. SPY) ✅
+- **Sektor/Branche:** yfinance `ticker.info` (Enrichment für Universe-Tabelle) ✅
 
 ## Technologie-Stack
 
@@ -59,7 +60,7 @@ Die vollständige Dokumentation liegt im Projekt selbst:
 
 ## Status
 
-🟢 **Produktionsbetrieb** – Deployed auf Unraid (192.168.1.93:8090). Dashboard & Operations UI (Sprint 7) live. 10 Scheduler-Jobs aktiv (5 täglich, 4 wöchentlich, 1 monatlich). 644 Ticker, ~820k Preisdatensätze, ~818k TA-Indikatoren. 303 Tests.
+🟢 **Produktionsbetrieb** – Deployed auf Unraid (192.168.1.93:8090). Dashboard & Operations UI (Sprint 7) live. 10 Scheduler-Jobs aktiv (5 täglich, 4 wöchentlich, 1 monatlich inkl. Sektor-Enrichment). ~845 Ticker, ~820k Preisdatensätze, ~818k TA-Indikatoren. 303 Tests.
 Nächster Schritt: Sprint 8 (Feature Pipeline).
 
 ## Lizenz

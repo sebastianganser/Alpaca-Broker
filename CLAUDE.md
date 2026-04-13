@@ -68,9 +68,9 @@ Siehe [ROADMAP.md](docs/ROADMAP.md) für den detaillierten Fortschritt.
 | **Paketmanager** | uv (Python), npm (Frontend) |
 | **Scheduler** | APScheduler (im Python-Prozess) |
 | **Preisdaten** | Alpaca Market Data API (IEX feed, Multi-Symbol-Batch) |
-| **Universe** | 644 aktive Ticker (S&P 500 + Nasdaq 100 + ARK) |
+| **Universe** | ~845 aktive Ticker (S&P 500 + Nasdaq 100 + ARK) |
 | **Deployment** | Docker Compose auf Unraid (1 Container: Collector + API + UI, Port 8090) |
-| **Scheduler** | APScheduler (10 Jobs: 5 täglich, 4 wöchentlich, 1 monatlich) |
+| **Scheduler** | APScheduler (10 Jobs: 5 täglich, 4 wöchentlich, 1 monatlich inkl. Sektor-Enrichment) |
 | **Broker (später)** | Alpaca Paper Trading (NIEMALS Live!) |
 | **Versionskontrolle** | Git, [GitHub (sebastianganser/Alpaca-Broker)](https://github.com/sebastianganser/Alpaca-Broker) |
 
