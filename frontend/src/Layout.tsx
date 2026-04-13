@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   Globe,
   Activity,
+  FileText,
   Settings,
   LockOpen,
   Lock,
@@ -13,6 +14,7 @@ const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/universe', icon: Globe, label: 'Universe' },
   { to: '/signals', icon: Activity, label: 'Signals' },
+  { to: '/logs', icon: FileText, label: 'Logs' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 

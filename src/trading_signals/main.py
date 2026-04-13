@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from trading_signals.api.deps import set_scheduler
 from trading_signals.api.job_tracker import job_tracker
 from trading_signals.api.routes.dashboard import router as dashboard_router
+from trading_signals.api.routes.logs import router as logs_router
 from trading_signals.api.routes.operations import router as operations_router
 from trading_signals.api.routes.signals import router as signals_router
 from trading_signals.api.routes.ticker import router as ticker_router
@@ -203,6 +204,7 @@ app.include_router(universe_router, prefix="/api/v1", tags=["Universe"])
 app.include_router(signals_router, prefix="/api/v1", tags=["Signals"])
 app.include_router(ticker_router, prefix="/api/v1", tags=["Ticker"])
 app.include_router(operations_router, prefix="/api/v1", tags=["Operations"])
+app.include_router(logs_router, prefix="/api/v1", tags=["Logs"])
 
 
 @app.get("/api/v1/health")

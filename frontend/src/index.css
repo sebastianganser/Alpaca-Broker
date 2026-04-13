@@ -521,6 +521,15 @@ h4 { font-size: 1.1rem; }
   color: var(--on-surface-dim);
 }
 
+select.input {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2384948F' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+  cursor: pointer;
+}
+
 /* ── Tabs ──────────────────────────────────────────────────────────── */
 
 .tabs {
@@ -612,9 +621,11 @@ h4 { font-size: 1.1rem; }
 .text-variant { color: var(--on-surface-variant); }
 .text-primary { color: var(--primary); }
 .text-error { color: var(--error); }
+.text-warning { color: var(--warning); }
 .text-sm { font-size: 0.875rem; }
 .text-xs { font-size: 0.75rem; }
 .font-mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+.mt-xs { margin-top: var(--space-xs); }
 .mt-md { margin-top: var(--space-md); }
 .mt-lg { margin-top: var(--space-lg); }
 .mb-md { margin-bottom: var(--space-md); }

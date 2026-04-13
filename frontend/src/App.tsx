@@ -4,6 +4,7 @@ import Layout from './Layout';
 import DashboardPage from './pages/DashboardPage';
 import UniversePage from './pages/UniversePage';
 import SignalsPage from './pages/SignalsPage';
+import LogsPage from './pages/LogsPage';
 import SettingsPage from './pages/SettingsPage';
 import TickerPage from './pages/TickerPage';
 
@@ -26,6 +27,7 @@ export default function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/universe" element={<UniversePage />} />
             <Route path="/signals" element={<SignalsPage />} />
+            <Route path="/logs" element={<LogsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/ticker/:symbol" element={<TickerPage />} />
           </Route>

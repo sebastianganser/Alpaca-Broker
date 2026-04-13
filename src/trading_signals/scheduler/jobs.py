@@ -187,6 +187,10 @@ def run_technical_indicators_computer() -> None:
     Scheduled for 22:30 Europe/Berlin (after Price Collector at 22:15).
     Computes SMA, EMA, RSI, MACD, Bollinger, ATR, Volume SMA,
     and Relative Strength vs SPY from prices_daily data.
+
+    Uses catch-up logic: automatically detects and fills any gaps
+    between the latest computed indicator date and the latest price
+    date. This handles missed runs, container restarts, and weekends.
     """
     from trading_signals.db.session import get_session
     from trading_signals.derived.technical_indicators import (
@@ -197,7 +201,7 @@ def run_technical_indicators_computer() -> None:
 
     with get_session() as session:
         computer = TechnicalIndicatorsComputer(session)
-        written = computer.compute_all()
+        written = computer.compute_catchup()
         logger.info(
             f"technical_indicators_computer_job finished: "
             f"{written} records computed"

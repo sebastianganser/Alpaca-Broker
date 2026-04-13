@@ -297,3 +297,39 @@ export const runVacuum = () =>
 
 export const resetDatabase = () =>
   request<TriggerResponse>('/ops/db/reset', { method: 'POST' });
+
+// ── Logs ──────────────────────────────────────────────────────────────
+
+export interface CollectionLogItem {
+  id: number;
+  collector_name: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  status: string | null;
+  records_fetched: number | null;
+  records_written: number | null;
+  gaps_detected: number;
+  gaps_repaired: number;
+  gaps_extrapolated: number;
+  errors: Record<string, unknown> | null;
+  notes: string | null;
+  duration_seconds: number | null;
+}
+
+export interface LogsResponse {
+  logs: CollectionLogItem[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export const fetchLogs = (params: Record<string, string | number> = {}) => {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  });
+  return request<LogsResponse>(`/logs?${qs.toString()}`);
+};
+
+export const fetchCollectorNames = () =>
+  request<string[]>('/logs/collectors');

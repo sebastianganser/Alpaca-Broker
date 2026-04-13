@@ -246,3 +246,30 @@ class TriggerResponse(BaseModel):
     success: bool
     message: str
     task_id: str | None = None
+
+
+# ── Logs Schemas ─────────────────────────────────────────────────────────
+
+class CollectionLogItem(BaseModel):
+    """Single collection log entry."""
+    id: int
+    collector_name: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    status: str | None = None
+    records_fetched: int | None = None
+    records_written: int | None = None
+    gaps_detected: int = 0
+    gaps_repaired: int = 0
+    gaps_extrapolated: int = 0
+    errors: dict | None = None
+    notes: str | None = None
+    duration_seconds: float | None = None
+
+
+class LogsResponse(BaseModel):
+    """Paginated collection logs response."""
+    logs: list[CollectionLogItem]
+    total: int
+    page: int
+    limit: int

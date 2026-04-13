@@ -4,6 +4,8 @@ Provides scheduler control, backfill management, DB maintenance,
 and system configuration endpoints.
 """
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -53,9 +55,12 @@ def trigger_job(job_id: str, scheduler=Depends(get_scheduler)):
     if not job:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
 
-    # Modify the job to run now (next tick)
-    job.modify(next_run_time=None)
-    scheduler.modify_job(job_id, next_run_time=None)
+    # Schedule job for immediate execution.
+    # APScheduler's CronTrigger will automatically recalculate
+    # the next regular run time after this execution completes.
+    # NOTE: next_run_time=None would PAUSE the job, not run it!
+    now = datetime.now(timezone.utc)
+    scheduler.modify_job(job_id, next_run_time=now)
 
     return TriggerResponse(
         success=True,

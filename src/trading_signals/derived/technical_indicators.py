@@ -27,7 +27,7 @@ from datetime import date
 
 import pandas as pd
 import pandas_ta as ta
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -131,6 +131,82 @@ class TechnicalIndicatorsComputer:
             f"[technical_indicators] Complete: {total_written} records written "
             f"across {len(tickers)} tickers ({errors} errors)"
         )
+        return total_written
+
+    def compute_catchup(self) -> int:
+        """Compute indicators for all missing dates since last computation.
+
+        Compares MAX(trade_date) in technical_indicators with
+        MAX(trade_date) in prices_daily and computes indicators
+        for every trading day in between.
+
+        This prevents gaps when the daily job misses a run
+        (container restart, scheduler issue, etc.).
+
+        Returns:
+            Total number of indicator records written.
+        """
+        from trading_signals.db.models.prices import PriceDaily
+        from trading_signals.db.models.technical_indicators import TechnicalIndicator
+
+        # Find latest dates in both tables
+        last_ta = self.session.execute(
+            select(func.max(TechnicalIndicator.trade_date))
+        ).scalar()
+        last_price = self.session.execute(
+            select(func.max(PriceDaily.trade_date))
+        ).scalar()
+
+        if last_price is None:
+            logger.warning("[technical_indicators] No price data found – nothing to compute")
+            return 0
+
+        if last_ta is None:
+            # No TA data at all – compute for latest price date only
+            logger.info(
+                f"[technical_indicators] No existing TA data. "
+                f"Computing for {last_price}"
+            )
+            return self.compute_all(target_date=last_price)
+
+        if last_ta >= last_price:
+            logger.info(
+                f"[technical_indicators] Already up-to-date "
+                f"(TA: {last_ta}, Prices: {last_price})"
+            )
+            return 0
+
+        # Find all trading dates in prices_daily that are missing from
+        # technical_indicators
+        missing_dates_stmt = (
+            select(PriceDaily.trade_date)
+            .where(PriceDaily.trade_date > last_ta)
+            .where(PriceDaily.trade_date <= last_price)
+            .distinct()
+            .order_by(PriceDaily.trade_date)
+        )
+        missing_dates = [
+            row[0] for row in self.session.execute(missing_dates_stmt).all()
+        ]
+
+        if not missing_dates:
+            logger.info("[technical_indicators] No missing dates to compute")
+            return 0
+
+        logger.info(
+            f"[technical_indicators] Catch-up: computing {len(missing_dates)} "
+            f"missing dates ({missing_dates[0]} → {missing_dates[-1]})"
+        )
+
+        total_written = 0
+        for target_date in missing_dates:
+            written = self.compute_all(target_date=target_date)
+            total_written += written
+            logger.info(
+                f"[technical_indicators] Catch-up {target_date}: "
+                f"{written} records"
+            )
+
         return total_written
 
     def _compute_backfill(self, ticker: str) -> int:
