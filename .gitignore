@@ -47,3 +47,7 @@ src/alembic/__pycache__/
 
 # Jupyter (für spätere Analyse-Phase)
 .ipynb_checkpoints/
+
+# Frontend
+node_modules/
+frontend/dist/

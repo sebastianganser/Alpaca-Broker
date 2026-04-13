@@ -11,11 +11,16 @@ dependencies = [
     "alembic>=1.13",
     "pydantic-settings>=2.0",
     "apscheduler>=3.10,<4.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
     "yfinance>=0.2.40",
     "pandas>=2.0",
+    "pandas-ta>=0.3.14",
     "pandas-market-calendars>=4.0",
     "scipy>=1.11",
     "lxml>=6.0.4",
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
 ]
 
 [project.optional-dependencies]

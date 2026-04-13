@@ -20,16 +20,18 @@ Datenquellen → Collectors → PostgreSQL (Raw) → Derived Layer → Feature S
                                                           Paper Trading (später)
 ```
 
-## Datenquellen (geplant)
+## Datenquellen
 
-- **Marktdaten:** Alpaca Market Data API (OHLCV, IEX feed) – *yfinance als Fallback*
-- **Smart Money:** ARK Invest ETF Holdings via arkfunds.io API (täglich)
-- **Universe:** S&P 500 + Nasdaq 100 + ARK-Ergänzungen (644 aktive Ticker)
-- **Insider-Trades:** SEC EDGAR Form 4
-- **Institutionelle:** SEC EDGAR Form 13F
-- **Politiker:** Quiver Quantitative API
-- **Analyst-Ratings:** yfinance
-- **Technische Indikatoren:** Berechnet aus OHLCV
+- **Marktdaten:** Alpaca Market Data API (OHLCV, IEX feed) – *yfinance als Fallback* ✅
+- **Smart Money:** ARK Invest ETF Holdings via arkfunds.io API (täglich) ✅
+- **Universe:** S&P 500 + Nasdaq 100 + ARK-Ergänzungen (644 aktive Ticker) ✅
+- **Insider-Trades:** SEC EDGAR Form 4 ✅
+- **Institutionelle:** SEC EDGAR Form 13F ✅
+- **Politiker:** Senate eFD (efdsearch.senate.gov, kostenlos) ✅
+- **Fundamentals:** yfinance (P/E, Margins, Revenue Growth, EPS, Beta, etc.) ✅
+- **Analyst-Ratings:** yfinance (Upgrades/Downgrades) ✅
+- **Earnings-Kalender:** yfinance (EPS-Estimates, Surprises) ✅
+- **Technische Indikatoren:** pandas-ta (SMA, EMA, RSI, MACD, Bollinger, ATR, Volume SMA, RS vs. SPY) ✅
 
 ## Technologie-Stack
 
@@ -40,8 +42,9 @@ Datenquellen → Collectors → PostgreSQL (Raw) → Derived Layer → Feature S
 - Pydantic Settings
 - APScheduler
 - Alpaca API (Market Data + Paper Trading)
+- FastAPI (Backend-API + SPA Host)
+- Vite + React (Dashboard UI)
 - Docker Compose (Unraid)
-- FastAPI (später)
 
 ## Dokumentation
 
@@ -56,8 +59,8 @@ Die vollständige Dokumentation liegt im Projekt selbst:
 
 ## Status
 
-🟢 **Sprint 2 + 1b abgeschlossen** – Alpaca Price Collector + ARK Holdings Tracker (644 Ticker, 8 ARK-ETFs, S&P 500 + Nasdaq 100).
-Nächster Schritt: Sprint 3 (SEC Insider Trades).
+🟢 **Sprint 7 abgeschlossen** – Dashboard & Operations UI implementiert. FastAPI Backend (5 Router, 20+ Endpoints) + Vite/React SPA mit Precision Architect Design System. Alle Datenquellen angebunden, 644 Ticker, 303 Tests.
+Nächster Schritt: Deployment auf Unraid, dann Sprint 8 (Feature Pipeline).
 
 ## Lizenz
 

@@ -52,3 +52,153 @@ def run_ark_holdings_collector() -> None:
             deltas = computer.compute_all()
             logger.info(f"ark_holdings_job deltas: {deltas} records computed")
 
+
+def run_form4_collector() -> None:
+    """Daily SEC Form 4 insider trades collection + cluster computation.
+
+    Scheduled for 23:30 Europe/Berlin (after ARK, to spread API load).
+    SEC filings are available ~2 business days after transactions.
+    """
+    from trading_signals.collectors.form4_collector import Form4Collector
+    from trading_signals.db.session import get_session
+    from trading_signals.derived.insider_clusters import InsiderClusterComputer
+
+    logger.info("Scheduler triggered: form4_collector_job")
+
+    # Step 1: Collect Form 4 filings
+    collector = Form4Collector(lookback_days=7)
+    log = collector.run()
+    logger.info(
+        f"form4_collector_job collect: status={log.status}, "
+        f"written={log.records_written}"
+    )
+
+    # Step 2: Compute insider clusters (only if collection succeeded)
+    if log.status == "success":
+        with get_session() as session:
+            computer = InsiderClusterComputer(session)
+            clusters = computer.compute_new()
+            logger.info(
+                f"form4_collector_job clusters: {clusters} records computed"
+            )
+
+
+def run_form13f_collector() -> None:
+    """Weekly SEC Form 13F institutional holdings collection.
+
+    Scheduled for Sundays at 10:00 Europe/Berlin.
+    13F filings are quarterly – weekly check catches new filings promptly.
+    """
+    from trading_signals.collectors.form13f_collector import Form13FCollector
+
+    logger.info("Scheduler triggered: form13f_collector_job")
+
+    collector = Form13FCollector(lookback_days=90)
+    log = collector.run()
+    logger.info(
+        f"form13f_collector_job finished: status={log.status}, "
+        f"written={log.records_written}"
+    )
+
+
+def run_politician_trades_collector() -> None:
+    """Weekly politician trades collection from official disclosure portals.
+
+    Scheduled for Sundays at 11:00 Europe/Berlin (after Form 13F).
+    Politician trades are 30-45 days delayed, weekly check is sufficient.
+    """
+    from trading_signals.collectors.politician_trades_collector import (
+        PoliticianTradesCollector,
+    )
+
+    logger.info("Scheduler triggered: politician_trades_collector_job")
+
+    collector = PoliticianTradesCollector(lookback_days=365)
+    log = collector.run()
+    logger.info(
+        f"politician_trades_collector_job finished: status={log.status}, "
+        f"written={log.records_written}"
+    )
+
+
+def run_fundamentals_collector() -> None:
+    """Weekly fundamentals collection via yfinance.
+
+    Scheduled for Sundays at 01:00 Europe/Berlin (night slot).
+    Fetches P/E, margins, revenue growth, EPS, etc. for all active tickers.
+    """
+    from trading_signals.collectors.fundamentals_collector import (
+        FundamentalsCollectorYF,
+    )
+
+    logger.info("Scheduler triggered: fundamentals_collector_job")
+
+    collector = FundamentalsCollectorYF()
+    log = collector.run()
+    logger.info(
+        f"fundamentals_collector_job finished: status={log.status}, "
+        f"written={log.records_written}"
+    )
+
+
+def run_analyst_ratings_collector() -> None:
+    """Daily analyst ratings collection via yfinance.
+
+    Scheduled for 01:00 Europe/Berlin (night slot, after daily collectors).
+    Fetches analyst upgrades/downgrades for the last 30 days.
+    """
+    from trading_signals.collectors.analyst_ratings_collector import (
+        AnalystRatingsCollector,
+    )
+
+    logger.info("Scheduler triggered: analyst_ratings_collector_job")
+
+    collector = AnalystRatingsCollector(lookback_days=30)
+    log = collector.run()
+    logger.info(
+        f"analyst_ratings_collector_job finished: status={log.status}, "
+        f"written={log.records_written}"
+    )
+
+
+def run_earnings_calendar_collector() -> None:
+    """Weekly earnings calendar update via yfinance.
+
+    Scheduled for Sundays at 02:00 Europe/Berlin (after fundamentals).
+    Fetches past and upcoming earnings dates with EPS surprise data.
+    """
+    from trading_signals.collectors.earnings_calendar_collector import (
+        EarningsCalendarCollector,
+    )
+
+    logger.info("Scheduler triggered: earnings_calendar_collector_job")
+
+    collector = EarningsCalendarCollector(earnings_limit=4)
+    log = collector.run()
+    logger.info(
+        f"earnings_calendar_collector_job finished: status={log.status}, "
+        f"written={log.records_written}"
+    )
+
+
+def run_technical_indicators_computer() -> None:
+    """Daily technical indicators computation.
+
+    Scheduled for 22:30 Europe/Berlin (after Price Collector at 22:15).
+    Computes SMA, EMA, RSI, MACD, Bollinger, ATR, Volume SMA,
+    and Relative Strength vs SPY from prices_daily data.
+    """
+    from trading_signals.db.session import get_session
+    from trading_signals.derived.technical_indicators import (
+        TechnicalIndicatorsComputer,
+    )
+
+    logger.info("Scheduler triggered: technical_indicators_computer_job")
+
+    with get_session() as session:
+        computer = TechnicalIndicatorsComputer(session)
+        written = computer.compute_all()
+        logger.info(
+            f"technical_indicators_computer_job finished: "
+            f"{written} records computed"
+        )

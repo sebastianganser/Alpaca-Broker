@@ -12,11 +12,12 @@
 | **Alpaca Market Data** | Preise (OHLCV) | Kostenlos (IEX) | Täglich | ~Minuten nach Close | 1b | ✅ Primär |
 | **yfinance** | Preise (Fallback), Fundamentals | Kostenlos | Täglich | ~20 Min. EOD | 1 | ⏸ Fallback |
 | **arkfunds.io** | Smart Money (ARK ETFs) | Kostenlos | Täglich EOD | ~1 Stunde | 2 | ✅ Aktiv |
-| **SEC EDGAR – Form 4** | Insider-Trades | Kostenlos | Rolling | 2 Werktage (gesetzlich) | 3 | 📋 Geplant |
-| **SEC EDGAR – Form 13F** | Institutionelle Holdings | Kostenlos | Quartalsweise | Bis 45 Tage | 3 | 📋 Geplant |
-| **Quiver Quantitative** | Politiker-Trades | Freemium (API) | Rolling | 30–45 Tage | 4 | 📋 Geplant |
-| **yfinance – Fundamentals** | P/E, Revenue, EPS | Kostenlos | Unregelmäßig | – | 5 | 📋 Geplant |
-| **yfinance – Ratings** | Analyst-Empfehlungen | Kostenlos | Rolling | – | 5 | 📋 Geplant |
+| **SEC EDGAR – Form 4** | Insider-Trades | Kostenlos | Rolling | 2 Werktage (gesetzlich) | 3 | ✅ Aktiv |
+| **SEC EDGAR – Form 13F** | Institutionelle Holdings | Kostenlos | Quartalsweise | Bis 45 Tage | 3 | ✅ Aktiv |
+| **Senate eFD** | Politiker-Trades | Kostenlos | Wöchentlich | 30–45 Tage | 4 | ✅ Aktiv |
+| **yfinance – Fundamentals** | P/E, Revenue, EPS | Kostenlos | Wöchentlich | ~ | 5 | ✅ Aktiv |
+| **yfinance – Ratings** | Analyst-Upgrades/Downgrades | Kostenlos | Täglich | ~ | 5 | ✅ Aktiv |
+| **yfinance – Earnings** | Earnings-Termine + Surprises | Kostenlos | Wöchentlich | ~ | 5 | ✅ Aktiv |
 
 ---
 
@@ -53,19 +54,49 @@ Multi-Symbol-Batch-Endpoint mit täglichen OHLCV-Daten:
 
 ## 2. yfinance (Fallback für Preise + Fundamentals)
 
-**Kategorie:** Marktdaten (Fallback), Fundamentals, Ratings
+**Kategorie:** Marktdaten (Fallback), Fundamentals, Ratings, Earnings
 **Python-Paket:** `yfinance`
-**Status:** ⏸ Fallback (nicht mehr im Scheduler, Code bleibt erhalten)
+**Status:** ✅ Aktiv für Fundamentals/Ratings/Earnings (Sprint 5), ⏸ Fallback für Preise
 
 > **Seit Sprint 1b:** yfinance wurde als primäre Preisquelle durch Alpaca ersetzt.
 > Grund: Alpaca ist die offizielle Trading-Plattform, liefert konsistente Kurse.
-> yfinance wird weiterhin für Fundamentals und Analyst-Ratings genutzt (Sprint 5).
+> **Sprint 5:** yfinance wird aktiv für Fundamentals, Analyst-Ratings und Earnings-Kalender genutzt.
+
+### Was es liefert
+
+**Fundamentals (via `ticker.info`):**
+- `marketCap`, `trailingPE`, `forwardPE`, `priceToSalesTrailing12Months`, `priceToBook`
+- `enterpriseToEbitda`, `profitMargins`, `operatingMargins`, `returnOnEquity`
+- `totalRevenue`, `revenueGrowth`, `trailingEps`, `debtToEquity`, `currentRatio`
+- `dividendYield`, `beta`
+
+**Analyst-Ratings (via `ticker.upgrades_downgrades`):**
+- `Firm` (z.B. Goldman Sachs), `ToGrade`, `FromGrade`, `Action` (up/down/main/init)
+- Index = Datum der Rating-Änderung
+- Lookback: 30 Tage
+
+**Earnings-Kalender (via `ticker.get_earnings_dates()`):**
+- `EPS Estimate`, `Reported EPS`, `Surprise(%)`
+- Index = Earnings-Datum
+- Limit: letzte 4 Earnings pro Ticker
+
+**EPS Growth (via `ticker.get_earnings_estimate()`):**
+- `growth`-Feld für aktuelles Quartal (0q)
+
+### Konfiguration (Sprint 5)
+
+- **Rate-Limiting:** 0.5s zwischen Tickern, 3s zwischen Batches (à 50)
+- **644 Ticker in ~25 Minuten** pro Collector-Lauf
+- **Graceful Error Handling:** Einzelne Ticker-Fehler werden geloggt, nie Abbruch
+- **Schedule:** Nachtslot 01:00–03:00 MEZ (nach allen Daily-Jobs)
 
 ### Einschränkungen
 
 - **Inoffizielle API**: Yahoo kann jederzeit Änderungen vornehmen
 - **Rate-Limiting**: Aggressiv bei vielen Anfragen
 - **Keine SLA** – produktiver Einsatz auf eigenes Risiko
+- **Kein Batch-Endpoint** für `info` – jeder Ticker ist ein separater Call
+- **`upgrades_downgrades` liefert keine Analyst-Namen** (nur Firm)
 
 ---
 
@@ -128,6 +159,7 @@ JSON-Response pro ETF mit Holdings-Array:
 **Kategorie:** Insider-Transaktionen (Pflichtmeldung)
 **Basis-URL:** https://www.sec.gov/cgi-bin/browse-edgar
 **Moderne API:** https://data.sec.gov/submissions/CIK{CIK}.json
+**Status:** ✅ Implementiert (Sprint 3)
 
 ### Was es liefert
 
@@ -176,6 +208,15 @@ headers = {
 - **Insider-Verkäufe**: Schwaches Signal (geplante Programme, Steuern, Diversifikation)
 - **Cluster-Käufe**: Mehrere Insider kaufen in kurzer Zeit → sehr starkes Signal
 
+### Implementierungsdetails (Sprint 3)
+
+- **Collector:** `Form4Collector` (Universe-driven, 644 Ticker)
+- **Client:** `SECClient` mit Rate Limiting (10 req/s) und CIK-Mapping
+- **Parsing:** `xml.etree.ElementTree` (stdlib, keine externe Dependency)
+- **Dedup:** Unique Constraint auf `(cik, insider_name, transaction_date, transaction_type, shares, price_per_share)`
+- **Derived:** `InsiderClusterComputer` erkennt Cluster-Käufe (≥2 Insider in 21 Tagen)
+- **Schedule:** Täglich 23:30 MEZ
+
 ---
 
 ## 5. SEC EDGAR – Form 13F (Institutionelle Holdings)
@@ -183,6 +224,7 @@ headers = {
 **Kategorie:** Quartalsberichte großer Fonds (>100 Mio. $ AUM)
 **Basis-URL:** https://www.sec.gov/cgi-bin/browse-edgar
 **Moderne API:** https://data.sec.gov
+**Status:** ✅ Implementiert (Sprint 3)
 
 ### Was es liefert
 
@@ -208,35 +250,62 @@ Vollständige Holding-Listen aller Fonds mit mindestens 100 Mio. $ verwaltetem V
 - Renaissance Technologies
 - Bridgewater Associates
 
+### Implementierungsdetails (Sprint 3)
+
+- **Collector:** `Form13FCollector` (Filer-driven, Top-20 Institutionelle)
+- **Top-Filer:** Buffett, Burry, Ackman, Renaissance, Tiger, Bridgewater, Citadel, Two Sigma, D.E. Shaw, Millennium, Point72, Greenlight, Baupost, Third Point, Icahn, Elliott, Duquesne, Coatue, Appaloosa, ARK
+- **Parsing:** 13F infotable XML mit Namespace-Handling
+- **Dedup:** Unique Constraint auf `(filer_cik, report_period, cusip)`
+- **Schedule:** Wöchentlich Sonntag 10:00 MEZ
+
 ---
 
-## 6. Capitol Trades (Politiker-Trades)
+## 6. Senate eFD – Politiker-Trades (Congress)
 
-**URL:** https://www.capitoltrades.com
-**Kategorie:** US-Politiker-Trades (STOCK Act Compliance)
+**URL:** https://efdsearch.senate.gov/search/
+**Kategorie:** US-Senator-Trades (STOCK Act Compliance)
+**Status:** ✅ Implementiert (Sprint 4)
 
 ### Was es liefert
 
-Alle gemeldeten Aktien-Transaktionen von US-Kongressmitgliedern und Senatoren.
+Alle Periodic Transaction Reports (PTRs) von US-Senatoren – offizielle Finanz-Disclosure gemäß STOCK Act. Enthält:
+
+- **Politician Name** (Senator)
+- **Ticker/Asset** (Aktien, manchmal ETFs)
+- **Transaction Type** (Purchase, Sale, Exchange)
+- **Transaction Date** + **Disclosure Date**
+- **Amount Range** (z.B. "$1,001 - $15,000")
+- **Owner** (Self, Spouse, Joint, Child)
+- **Comment** (optional)
+
+### Zugang & Kosten
+
+- **Kostenlos** – Offizielle US-Regierungsquelle
+- **Kein API-Token nötig** – HTML-Scraping des Suchformulars
+- **Session-basiert** – Erfordert Terms Agreement + CSRF-Token
+- **Rate Limiting:** Konservativ 2 req/s (keine offiziellen Limits dokumentiert)
+
+### Implementierung
+
+- **Client:** `DisclosureClient` mit `requests.Session()` + BeautifulSoup
+- **Collector:** `PoliticianTradesCollector(BaseCollector)` – Template-Method-Pattern
+- **Tabelle:** `signals.politician_trades` mit Dedup via Unique Constraint
+- **Schedule:** Wöchentlich Sonntag 11:00 MEZ
+- **Lookback:** 365 Tage (fängt verzögerte Meldungen ab)
 
 ### Einschränkungen
 
-- **Verzögerung: 30–45 Tage** (Meldepflicht, oft am letzten Tag eingereicht)
+- **Verzögerung: 30–45 Tage** (STOCK Act erlaubt bis zu 45 Tage Meldefrist)
 - **Amount-Ranges statt exakter Beträge** ("$1,001 – $15,000")
-- **Ehepartner-Trades** werden teilweise intransparent gehandhabt
+- **Nur Senate** – House PTRs sind PDF-only (zukünftiges Enhancement)
+- **HTML-Scraping fragil** – Strukturänderungen können den Parser brechen
+- **Keine Party/State-Info** aus der Suchseite (ggf. über Merge mit Bioguide)
 
-### Scraping vs. API
+### Verworfene Alternativen
 
-Capitol Trades hat **keine offizielle API**. Scraping ist:
-- Technisch möglich (HTML-Parsing)
-- Rechtlich in Grauzone (Terms of Service prüfen!)
-- Alternative: **Quiver Quantitative** hat eine offizielle API mit Freemium-Tier
-
-### Empfehlung
-
-- ~~**Option A:** Scraping von Capitol Trades~~ → Verworfen (fragile Infrastruktur, ToS-Grauzone)
-- **Option B: Quiver Quantitative API** → **Gewählt** (offizielle API, saubere JSON-Responses, Free Tier verfügbar)
-- Siehe [DECISIONS.md](DECISIONS.md), Eintrag vom 2026-04-12: "Politiker-Trades-Quelle → Quiver Quantitative API"
+- ~~**Capitol Trades Scraping**~~ → ToS-Grauzone, keine offizielle API
+- ~~**Quiver Quantitative API**~~ → 30 $/Monat, Constraint: kostenlos bleiben
+- ~~**Stock Watcher S3**~~ → Community-Projekt, S3-Bucket teils gesperrt (403)
 
 ### Realistische Einschätzung
 
@@ -297,9 +366,9 @@ Fehler werden in `collection_log` protokolliert und bei kritischen Ausfällen pe
 
 ## Hinweis zu Terms of Service
 
-Bei allen Scraping-Quellen (ARK, Capitol Trades, OpenInsider, Finviz) muss vor der Implementierung geprüft werden:
+Bei allen Scraping-Quellen (ARK, OpenInsider, Finviz) muss vor der Implementierung geprüft werden:
 - Ist Scraping in den ToS erlaubt?
 - Gibt es robots.txt-Einschränkungen?
 - Ist der Use Case (privates Forschungsprojekt) gedeckt?
 
-Offizielle APIs (SEC EDGAR, yfinance) sind unproblematisch, sofern die dokumentierten Rate-Limits eingehalten werden.
+Offizielle APIs und Regierungsportale (SEC EDGAR, Senate eFD, yfinance) sind unproblematisch, sofern die dokumentierten Rate-Limits eingehalten werden.

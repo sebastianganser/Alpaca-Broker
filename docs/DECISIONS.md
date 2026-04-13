@@ -253,8 +253,8 @@ assert "paper" in settings.ALPACA_ENDPOINT, \
 
 **Entscheidungen im Überblick:**
 
-1. **Politiker-Trades-Quelle → Quiver Quantitative API** (statt Capitol Trades Scraping)
-   Begründung: Offizielle API, saubere JSON-Responses, rechtlich unbedenklich, Free Tier verfügbar. Scraping wäre fragil und in der ToS-Grauzone. Da Politiker-Signale ohnehin als schwach eingeschätzt werden, lohnt sich keine fragile Infrastruktur.
+1. ~~**Politiker-Trades-Quelle → Quiver Quantitative API**~~ → **Überholt** (siehe Entscheidung vom 2026-04-13: Senate eFD statt Quiver, Constraint: kostenlos bleiben)
+   Ursprüngliche Begründung: Offizielle API, saubere JSON-Responses. Später verworfen wegen Kosten (30 $/Monat).
 
 2. **TA-Library → pandas-ta** (statt ta-lib)
    Begründung: Reines Python, installiert sich ohne C-Compiler-Drama. Performance ist für EOD-Daten völlig ausreichend. Robustheit schlägt Geschwindigkeit bei täglichen Berechnungen auf ~600 Titeln.
@@ -268,8 +268,8 @@ assert "paper" in settings.ALPACA_ENDPOINT, \
 5. **Monitoring → Telegram + E-Mail-Fallback**
    Begründung: Telegram-Bot für Push-Nachrichten (Daily Summary, akute Warnungen), E-Mail als zweiter Kanal für kritische Fehler und archivierbare Reports. Python-telegram-bot ist trivial einzurichten.
 
-6. **Dashboard → Streamlit** (statt statisches HTML)
-   Begründung: Interaktive Plots, Filter, Auto-Refresh in 50 Zeilen Python. Läuft als Docker-Container auf Port 8501. Keine Build-Pipeline, keine React-Lernkurve. Perfekt für explorative Analyse.
+6. **Dashboard → FastAPI + Vite/React SPA** (statt Streamlit – siehe Entscheidung weiter unten)
+   Begründung: Volle Design-Kontrolle für das Stitch „Precision Architect" Design System. FastAPI läuft im gleichen Prozess wie APScheduler. React SPA wird als statische Dateien von FastAPI auf Port 8090 ausgeliefert.
 
 7. **Feature-Selection → Alle drei Methoden parallel**
    Begründung: Korrelation (lineare Zusammenhänge), LASSO (automatische Feature-Auswahl), Random Forest Importance (nicht-lineare Muster). Wenn ein Feature in allen drei Methoden als wichtig erkannt wird, ist das ein robustes Signal. Implementierungsaufwand ist minimal, Erkenntnisgewinn hoch.
@@ -289,7 +289,7 @@ assert "paper" in settings.ALPACA_ENDPOINT, \
    Begründung: Kelly-Sizing oder Risk-Parity kommen erst, wenn belastbare Performance-Daten vorliegen. Simple, robuste Defaults zum Start.
 
 **Revisit-Trigger:** 
-- Punkt 1: Falls Quiver Free Tier nicht ausreicht oder Daten unzuverlässig sind
+- ~~Punkt 1: Falls Quiver Free Tier nicht ausreicht~~ → Erledigt: Senate eFD gewählt (kostenlos)
 - Punkt 7: Nach ersten Analyse-Ergebnissen, falls eine Methode durchgehend bessere Resultate liefert
 - Punkt 8: An den Phasengrenzen (3 Monate, 12 Monate) automatisch
 - Punkt 9: Nach 3 Monaten Paper-Trading basierend auf tatsächlicher Performance
@@ -425,6 +425,289 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 **Entscheidung:** Universe enthalt S&P 500 (503) + Nasdaq 100 (101) + ARK-Erganzungen. Wikipedia als Quelle fur Index-Listen (kostenlos, aktuell genug bei ~4 Rebalancings/Jahr). Neue `index_membership` ARRAY-Spalte in universe fur Filterung.
 
 **Ergebnis:** 644 aktive Ticker. ~80% der ARK-Titel waren bereits abgedeckt.
+
+---
+
+### [2026-04-13] SEC EDGAR Zugriffsstrategie → Submissions API + XML-Parsing
+
+**Kontext:** Form 4 (Insider-Trades) und 13F (institutionelle Holdings) müssen aus SEC EDGAR importiert werden. Mehrere Optionen: EFTS Global Search, Company Submissions API, oder Libraries wie `edgartools`.
+
+**Optionen:**
+1. **EFTS Full-Text Search** – Globale Suche nach neuen Form 4 Filings
+2. **Submissions API** – Pro CIK die Recent Filings laden, dann Form 4 filtern
+3. **edgartools Library** – Abstraktion über EDGAR, aber neue Dependency
+
+**Entscheidung:** Submissions API + stdlib `xml.etree.ElementTree` für XML-Parsing. Kein neues Paket.
+
+**Begründung:** Submissions API ist stabiler als EFTS und liefert direkt Accession Numbers + Primary Documents. `xml.etree.ElementTree` ist Teil der Standardbibliothek – keine zusätzliche Dependency nötig. Form 4 XML ist ausreichend einfach strukturiert.
+
+---
+
+### [2026-04-13] Form 4 Strategy → Universe-driven statt Global Search
+
+**Kontext:** Sollen wir alle Form 4 Filings global durchsuchen oder nur für Ticker in unserem Universe?
+
+**Optionen:**
+1. **Globale Suche** – Alle Form 4 Filings der SEC (Tausende pro Tag)
+2. **Universe-driven** – Nur Form 4 für unsere 644 aktiven Ticker
+
+**Entscheidung:** Universe-driven mit Auto-Expansion.
+
+**Begründung:** Bei 644 Tickern und ~10 req/s dauert das Durchlaufen ~65 Sekunden – akzeptabel für einen Daily-Job. Globale Suche würde massiv mehr Daten (und SEC-Requests) erzeugen. Auto-Expansion analog ARK: wenn ein signifikanter Insider-Trade einen neuen Ticker betrifft, kann er automatisch zum Universe hinzugefügt werden.
+
+---
+
+### [2026-04-13] Form 13F Strategy → Filer-driven (Top-20 Institutionelle)
+
+**Kontext:** 13F filings sind quartalsweise und bis zu 45 Tage verzögert. Welche Filer tracken?
+
+**Optionen:**
+1. **Alle 13F-Filer** – Tausende von Institutionen
+2. **Top-20 handverlesene Filer** – Buffett, Burry, Ackman, etc.
+3. **Dynamisch basierend auf Universe** – Filer, die unsere Ticker halten
+
+**Entscheidung:** Top-20 Filer als Python-Konstante (konfigurierbar).
+
+**Begründung:** 13F hat ohnehin 45 Tage Verzögerung – kein taktisches Signal, sondern Kontextdaten. Die Top-20 bekannten "Smart Money" Investoren sind die interessantesten. Liste kann später erweitert werden.
+
+---
+
+### [2026-04-13] Politiker-Trades → Senate eFD Scraping (kostenlos) statt Quiver API
+
+**Kontext:** Sprint 4 benötigt eine Datenquelle für US-Politiker-Trades.
+
+**Optionen:**
+1. **Quiver Quantitative API** – Saubere JSON-API, 30 $/Monat
+2. **Capitol Trades Scraping** – Kostenlos, aber ToS-Grauzone
+3. **Senate eFD + House Clerk** – Offizielle Regierungsportale, kostenlos
+4. **Stock Watcher GitHub/S3** – Community-Projekt, kostenlos
+
+**Entscheidung:** Senate eFD direkt scrapen (Option 3, nur Senate-Teil).
+
+**Begründung:** Constraint „kostenlos bleiben" schließt Quiver aus. Senate eFD ist die offizielle Primärquelle – gleiche Daten wie Quiver/Capitol Trades, nur unverarbeitet. House Clerk zurückgestellt weil PTRs dort als PDF eingereicht werden (benötigt PDF-Parsing). BeautifulSoup + lxml für HTML-Parsing.
+
+---
+
+### [2026-04-13] Politiker-Trades Schedule → Wöchentlich (nicht täglich)
+
+**Kontext:** Wie oft sollten Politiker-Trades abgefragt werden?
+
+**Entscheidung:** Wöchentlich Sonntag 11:00 MEZ (nach Form 13F um 10:00).
+
+**Begründung:** STOCK Act erlaubt Politikern bis zu 45 Tage Meldefrist. Tägliches Scraping wäre Verschwendung – die Daten ändern sich zu selten. Wöchentlich fängt neue Filings zeitnah ab, ohne unnötig Last auf die Regierungsseite zu generieren.
+
+---
+
+### [2026-04-13] Politiker-Trades → Kein Universe-Auto-Expand
+
+**Kontext:** Wenn ein Politiker eine Aktie tradet, die nicht in unserem Universe ist – soll sie automatisch hinzugefügt werden?
+
+**Entscheidung:** Nein. Trades werden gespeichert (Ticker-Feld), aber das Universe bleibt unverändert.
+
+**Begründung:** Politiker-Trades sind ein schwaches Signal mit 30-45 Tagen Verzögerung. ARK-Holdings haben Auto-Expand verdient (klare Conviction-Signale), Politiker nicht. Würde das Universe mit Nebenwerten aufblähen.
+
+---
+
+### [2026-04-13] House PTRs → Auf späteren Sprint verschoben
+
+**Kontext:** House Clerk stellt PTRs als PDF bereit, Senate eFD als HTML.
+
+**Entscheidung:** Sprint 4 implementiert nur Senate eFD. House PTRs sind ein zukünftiges Enhancement.
+
+**Begründung:** PDF-Parsing (OCR, tabula-py) ist signifikant komplexer als HTML-Scraping. Senate-Daten allein liefern bereits wertvolles Signal. House kann in einem zukünftigen Sprint nachgerüstet werden, wenn die Priorität dafür steht.
+
+---
+
+### [2026-04-13] yfinance als Fundamentals-Quelle (Sprint 5)
+
+**Kontext:** Für Sprint 5 brauchen wir Fundamentaldaten (P/E, Margins, Revenue Growth, etc.), Analyst-Ratings und Earnings-Termine.
+
+**Optionen:**
+- A: Financial Modeling Prep (FMP) – 14 $/Monat, zuverlässige REST-API
+- B: yfinance – kostenlos, bereits als Dependency vorhanden
+- C: Alpha Vantage – Free Tier (25 req/Tag), zu wenig für 644 Ticker
+
+**Entscheidung:** Option B – yfinance.
+
+**Begründung:**
+- Kostenlos (Project Constraint: „free and open-source")
+- Bereits als Dependency vorhanden (seit Sprint 1)
+- Liefert alle benötigten Felder: `ticker.info` (18 Metriken), `upgrades_downgrades` (Analyst-Ratings), `get_earnings_dates()` (Earnings-Kalender), `get_earnings_estimate()` (EPS Growth)
+- Risiko (inoffizielle API) wird durch Graceful Error Handling mitigiert
+
+**Revisit-Trigger:** Wenn yfinance >2 Wochen hintereinander komplett ausfällt, auf FMP migrieren.
+
+---
+
+### [2026-04-13] UPSERT für Fundamentals/Earnings, DO NOTHING für Ratings
+
+**Kontext:** Fundamentals ändern sich im Tagesverlauf (z.B. nach Earnings-Calls). Earnings-Kalender-Einträge werden initial nur mit Estimates angelegt, eps_actual kommt erst post-Earnings. Analyst-Ratings sind unique Events.
+
+**Entscheidung:**
+- `FundamentalsSnapshot`: `ON CONFLICT (ticker, snapshot_date) DO UPDATE`
+- `EarningsCalendar`: `ON CONFLICT (ticker, earnings_date) DO UPDATE`
+- `AnalystRating`: `ON CONFLICT DO NOTHING` (Dedup via Unique Constraint)
+
+**Begründung:** Raw-Layer ist normalerweise append-only, aber Snapshots und Kalender-Einträge sind mutable (gleicher Primärschlüssel, neuere Werte). Analyst-Ratings sind einmalige Events und brauchen nur Dedup.
+
+---
+
+### [2026-04-13] YFinanceClient als Shared Infrastructure
+
+**Kontext:** Alle drei Sprint-5-Collectors (Fundamentals, Ratings, Earnings) nutzen yfinance und brauchen Rate-Limiting + Error-Handling.
+
+**Entscheidung:** Gemeinsamer `YFinanceClient` statt Code-Duplizierung in den Collectors.
+
+**Begründung:** Vermeidet dreifache Implementierung von Rate-Limiting (0.5s/Ticker, 3s/Batch), Batch-Iteration und Graceful Error Handling. Collectors sind schlank, YFinanceClient ist testbar.
+
+---
+
+### [2026-04-13] Nachtslot 01:00–03:00 MEZ für yfinance-Jobs
+
+**Kontext:** yfinance-Abrufe für 644 Ticker dauern ~25 Min pro Collector. Bestehende Daily-Jobs laufen 22:15–00:00.
+
+**Entscheidung:** Alle yfinance-Jobs in den Nachtslot 01:00–03:00 MEZ.
+
+**Begründung:**
+- 2-Stunden-Fenster gibt Puffer für Rate-Limit-Retries
+- Yahoo Finance Servers sind nachts (19:00 ET) weniger belastet → weniger 429er
+- Keine Kollision mit bestehenden Daily-Jobs (22:15–00:00) oder Weekly-Jobs (10:00–12:00)
+
+---
+
+### [2026-04-13] `upgrades_downgrades` statt `recommendations_summary` für Analyst-Ratings
+
+**Kontext:** yfinance bietet zwei Analyst-Datenquellen:
+- `recommendations_summary`: Aggregierte Counts (strongBuy, buy, hold, sell)
+- `upgrades_downgrades`: Individuelle Firmen-Level-Einträge (Firm, ToGrade, FromGrade, Action)
+
+**Entscheidung:** `upgrades_downgrades` verwenden.
+
+**Begründung:** Individuelle Einträge bieten mehr Granularität: Wir wissen *welche* Firma upgraded/downgraded hat und wann. Das ist wertvoller als aggregierte Counts für spätere Feature-Berechnung (z.B. „Goldman upgraded in den letzten 7 Tagen").
+
+---
+
+### [2026-04-13] `eps_growth_yoy` aus `get_earnings_estimate()` statt Eigenberechnung
+
+**Kontext:** yfinance liefert kein fertiges `eps_growth_yoy` in `ticker.info`. Wir brauchten eine Quelle.
+
+**Optionen:**
+- A: Eigenberechnung aus historischen EPS-Werten
+- B: `get_earnings_estimate()['growth']` verwenden (direkt von Yahoo)
+
+**Entscheidung:** Option B.
+
+**Begründung:** Einfacher, weniger Code, Yahoo berechnet den Wert bereits. Eigenberechnung wäre fehleranfällig bei Split-Adjustierungen und Fiscal-Year-Unterschieden.
+
+---
+
+### [2026-04-13] Preis-Backfill ab 01.01.2021 via Alpaca
+
+**Kontext:** Für aussagekräftige TA-Indikatoren (SMA 200 braucht 200 Tage), ML-Training (500k+ Samples) und Backtesting (Sprint 11) reichen wenige Tage gesammelter Daten nicht aus. Die Alpaca Free API liefert bis zu ~9 Jahre historische Preisdaten.
+
+**Optionen:**
+- A: Kein Backfill – alle Quellen starten synchron ab April 2026
+- B: Preis-Backfill ab 2021, Signal-Backfill weiterhin NEIN
+- C: Voller Backfill aller Datenquellen
+
+**Entscheidung:** Option B – Preis-Backfill ab 01.01.2021 (~5,3 Jahre, ~882k Rows).
+
+**Begründung:**
+- Preise sind Basisdaten, keine Signale – kein "Pseudo-Alpha"-Risiko
+- Erfasst mehrere Marktregime (COVID-Recovery, 2022 Bear, AI-Boom)
+- Signal-Daten (ARK, Insider, Politiker) sind historisch nicht kostenlos verfügbar → bleiben synchron ab April 2026
+- Feature Store kann NULL-Signale vor April 2026 sauber handhaben
+- Edge Cases (IPOs nach 2021, Umbenennungen) werden von Alpaca transparent gehandhabt
+
+**Revisit-Trigger:** Falls die asymmetrische Datenverfügbarkeit (Preise 5 Jahre, Signale wenige Monate) die ML-Ergebnisse nachweislich verzerrt.
+
+---
+
+### [2026-04-13] Relative Strength vs. SPY: Excess Return (Return-Differenz)
+
+**Kontext:** Für den `relative_strength_spy`-Indikator musste eine Berechnungsmethode gewählt werden.
+
+**Optionen:**
+- A: Return-Ratio – `(ticker_ret / spy_ret) - 1` → Division-by-Zero-Risiko
+- B: Return-Differenz (Excess Return) – `ticker_ret_20d - spy_ret_20d`
+- C: Mansfield RS (Preis-Ratio, normalisiert) → zeigt Trend, nicht Betrag
+- D: IBD RS-Rating (gewichtete Multi-Perioden) → zu komplex für tägliches Feature
+
+**Entscheidung:** Option B – Return-Differenz (Excess Return).
+
+**Begründung:**
+- Kein Division-by-Zero-Risiko
+- Intuitiv: +0.05 = Ticker hat SPY um 5 Prozentpunkte outperformed
+- Standard in quantitativer Finanzanalyse ("Alpha")
+- Lineare Skala, symmetrisch → besseres ML-Feature
+
+---
+
+### [2026-04-13] TA-Indikatoren-Job täglich um 22:30 MEZ
+
+**Kontext:** Der TechnicalIndicatorsComputer muss nach dem Price Collector laufen, aber vor dem Feature Store (Sprint 7).
+
+**Entscheidung:** 22:30 MEZ – 15 Minuten nach dem Price Collector (22:15), 30 Minuten vor ARK (23:00).
+
+**Begründung:** Der TA-Computer hängt ausschließlich von `prices_daily` ab. Der Price Collector braucht <20s für 644 Ticker. 22:30 gibt einen konservativen Puffer ohne Kollisionsgefahr mit anderen Jobs.
+
+---
+
+### [2026-04-13] Sprint-Reihenfolge: Dashboard (Sprint 7) VOR Feature Pipeline (Sprint 8)
+
+**Kontext:** Sprint 6 (TA-Indikatoren) ist abgeschlossen. Ursprüngliche Reihenfolge war Sprint 7 = Feature Pipeline, Sprint 8 = Dashboard. Sebastian möchte aber vor dem Unraid-Deployment grafisches Feedback und keine CLI-Skripte auf dem Server ausführen müssen.
+
+**Optionen:**
+- A: Feature Pipeline (Backend) → Dashboard → Deploy (original)
+- B: Dashboard → Feature Pipeline → Deploy (UI sofort)
+- C: Beides gleichzeitig in einem Sprint
+
+**Entscheidung:** Option B – Dashboard wird Sprint 7, Feature Pipeline wird Sprint 8.
+
+**Begründung:**
+- Sebastian will **sofort visuelles Feedback** nach dem nächsten Sprint
+- Backfill-Steuerung, DB-Bereinigung und Scheduler-Übersicht müssen im UI verfügbar sein
+- Feature Pipeline (Sprint 8) wird dann automatisch ins bestehende UI integriert
+- Das UI wächst mit: Jeder weitere Sprint ergänzt neue Views
+
+---
+
+### [2026-04-13] FastAPI + Vite/React SPA statt Streamlit
+
+**Kontext:** ROADMAP sprach ursprünglich von „Streamlit auf Port 8501" für das Dashboard. Das Stitch-Projekt „Alpaca Scalable Broker" definiert ein anspruchsvolles Design System (Dark Mode, Cyan Primary, tonal layering, glassmorphism, no-border-rule), das in Streamlit nicht umsetzbar ist.
+
+**Optionen:**
+- A: Streamlit (einfach, schnell, aber limitiertes Design)
+- B: FastAPI + Vite/React SPA (volle Design-Kontrolle, Stitch Design System 1:1 umsetzbar)
+- C: Next.js (vollständig, aber eigener Node-Container nötig)
+
+**Entscheidung:** Option B – FastAPI + Vite/React SPA.
+
+**Begründung:**
+- FastAPI ist im Projekt bereits geplant und läuft im gleichen Python-Prozess wie APScheduler
+- React ermöglicht 1:1 Umsetzung des Stitch "Precision Architect" Design Systems
+- Vite liefert schnellen Dev-Server und optimierte Production-Builds
+- Statische SPA-Dateien werden von FastAPI als Mount-Point ausgeliefert
+
+---
+
+### [2026-04-13] Einzelner Container: Collector + API + UI
+
+**Kontext:** Sollen Collector (APScheduler), API (FastAPI) und UI (React SPA) in separaten Containern oder einem einzigen laufen?
+
+**Optionen:**
+- A: 3 separate Container (Collector, API, Dashboard) – maximale Isolation
+- B: 2 Container (Collector+API, Dashboard) – mittelweg
+- C: 1 Container (alles zusammen) – einfachste Deployment-Topologie
+
+**Entscheidung:** Option C – alles in einem Container auf Port 8090.
+
+**Begründung:**
+- Einfachstes Deployment auf Unraid (ein Container, ein Port)
+- FastAPI startet im gleichen Python-Prozess wie APScheduler → direkter Zugriff auf Scheduler-State
+- React SPA wird als statische Dateien im Docker-Build vordkompiliert und von FastAPI via `StaticFiles` mount ausgeliefert
+- Dockerfile: Multi-Stage Build (Node Stage → Frontend bauen → Python Stage → Runtime)
+- Kein Inter-Container-Networking nötig
 
 ---
 

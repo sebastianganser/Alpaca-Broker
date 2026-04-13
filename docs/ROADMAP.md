@@ -10,14 +10,14 @@
 | Sprint | Titel | Status | Datum |
 |---|---|---|---|
 | 0 | Fundament (Docker, DB, Struktur) | 🟢 Erledigt | April 2026 |
-| 1 | Price Collector (yfinance) | 🔴 Offen | – |
-| 2 | ARK Holdings Tracker | 🔴 Offen | – |
-| 3 | SEC EDGAR (Form 4 + 13F) | 🔴 Offen | – |
-| 4 | Politiker-Trades (Capitol Trades) | 🔴 Offen | – |
-| 5 | Fundamentals + Analyst-Daten | 🔴 Offen | – |
-| 6 | Technische Indikatoren | 🔴 Offen | – |
-| 7 | Feature Pipeline | 🔴 Offen | – |
-| 8 | Monitoring & Reporting | 🔴 Offen | – |
+| 1 | Price Collector (yfinance → Alpaca) | 🟢 Erledigt | April 2026 |
+| 2 | ARK Holdings Tracker | 🟢 Erledigt | April 2026 |
+| 3 | SEC EDGAR (Form 4 + 13F) | 🟢 Erledigt | April 2026 |
+| 4 | Politiker-Trades (Senate eFD) | 🟢 Erledigt | April 2026 |
+| 5 | Fundamentals + Analyst-Daten | 🟢 Erledigt | April 2026 |
+| 6 | Technische Indikatoren | 🟢 Erledigt | April 2026 |
+| 7 | Dashboard & Operations UI | 🔴 Offen | – |
+| 8 | Feature Pipeline | 🔴 Offen | – |
 | **⏸ Wartephase** | **2–3 Monate Datensammlung** | **–** | **–** |
 | 9 | Erste explorative Analyse (Jupyter) | 🔴 Offen | – |
 | 10 | Signal-Scoring-Modelle | 🔴 Offen | – |
@@ -28,7 +28,7 @@
 
 ---
 
-## Aktueller Sprint
+## Erledigte Sprints
 
 ### Sprint 0 – Fundament
 
@@ -49,8 +49,8 @@
 - [x] Zweite Migration: Tabelle `universe` anlegen
 - [x] Skript `scripts/init_universe.py` – befüllt Startuniversum (103 Ticker: S&P 100 + SPY)
 - [x] 11 Unit-Tests (Config + Universe-Modell)
-- [ ] Deployment auf Unraid testen
-- [ ] Grundlegender Health-Check-Endpoint (später, wenn API kommt)
+- [ ] Deployment auf Unraid testen *(blockiert: erst nach Sprint 8 – siehe [DECISIONS.md](DECISIONS.md))*
+- [ ] Grundlegender Health-Check-Endpoint (Sprint 8)
 
 **Definition of Done:**
 - Der `trading-signals-collector`-Container startet auf Unraid ohne Fehler
@@ -102,20 +102,24 @@
 
 ---
 
-### Sprint 3 – SEC EDGAR
+### Sprint 3 – SEC EDGAR ✅
 
 **Ziel:** Form 4 Insider-Trades und Form 13F institutionelle Holdings.
 
 **Aufgaben:**
-- [ ] SEC EDGAR API-Zugang dokumentieren (User-Agent-Header beachten!)
-- [ ] `Form4Collector` – parsen der XML-Filings
-- [ ] `Form13FCollector` – parsen der 13F-HR-Filings
-- [ ] Dedup-Logik (gleiches Filing nicht doppelt importieren)
-- [ ] `InsiderClusterComputer` für Cluster-Erkennung
-- [ ] Mapping von CIK zu Ticker (über companyfacts-API)
-- [ ] Tests mit echten EDGAR-Fixtures
+- [x] SEC EDGAR API-Zugang dokumentieren (User-Agent-Header beachten!)
+- [x] `SECClient` – zentraler API-Client mit Rate Limiting (10 req/s) und CIK-Mapping
+- [x] `Form4Collector` – Universe-driven: parst XML-Filings für alle 644 Ticker
+- [x] `Form13FCollector` – Filer-driven: Top-20 institutionelle Investoren (Buffett, Burry, etc.)
+- [x] Dedup-Logik (Unique Constraints auf beiden Tabellen)
+- [x] `InsiderClusterComputer` – erkennt Cluster-Käufe (≥2 Insider in 21 Tagen)
+- [x] CIK ↔ Ticker Mapping (via SEC `company_tickers.json`)
+- [x] ORM-Modelle (`InsiderTrade`, `InsiderCluster`, `Form13FHolding`)
+- [x] Alembic Migrationen (006 + 007)
+- [x] 67 neue Tests (154 gesamt, alle grün)
+- [x] APScheduler-Jobs: Form 4 täglich 23:30, 13F wöchentlich Sonntag 10:00
 
-**Definition of Done:** Tägliche Form-4-Erfassung läuft, historische 13F-Filings der Top-20-Institutionellen sind importiert.
+**Definition of Done:** ✅ Form 4 Collector, 13F Collector, InsiderClusterComputer, SECClient implementiert. 154 Tests grün.
 
 ---
 
@@ -124,47 +128,94 @@
 **Ziel:** Als zusätzliche Signalquelle, trotz bekannter Verzögerungen.
 
 **Aufgaben:**
-- [ ] Quelle wählen: Capitol Trades (Scraping) vs. Quiver Quantitative (API) vs. andere
-- [ ] Rechtliche Aspekte des Scrapings prüfen (Terms of Service)
-- [ ] `PoliticianTradesCollector` implementieren
-- [ ] Mapping auf Universum-Ticker
-- [ ] Tests
+- [x] Quelle wählen: Senate eFD (kostenlos, offizielle Regierungsquelle)
+- [x] Rechtliche Aspekte geprüft: Offizielle öffentliche Daten, kein ToS-Problem
+- [x] `DisclosureClient` für Senate eFD Scraping implementiert
+- [x] `PoliticianTradesCollector` implementiert (BaseCollector-Pattern)
+- [x] ORM-Modell `PoliticianTrade` + Alembic Migration 008
+- [x] Scheduler-Job: Wöchentlich Sonntag 11:00 MEZ
+- [x] 46 neue Tests (200 gesamt, alle grün)
+- [ ] House Clerk PTRs (PDF-only, future enhancement)
 
 **Definition of Done:** Politiker-Trades werden regelmäßig erfasst und sind in der DB abrufbar.
 
 ---
 
-### Sprint 5 – Fundamentals + Analyst-Daten
+### Sprint 5 – Fundamentals + Analyst-Daten ✅
 
 **Ziel:** P/E, P/S, Revenue-Growth, Analyst-Ratings, Earnings-Kalender.
 
 **Aufgaben:**
-- [ ] `FundamentalsCollectorYF` mit yfinance
-- [ ] `AnalystRatingsCollector`
-- [ ] `EarningsCalendarCollector`
-- [ ] Täglicher Job, aber Fundamentals nur 1x pro Woche (reicht meistens)
-- [ ] Tests
+- [x] `YFinanceClient` – Shared Client mit Rate-Limiting (0.5s/Ticker, 3s/Batch), Batch-Iteration, Graceful Error Handling
+- [x] `FundamentalsCollectorYF` – 18 Metriken aus `ticker.info` + `eps_growth_yoy` aus `get_earnings_estimate()`
+- [x] `AnalystRatingsCollector` – Upgrades/Downgrades aus `ticker.upgrades_downgrades`, 30-Tage-Lookback
+- [x] `EarningsCalendarCollector` – Earnings-Termine mit EPS-Estimates und Surprises
+- [x] ORM-Modelle: `FundamentalsSnapshot`, `AnalystRating`, `EarningsCalendar`
+- [x] Alembic Migrationen (009 + 010 + 011)
+- [x] 68 neue Tests (268 gesamt, alle grün)
+- [x] APScheduler: Fundamentals So 01:00, Analyst-Ratings tägl. 01:00, Earnings So 02:00 (Nachtslot)
+- [x] UPSERT für Fundamentals/Earnings (ändern sich), DO NOTHING für Ratings (Dedup)
 
-**Definition of Done:** Für jeden Universum-Titel gibt es aktuelle Fundamentals, Ratings und Earnings-Termine.
+**Definition of Done:** ✅ Für jeden Universum-Titel gibt es aktuelle Fundamentals, Ratings und Earnings-Termine. 268 Tests grün.
 
 ---
 
-### Sprint 6 – Technische Indikatoren
+### Sprint 6 – Technische Indikatoren ✅
 
 **Ziel:** Berechnung aller gängigen TA-Indikatoren aus den Preisdaten.
 
 **Aufgaben:**
-- [ ] `TechnicalIndicatorsComputer` mit `ta-lib` oder `pandas-ta`
-- [ ] SMA, EMA, RSI, MACD, Bollinger, ATR
-- [ ] Relative Strength vs. SPY
-- [ ] Täglicher Job nach Price-Collector
-- [ ] Tests mit bekannten Werten
+- [x] Historischer Price-Backfill via Alpaca ab 01.01.2021 (~882k Rows, ~5,3 Jahre Tiefe)
+- [x] `TechnicalIndicatorsComputer` mit `pandas-ta` (14 Indikatoren)
+- [x] SMA 20/50/200, EMA 12/26, RSI 14, MACD (Line/Signal/Histogram), Bollinger Bands, ATR 14
+- [x] Volume SMA 20, Relative Strength vs. SPY (Excess Return / Return-Differenz)
+- [x] ORM-Modell `TechnicalIndicator` + Alembic Migration 012
+- [x] Täglicher Job nach Price-Collector (22:30 MEZ, CronTrigger)
+- [x] Min-Data-Checks: Indikatoren nur berechnet wenn genug Historie vorhanden
+- [x] SPY-Cache: SPY-Preise einmal laden, für alle Ticker wiederverwenden
+- [x] UPSERT-Pattern (ON CONFLICT DO UPDATE) für Idempotenz
+- [x] Backfill-Modus: Alle historischen Tage auf einmal berechnen
+- [x] 35 neue Tests (303 gesamt, alle grün)
+- [x] `pandas-ta>=0.3.14` zu Dependencies hinzugefügt
 
-**Definition of Done:** Für jeden Titel und jeden Handelstag sind die TA-Indikatoren berechnet und in `technical_indicators` gespeichert.
+**Definition of Done:** ✅ Für jeden Titel und jeden Handelstag sind die TA-Indikatoren berechnet und in `technical_indicators` gespeichert. 303 Tests grün.
 
 ---
 
-### Sprint 7 – Feature Pipeline ⭐
+### Sprint 7 – Dashboard & Operations UI ✅
+
+**Ziel:** Browserbasiertes Frontend für grafisches Feedback und Betriebssteuerung.
+
+> Deployment-Gate: Deployment auf Unraid nun freigegeben.
+
+**Technologie:** FastAPI (Backend-API) + Vite/React SPA (Frontend) im gleichen Container
+**Design:** Stitch "Precision Architect" - Dark Mode, Cyan Primary (#28EBCF), Inter Font
+
+**Aufgaben:**
+- [x] **FastAPI-Backend** mit API-Endpoints (5 Router, 20+ Endpoints)
+- [x] **Vite/React SPA** mit dem Stitch Design System
+- [x] **Dashboard (Startseite):**
+  - [x] Collector-Status (Übersicht aller Jobs: letzter Lauf, Status, nächster Run)
+  - [x] Datenbestand pro Tabelle (Row-Counts, Zeiträume)
+  - [x] System-Health (DB-Verbindung, Alembic-Stand, Uptime, Job-Count)
+- [x] **Universe-Übersicht:**
+  - [x] Alle Ticker mit Status, Index-Zugehörigkeit, letztem Preis
+  - [x] Filter (Index, Sektor, Aktivstatus) + Suchfeld + Pagination
+- [x] **Signals Explorer:**
+  - [x] ARK-Deltas, Insider-Cluster, Politiker-Trades, Analyst-Ratings (Tabs)
+- [x] **Einstellungen / Operations:**
+  - [x] Backfill starten (Price-Backfill + TA-Backfill) mit Fortschrittsanzeige
+  - [x] DB-Bereinigung (VACUUM/ANALYZE) + Stats
+  - [x] Alembic-Status
+  - [x] Scheduler-Übersicht (Jobs, nächste Ausführung, manueller Trigger)
+- [x] **Ticker-Detail** (Preischart mit SMA/Bollinger, Indikatoren, Fundamentals, Signale)
+- [x] Docker Multi-Stage Build (Node + Python + Runtime)
+
+**Definition of Done:** Sebastian kann im Browser alle Daten sehen, Collectors überwachen, Backfills starten und DB-Wartung durchführen. ✅
+
+---
+
+### Sprint 8 – Feature Pipeline ⭐
 
 **Ziel:** Das Herzstück – aggregiere alle Rohdaten und Derived-Daten in `feature_snapshots`.
 
@@ -176,26 +227,20 @@
 - [ ] Analyst-Consensus-Score
 - [ ] Target-Variablen-Nachtragung (1d, 5d, 20d, 60d Returns)
 - [ ] Täglicher Job nach allen Collectors und Derived-Computern
+- [ ] Dashboard-Integration: Feature-Snapshot-Views im UI ergänzen
 - [ ] Tests mit End-to-End-Szenarien
 
-**Definition of Done:** Für jeden Titel im Universum gibt es für den aktuellen Tag einen vollständigen Feature-Vektor. Zielvariablen werden nach 1/5/20/60 Tagen automatisch nachgetragen.
+**Definition of Done:** Für jeden Titel im Universum gibt es für den aktuellen Tag einen vollständigen Feature-Vektor. Zielvariablen werden nach 1/5/20/60 Tagen automatisch nachgetragen. Dashboard zeigt Feature-Daten an.
 
 ---
 
-### Sprint 8 – Monitoring & Reporting
+## 🚢 Deployment auf Unraid
 
-**Ziel:** Transparenz darüber, was das System tut.
-
-**Aufgaben:**
-- [ ] Daily Summary E-Mail oder Telegram (wie läuft die Datensammlung?)
-- [ ] Health-Check-Endpoint
-- [ ] Warnung bei fehlenden Daten (z.B. ARK-Download fehlgeschlagen)
-- [ ] Einfaches Streamlit- oder HTML-Dashboard für Datenübersicht
-- [ ] `LEARNINGS.md` automatisch mit DB-Metriken füllen
-
-**Definition of Done:** Sebastian bekommt täglich eine Zusammenfassung und merkt sofort, wenn etwas hakt.
-
----
+**Nach Sprint 7:** Docker-Image bauen, `docker-compose up`, Alembic läuft automatisch via `entrypoint.sh`, Backfill über UI starten.
+**Voraussetzungen:**
+- [x] Alle Daten-Collectors implementiert (Sprint 1–6 ✅)
+- [x] Dashboard/UI mit Operations-Tools (Sprint 7 ✅)
+- [ ] Erster erfolgreicher Docker-Deployment auf Unraid
 
 ## ⏸ Wartephase: 2–3 Monate Datensammlung
 
@@ -327,7 +372,7 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
 - 29 neue Unit-Tests (40 gesamt, alle grün)
 - APScheduler Entrypoint: `main.py` mit BlockingScheduler, CronTrigger 22:15, Graceful Shutdown
 - Dockerfile CMD auf Scheduler-Entrypoint aktualisiert
-- Grundsatzentscheidung: Organisches Datenwachstum (kein Backfill), Dynamische Feature-Aktivierung
+- Grundsatzentscheidung: Organisches Datenwachstum für Signale (kein Signal-Backfill). *Preis-Backfill ab 2021 erfolgte in Sprint 6 – siehe DECISIONS.md*
 - Alpaca-Universum-Validierung: WBA bei Alpaca nicht gefunden → deaktiviert (102 aktive Ticker)
 - **Sprint 2 (ARK Holdings)**: arkfunds.io API statt CSV (403), 322 Holdings für 8 ETFs geladen
 - 150 neue Ticker aus ARK-ETFs via Alpaca validiert ins Universe (102 → 252)
@@ -340,4 +385,64 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
 - PriceCollectorAlpaca: Multi-Symbol-Batch (100/Request), adjustment=all, IEX feed
 - Erster Alpaca-Lauf: 2.700 neue Records fur 540 Ticker (<20s)
 - 87 Tests gesamt (alle grün)
-- Nächster Schritt: **Sprint 3 (SEC Insider Trades)**
+
+### Session 4 – 13. April 2026 – Sprint 3 Implementierung
+- **SECClient**: Zentraler API-Client mit Rate Limiting (10 req/s), CIK↔Ticker Mapping via `company_tickers.json`
+- **Form4Collector**: Universe-driven Ansatz (644 Ticker), SEC Submissions API + XML-Parsing
+- **Form13FCollector**: Filer-driven (Top-20 institutionelle Investoren), infotable XML-Parsing
+- **InsiderClusterComputer**: Cluster-Erkennung (≥2 Insider kaufen in 21-Tage-Fenster), Score-Berechnung
+- ORM-Modelle: `InsiderTrade`, `InsiderCluster`, `Form13FHolding`
+- Alembic Migrationen 006 (insider_trades + clusters) + 007 (form13f_holdings)
+- Unique Constraints für Dedup auf beiden Tabellen
+- APScheduler: Form 4 täglich 23:30 MEZ, 13F wöchentlich Sonntag 10:00 MEZ
+- 67 neue Tests (154 gesamt, alle grün)
+- Nächster Schritt: **Sprint 4 (Politiker-Trades)**
+
+### Session 5 – 13. April 2026 – Sprint 4 Implementierung
+- **Quiver Quantitative API verworfen** (30 $/Monat, Constraint: kostenlos bleiben)
+- **DisclosureClient**: Scraper für Senate eFD (efdsearch.senate.gov) mit CSRF-Handling, Terms-Agreement, HTML-Parsing
+- **PoliticianTradesCollector**: Senate-PTR-Abruf, Stock-Filterung, Ticker-Normalisierung, ON CONFLICT DO NOTHING
+- ORM-Modell `PoliticianTrade` mit owner/asset_description/comment Feldern
+- Alembic Migration 008: `politician_trades` Tabelle
+- Dependencies: `requests` + `beautifulsoup4` hinzugefügt
+- APScheduler: Wöchentlich Sonntag 11:00 MEZ
+- 46 neue Tests (200 gesamt, alle grün)
+- House PTRs bewusst ausgeklammert (PDF-only, zu komplex für Sprint 4)
+
+### Session 6 – 13. April 2026 – Sprint 5 Implementierung
+- **YFinanceClient**: Shared Client mit Rate-Limiting (0.5s/Ticker, 3s/Batch), Batch-Iteration, Graceful Error Handling
+- **FundamentalsCollectorYF**: 18 Fundamental-Metriken aus `ticker.info` + `eps_growth_yoy` aus `get_earnings_estimate()`
+- **AnalystRatingsCollector**: Upgrades/Downgrades aus `upgrades_downgrades` DataFrame, 30-Tage-Lookback, ON CONFLICT DO NOTHING
+- **EarningsCalendarCollector**: Earnings-Termine mit EPS-Estimates und Surprises, UPSERT (eps_actual kommt nachträglich)
+- ORM-Modelle: `FundamentalsSnapshot`, `AnalystRating`, `EarningsCalendar`
+- Alembic Migrationen 009 (fundamentals_snapshot) + 010 (analyst_ratings) + 011 (earnings_calendar)
+- Nachtslot 01:00–03:00 MEZ für alle yfinance-Jobs (keine Kollision mit bestehenden Daily-Jobs)
+- 68 neue Tests (268 gesamt, alle grün)
+- Nächster Schritt: **Sprint 6 (Technische Indikatoren)**
+
+### Session 7 – 13. April 2026 – Sprint 6 Implementierung
+- **Historischer Price-Backfill**: `scripts/backfill_prices.py` für Alpaca-Preisdaten ab 01.01.2021 (~882k Rows, ~5,3 Jahre Tiefe)
+- **TechnicalIndicatorsComputer**: 14 Indikatoren via `pandas-ta` (SMA 20/50/200, EMA 12/26, RSI 14, MACD Line/Signal/Histogram, Bollinger Upper/Lower, ATR 14, Volume SMA 20, Relative Strength vs. SPY)
+- **Relative Strength**: Excess Return (Return-Differenz) statt Ratio – kein Division-by-Zero, Quant-Standard
+- ORM-Modell `TechnicalIndicator` + Alembic Migration 012
+- APScheduler: Täglich 22:30 MEZ (15 Min nach Price Collector)
+- Min-Data-Checks, SPY-Cache, UPSERT-Pattern, Backfill-Modus
+- `pandas-ta>=0.3.14` als neue Dependency
+- 35 neue Tests (303 gesamt, alle grün)
+- Dokumentation aktualisiert: ROADMAP, ARCHITECTURE, CLAUDE.md, DECISIONS.md, README
+- 3 neue Entscheidungen dokumentiert (Preis-Backfill, RS-Formel, Scheduling)
+- Nächster Schritt: **Sprint 7 (Dashboard & Operations UI)**
+
+### Session 8 – 13. April 2026 – Sprint 7 Implementierung
+- **FastAPI-Backend**: `main.py` umgebaut von `BlockingScheduler` auf `BackgroundScheduler` + FastAPI Lifespan
+- **5 API-Router**: Dashboard, Universe, Signals, Ticker, Operations (20+ Endpoints)
+- **19 Pydantic Schemas** in `api/schemas.py`
+- **BackfillManager**: Thread-basierte Async-Backfills mit Progress-Tracking (`api/tasks.py`)
+- **Vite/React SPA**: 5 Pages (Dashboard, Universe, Signals, Settings, Ticker Detail)
+- **Design System**: Stitch "Precision Architect" – Dark Mode, Cyan Primary, Inter Font, Tonal Depth
+- **Ticker Detail**: Interaktiver Preischart (recharts) mit SMA/Bollinger Overlays, Indicator-Cards, Fundamentals
+- **Docker**: 3-Stage Multi-Stage Build (Node + Python + Runtime), `entrypoint.sh` mit DB-Wait + Alembic
+- **Dependencies**: react-router-dom, @tanstack/react-query, recharts, lucide-react
+- TypeScript + Ruff Lint: 0 Errors, Vite Build erfolgreich (650KB JS, 9KB CSS)
+- 303 Tests (alle grün, keine Regression)
+- Nächster Schritt: **Deployment auf Unraid**, dann **Sprint 8 (Feature Pipeline)**

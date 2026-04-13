@@ -45,8 +45,9 @@ Die kritischen Pfade (Daten-Fetching, Berechnungen, später Order-Ausführung) s
 
 ## Aktueller Status
 
-**Phase:** 🟢 Sprint 2 + Sprint 1b abgeschlossen
-**Aktueller Sprint:** Sprint 3 (SEC Insider Trades) – steht bevor
+**Phase:** 🟢 Sprint 7 abgeschlossen
+**Aktueller Sprint:** Sprint 7 (Dashboard & Operations UI) – abgeschlossen ✅
+**Nächster Schritt:** Deployment auf Unraid, dann Sprint 8 (Feature Pipeline)
 **Letzte Aktualisierung:** 13. April 2026
 
 Siehe [ROADMAP.md](docs/ROADMAP.md) für den detaillierten Fortschritt.
@@ -58,15 +59,16 @@ Siehe [ROADMAP.md](docs/ROADMAP.md) für den detaillierten Fortschritt.
 | Eigenschaft | Wert |
 |---|---|
 | **Sprache** | Python 3.12+ |
-| **Web-Framework** | FastAPI (später, für API-Layer) |
+| **Backend-API** | FastAPI (im gleichen Prozess wie APScheduler) |
+| **Frontend** | Vite + React SPA (Stitch "Precision Architect" Design) |
 | **ORM** | SQLAlchemy 2.0 |
 | **Migrations** | Alembic |
 | **Datenbank** | PostgreSQL 18 (`postgresql18-alpaca`, 192.168.1.93:5435, DB: `broker_data`, Schema: `signals`) |
-| **Paketmanager** | uv |
+| **Paketmanager** | uv (Python), npm (Frontend) |
 | **Scheduler** | APScheduler (im Python-Prozess) |
 | **Preisdaten** | Alpaca Market Data API (IEX feed, Multi-Symbol-Batch) |
 | **Universe** | 644 aktive Ticker (S&P 500 + Nasdaq 100 + ARK) |
-| **Deployment** | Docker Compose auf Unraid |
+| **Deployment** | Docker Compose auf Unraid (1 Container: Collector + API + UI) |
 | **Broker (später)** | Alpaca Paper Trading (NIEMALS Live!) |
 | **Versionskontrolle** | Git, [GitHub (sebastianganser/Alpaca-Broker)](https://github.com/sebastianganser/Alpaca-Broker) |
 

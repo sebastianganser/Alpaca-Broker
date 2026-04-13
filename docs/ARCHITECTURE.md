@@ -18,28 +18,31 @@
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Unraid-Server (Produktion)                                 │
+│  Sprint 7 (Dashboard) abgeschlossen – Deployment-ready      │
 │                                                             │
 │  ┌───────────────────┐    ┌────────────────────────────┐    │
 │  │ signal-collector  │    │ postgresql18-alpaca        │    │
 │  │ (Python Container)│───▶│ (separater Container)      │    │
 │  │                   │    │ DB: broker_data            │    │
-│  │ APScheduler:      │    │ Schema: signals            │    │
-│  │ • Täglich 22:00   │    │ User: sebastian            │    │
-│  │   (nach US-EOD)   │    │ Port: 5435                 │    │
-│  │                   │    │ Volume: /mnt/user/         │    │
-│  └───────────────────┘    │   Datafolder/Broker/       │    │
+│  │ APScheduler +     │    │ Schema: signals            │    │
+│  │ FastAPI + React   │    │ User: sebastian            │    │
+│  │ • Täglich 22–00h  │    │ Port: 5435                 │    │
+│  │ • Nachtslot 01–03 │    │ Volume: /mnt/user/         │    │
+│  │ • UI auf :8090    │    │   Datafolder/Broker/       │    │
+│  └───────────────────┘    └────────────────────────────┘    │
+│                                                             │
+│                           ┌────────────────────────────┐    │
+│                           │ Alpaca API                 │    │
+│                           │ (Paper Trading NUR!)       │    │
+│                           │ Endpoint hardcoded check   │    │
 │                           └────────────────────────────┘    │
 │                                                             │
-│  ┌───────────────────┐    ┌────────────────────────────┐    │
-│  │ signal-api        │    │ Alpaca API                 │    │
-│  │ (FastAPI, später) │───▶│ (Paper Trading NUR!)       │    │
-│  │ Port: 8090        │    │ Endpoint hardcoded check   │    │
-│  └───────────────────┘    └────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 **Netzwerk:** Der Collector-Container verbindet sich direkt zur bestehenden PostgreSQL-Instanz via Host-IP.
 **Backup:** Tägliches pg_dump via Cron auf Unraid, in den bestehenden Backup-Ordner.
+**Deployment-Gate:** Sprint 7 (Dashboard/UI) abgeschlossen – Deployment freigegeben. Siehe [DECISIONS.md](DECISIONS.md).
 
 ---
 
@@ -70,10 +73,11 @@ Alpaca-Broker/
 │   │   │       ├── universe.py    # ✅ implementiert (644 Ticker)
 │   │   │       ├── prices.py      # ✅ Sprint 1
 │   │   │       ├── ark.py         # ✅ Sprint 2
-│   │   │       ├── insider.py     # Sprint 3
-│   │   │       ├── politicians.py # Sprint 4
-│   │   │       ├── fundamentals.py# Sprint 5
-│   │   │       └── features.py    # Sprint 7
+│   │   │       ├── insider.py     # ✅ Sprint 3
+│   │   │       ├── politicians.py # ✅ Sprint 4
+│   │   │       ├── fundamentals.py# ✅ Sprint 5 (3 Modelle)
+│   │   │       ├── technical_indicators.py # ✅ Sprint 6
+│   │   │       └── features.py    # Sprint 8
 │   │   ├── collectors/            # Daten-Sammler (ein Modul pro Quelle)
 │   │   │   ├── __init__.py
 │   │   │   ├── base.py            # ✅ Abstract BaseCollector
@@ -81,42 +85,84 @@ Alpaca-Broker/
 │   │   │   ├── prices_yfinance.py # ✅ Sprint 1 (Fallback)
 │   │   │   ├── ark_holdings.py    # ✅ Sprint 2
 │   │   │   ├── gap_detector.py    # ✅ Sprint 1
+│   │   │   ├── sec_client.py      # ✅ Sprint 3 (SEC API Client)
+│   │   │   ├── form4_collector.py # ✅ Sprint 3 (Insider-Trades)
+│   │   │   ├── form13f_collector.py # ✅ Sprint 3 (Institutionelle)
+│   │   │   ├── disclosure_client.py # ✅ Sprint 4 (Senate eFD)
+│   │   │   ├── politician_trades_collector.py # ✅ Sprint 4
+│   │   │   ├── yfinance_client.py   # ✅ Sprint 5 (Shared Client)
+│   │   │   ├── fundamentals_collector.py # ✅ Sprint 5
+│   │   │   ├── analyst_ratings_collector.py # ✅ Sprint 5
+│   │   │   ├── earnings_calendar_collector.py # ✅ Sprint 5
 │   │   ├── derived/               # Berechnete Features
 │   │   │   ├── __init__.py
 │   │   │   ├── ark_deltas.py      # ✅ Sprint 2
-│   │   │   ├── insider_clusters.py# Sprint 3
-│   │   │   ├── technical_indicators.py # Sprint 6
-│   │   │   └── feature_pipeline.py# Sprint 7
+│   │   │   ├── insider_clusters.py# ✅ Sprint 3
+│   │   │   ├── technical_indicators.py # ✅ Sprint 6
+│   │   │   └── feature_pipeline.py# Sprint 8
 │   │   ├── universe/              # Dynamisches Titel-Universum
 │   │   │   ├── __init__.py
 │   │   │   ├── manager.py         # ✅ implementiert
 │   │   │   ├── alpaca_validator.py # ✅ Alpaca-Validierung
 │   │   │   └── index_sync.py      # ✅ Sprint 1b (S&P/Nasdaq sync)
+│   │   ├── api/                   # ✅ Sprint 7 (FastAPI Backend)
+│   │   │   ├── __init__.py
+│   │   │   ├── deps.py            # DB Session + Scheduler DI
+│   │   │   ├── schemas.py         # 19 Pydantic Response-Modelle
+│   │   │   ├── tasks.py           # BackfillManager (Threading)
+│   │   │   └── routes/
+│   │   │       ├── dashboard.py   # /api/v1/dashboard/summary
+│   │   │       ├── universe.py    # /api/v1/universe (paginated)
+│   │   │       ├── signals.py     # /api/v1/signals/ark,insider,...
+│   │   │       ├── ticker.py      # /api/v1/ticker/{sym}/prices,...
+│   │   │       └── operations.py  # /api/v1/ops/scheduler,backfill,db
 │   │   ├── scheduler/             # Job-Orchestrierung
 │   │   │   ├── __init__.py
-│   │   │   └── jobs.py            # ✅ Alpaca Prices + ARK Holdings
+│   │   │   └── jobs.py            # ✅ Prices + ARK + Form4 + 13F + Politicians + yfinance(3) + TA
 │   │   └── utils/
 │   │       ├── __init__.py
 │   │       ├── logging.py         # ✅ implementiert
 │   │       └── retry.py           # ✅ implementiert
-│   └── alembic/                   # Datenbank-Migrationen (001-005)
+│   └── alembic/                   # Datenbank-Migrationen (001-012)
 │       ├── env.py
 │       ├── script.py.mako
 │       └── versions/
 ├── tests/
-│   ├── unit/                      # ✅ 87 Tests
+│   ├── unit/                      # ✅ 303 Tests
 │   ├── integration/
 │   └── fixtures/
 ├── scripts/                       # Einmal-Skripte
 │   ├── init_universe.py           # ✅ S&P 100 + SPY
 │   ├── validate_universe.py       # ✅ Alpaca-Validierung
-│   └── sync_universe_indexes.py   # ✅ S&P 500 + Nasdaq 100
+│   ├── sync_universe_indexes.py   # ✅ S&P 500 + Nasdaq 100
+│   └── backfill_prices.py         # ✅ Sprint 6 (Preis-Backfill ab 2021)
 ├── pyproject.toml                 # uv Paketmanager
 ├── uv.lock                        # uv Lockfile
 ├── alembic.ini                    # Alembic-Konfiguration
 ├── .env.example                   # Env-Template (Credentials)
 ├── .gitignore
+├── .dockerignore                  # ✅ Sprint 7
 └── .python-version                # 3.12
+frontend/                          # ✅ Sprint 7 (Vite + React SPA)
+├── index.html
+├── package.json
+├── vite.config.ts                 # Proxy -> :8090 (dev)
+└── src/
+    ├── main.tsx
+    ├── App.tsx                    # Router + QueryClient
+    ├── Layout.tsx                 # Sidebar + Outlet
+    ├── api.ts                     # Typed API Client (fetch-wrapper)
+    ├── index.css                  # Precision Architect Design System
+    └── pages/
+        ├── DashboardPage.tsx      # Collector-Status, Stats, Health
+        ├── UniversePage.tsx       # Filtered/Paginated Ticker Table
+        ├── SignalsPage.tsx        # Tabbed: ARK, Insider, Politicians, Analyst
+        ├── SettingsPage.tsx       # Scheduler, Backfill, DB Ops
+        └── TickerPage.tsx         # Chart, Indicators, Fundamentals
+infra/
+├── Dockerfile.collector           # ✅ 3-Stage Build (Node+Python+Runtime)
+├── docker-compose.yml             # Port 8090
+└── entrypoint.sh                  # DB-Wait + Alembic + CMD
 ```
 
 ---
@@ -223,9 +269,11 @@ CREATE TABLE signals.insider_trades (
   price_per_share NUMERIC(16,4),
   total_value     NUMERIC(20,2),
   shares_owned_after NUMERIC(20,4),
+  is_derivative   BOOLEAN DEFAULT FALSE, -- True für Options/Warrants
   form4_url       TEXT,
   raw_data        JSONB,                 -- Komplette XML/JSON für Audit
-  fetched_at      TIMESTAMP DEFAULT NOW()
+  fetched_at      TIMESTAMP DEFAULT NOW(),
+  UNIQUE (cik, insider_name, transaction_date, transaction_type, shares, price_per_share)
 );
 
 CREATE INDEX idx_insider_ticker_date ON signals.insider_trades(ticker, transaction_date);
@@ -256,7 +304,7 @@ CREATE INDEX idx_13f_filer_period ON signals.form13f_holdings(filer_cik, report_
 ```
 
 #### `signals.politician_trades`
-US-Politiker-Trades (Capitol Trades o.ä.).
+US-Politiker-Trades (Senate eFD).
 
 ```sql
 CREATE TABLE signals.politician_trades (
@@ -268,18 +316,25 @@ CREATE TABLE signals.politician_trades (
   ticker          VARCHAR(20),
   transaction_date DATE,
   disclosure_date DATE,
-  transaction_type VARCHAR(20),          -- 'Buy', 'Sale'
+  transaction_type VARCHAR(20),          -- 'Purchase', 'Sale'
   amount_range    VARCHAR(50),           -- '$1,001 - $15,000' etc.
+  owner           VARCHAR(50),           -- 'Self', 'Spouse', 'Joint', 'Child'
+  asset_description TEXT,
+  comment         TEXT,
   source_url      TEXT,
   raw_data        JSONB,
   fetched_at      TIMESTAMP DEFAULT NOW()
 );
 
 CREATE INDEX idx_politician_ticker ON signals.politician_trades(ticker);
+CREATE INDEX idx_politician_date ON signals.politician_trades(transaction_date);
+CREATE UNIQUE INDEX uq_politician_trade_dedup ON signals.politician_trades(
+  politician_name, ticker, transaction_date, transaction_type, amount_range
+);
 ```
 
 #### `signals.fundamentals_snapshot`
-Fundamentaldaten pro Titel, täglicher Snapshot.
+Fundamentaldaten pro Titel, wöchentlicher Snapshot (sonntags via yfinance).
 
 ```sql
 CREATE TABLE signals.fundamentals_snapshot (
@@ -308,7 +363,7 @@ CREATE TABLE signals.fundamentals_snapshot (
 ```
 
 #### `signals.analyst_ratings`
-Analyst-Kursziele und Rating-Changes.
+Analyst-Upgrades/Downgrades (individuelle Firmen-Level-Einträge via yfinance).
 
 ```sql
 CREATE TABLE signals.analyst_ratings (
@@ -321,10 +376,14 @@ CREATE TABLE signals.analyst_ratings (
   rating_old      VARCHAR(50),
   price_target_new NUMERIC(16,4),
   price_target_old NUMERIC(16,4),
-  action          VARCHAR(50),           -- 'Upgrade', 'Downgrade', 'Initiate'
+  action          VARCHAR(50),           -- 'up', 'down', 'main', 'init', 'reit'
   raw_data        JSONB,
-  fetched_at      TIMESTAMP DEFAULT NOW()
+  fetched_at      TIMESTAMP DEFAULT NOW(),
+  UNIQUE (ticker, firm, rating_date, action)
 );
+
+CREATE INDEX idx_analyst_ticker ON signals.analyst_ratings(ticker);
+CREATE INDEX idx_analyst_rating_date ON signals.analyst_ratings(rating_date);
 ```
 
 #### `signals.earnings_calendar`
@@ -500,24 +559,25 @@ CREATE TABLE signals.collection_log (
 ## Datenfluss-Diagramm
 
 ```
-┌────────────────┐  ┌────────────────┐  ┌────────────────┐
-│ Alpaca Market  │  │ arkfunds.io    │  │ SEC EDGAR API  │
-│ Data API ⭐    │  │ (ARK Holdings) │  │ (Form 4/13F)   │
-└────────┬───────┘  └────────┬───────┘  └────────┬───────┘
-         │                   │                   │
-         ▼                   ▼                   ▼
-┌─────────────────────────────────────────────────────────┐
-│                    Collectors (Python)                  │
-│  [prices_alpaca] [ark_holdings] [form4] [fundamentals]  │
-└────────────────────────┬────────────────────────────────┘
-                         │ INSERT
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│              Raw Layer (append-only)                    │
-│  prices_daily | ark_holdings | insider_trades | ...     │
-└────────────────────────┬────────────────────────────────┘
-                         │ SELECT + COMPUTE
-                         ▼
+┌────────────────┐  ┌────────────────┐  ┌────────────────┐  ┌──────────────┐  ┌──────────────┐
+│ Alpaca Market  │  │ arkfunds.io    │  │ SEC EDGAR API  │  │ Senate eFD   │  │ yfinance     │
+│ Data API ⭐    │  │ (ARK Holdings) │  │ (Form 4/13F)   │  │ (Politician) │  │ (Fund/Rtg/Ea)│
+└────────┬───────┘  └────────┬───────┘  └────────┬───────┘  └──────┬───────┘  └──────┬───────┘
+         │                   │                   │                 │                 │
+         ▼                   ▼                   ▼                 ▼                 ▼
+┌────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                Collectors (Python)                                             │
+│  [prices_alpaca] [ark_holdings] [form4] [form13f] [politicians] [fund] [ratings] [earnings]   │
+└────────────────────────────────┬───────────────────────────────────────────────────────────────┘
+                                 │ INSERT / UPSERT
+                                 ▼
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│              Raw Layer (append-only / upsert)                                        │
+│  prices_daily | ark_holdings | insider_trades | politician_trades                    │
+│  fundamentals_snapshot | analyst_ratings | earnings_calendar                          │
+└────────────────────────────────┬─────────────────────────────────────────────────────┘
+                                 │ SELECT + COMPUTE
+                                 ▼
 ┌─────────────────────────────────────────────────────────┐
 │              Derived Layer (recomputable)               │
 │  ark_deltas | insider_clusters | technical_indicators   │
@@ -542,19 +602,25 @@ CREATE TABLE signals.collection_log (
 
 ## Ausführungs-Zeitplan
 
-**Täglich nach US-Börsenschluss:**
+**Täglich – Nachtschicht (01:00 MEZ):**
 
-1. `prices_alpaca` – OHLCV für das gesamte Universum (22:15 MEZ, Alpaca Multi-Symbol-Batch)
-2. `ark_holdings` – ARK-ETF-Holdings via arkfunds.io + Delta-Berechnung (23:00 MEZ)
-3. `form4_collector` – Neue Form-4-Filings der letzten 24h (Sprint 3)
-4. `fundamentals_collector` – Fundamentaldaten aktualisieren (Sprint 5)
-5. `analyst_collector` – Analyst-Ratings (Sprint 5)
-6. `technical_indicators_computer` – TA-Indikatoren berechnen (Sprint 6)
-7. `feature_pipeline` – Feature Snapshot für den Tag erzeugen (Sprint 7)
-8. `target_backfill` – Returns für ältere Snapshots nachtragen (Sprint 7)
+1. `analyst_ratings_collector` – Analyst-Upgrades/Downgrades via yfinance (01:00 MEZ) ✅ Sprint 5
+
+**Täglich – Abendschicht (nach US-EOD):**
+
+2. `prices_alpaca` – OHLCV für das gesamte Universum (22:15 MEZ, Alpaca Multi-Symbol-Batch)
+3. `technical_indicators_computer` – TA-Indikatoren berechnen (22:30 MEZ) ✅ Sprint 6
+4. `ark_holdings` – ARK-ETF-Holdings via arkfunds.io + Delta-Berechnung (23:00 MEZ)
+5. `form4_collector` – Neue Form-4-Filings der letzten 24h + Cluster-Berechnung (23:30 MEZ)
+6. `feature_pipeline` – Feature Snapshot für den Tag erzeugen (Sprint 8)
+7. `target_backfill` – Returns für ältere Snapshots nachtragen (Sprint 8)
 
 **Wöchentlich (Sonntag):**
-- `form13f_collector` – Neue 13F-Filings (falls Quartalsende gewesen)
+- `fundamentals_collector` – Fundamental-Metriken via yfinance (01:00 MEZ) ✅ Sprint 5
+- `analyst_ratings_collector` – Läuft auch sonntags (01:00 MEZ)
+- `earnings_calendar_collector` – Earnings-Termine via yfinance (02:00 MEZ) ✅ Sprint 5
+- `form13f_collector` – Neue 13F-Filings (falls Quartalsende gewesen) (10:00 MEZ)
+- `politician_trades_collector` – Senate eFD PTR-Scraping (11:00 MEZ)
 - `universe_cleanup` – Inaktive Titel markieren
 - `db_maintenance` – VACUUM, ANALYZE
 
@@ -572,4 +638,13 @@ Siehe [DECISIONS.md](DECISIONS.md) für Begründungen.
 - **yfinance als Fallback**: Code bleibt erhalten, nicht mehr im Scheduler
 - **arkfunds.io statt ARK CSV**: CSV gibt 403, JSON-API ist robuster
 - **Wikipedia für Index-Listen**: Kostenlos, aktuell genug bei ~4 Rebalancings/Jahr
+- **Senate eFD statt Quiver API**: Kostenlos, offizielle Primärquelle, kein API-Token nötig
+- **yfinance für Fundamentals/Ratings/Earnings**: Kostenlos, alle Felder verfügbar, Risiko: inoffizielle API
+- **Nachtslot 01:00–03:00 MEZ für yfinance**: Keine Kollision mit Abend-Jobs, Yahoo weniger belastet nachts
 - **Separater Container statt geteilte DB**: Isolation von GynOrg, unabhängige Backups
+- **pandas-ta statt ta-lib**: Reines Python, kein C-Compiler nötig im Docker, Performance für EOD ausreichend
+- **Preis-Backfill ab 2021**: Preise sind Basisdaten (kein Signal); ML braucht ≥500k Samples; Signal-Backfill weiterhin NEIN
+- **Relative Strength via Excess Return**: `ticker_ret_20d − spy_ret_20d` statt Ratio (kein Division-by-Zero)
+- **FastAPI + Vite/React SPA statt Streamlit**: Volle Design-Kontrolle für Stitch „Precision Architect“ Design System
+- **Einzelner Container**: Collector + API + UI in einem Container auf Port 8090, Multi-Stage Docker Build
+- **Dashboard vor Feature Pipeline**: UI (Sprint 7) vor Backend-Aggregation (Sprint 8) für sofortiges grafisches Feedback

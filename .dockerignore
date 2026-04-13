@@ -1,0 +1,44 @@
+# =============================================================================
+# .dockerignore – Keep build context small
+# =============================================================================
+
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*.egg-info
+.venv
+venv
+.pytest_cache
+.coverage
+htmlcov
+.tox
+.mypy_cache
+.ruff_cache
+
+# Frontend (not needed in Python build stage)
+frontend/node_modules
+
+# IDE
+.vscode
+.idea
+*.swp
+
+# Docs (not needed in container)
+docs/
+*.md
+!README.md
+
+# Environment (provided via compose)
+.env
+.env.*
+
+# Docker
+infra/docker-compose*.yml
+
+# OS
+Thumbs.db
+.DS_Store

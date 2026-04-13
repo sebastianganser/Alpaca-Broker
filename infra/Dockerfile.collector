@@ -1,9 +1,19 @@
 # =============================================================================
-# Trading Signals Collector – Dockerfile
+# Alpaca-Broker – Dockerfile (Collector + API + UI)
 # =============================================================================
-# Multi-stage build: uv for dependency resolution, slim runtime image.
+# Multi-stage build: Node for frontend, uv for Python, slim runtime.
 
-FROM python:3.12-slim AS builder
+# ── Stage 1: Frontend Build ──────────────────────────────────────────────
+FROM node:20-alpine AS frontend-builder
+WORKDIR /frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+# Output: /frontend/dist/
+
+# ── Stage 2: Python Dependencies ─────────────────────────────────────────
+FROM python:3.12-slim AS python-builder
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -11,11 +21,10 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
 # Copy dependency files first (cache layer)
-COPY pyproject.toml ./
-COPY .python-version ./
+COPY pyproject.toml uv.lock .python-version ./
 
 # Install dependencies (without the project itself yet)
-RUN uv sync --no-install-project --frozen 2>/dev/null || uv sync --no-install-project
+RUN uv sync --no-install-project --frozen
 
 # Copy source code
 COPY src/ ./src/
@@ -23,11 +32,9 @@ COPY alembic.ini ./
 COPY scripts/ ./scripts/
 
 # Install the project
-RUN uv sync --frozen 2>/dev/null || uv sync
+RUN uv sync --frozen
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Runtime stage
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Stage 3: Runtime ─────────────────────────────────────────────────────
 FROM python:3.12-slim
 
 # Install PostgreSQL client (for pg_isready health checks)
@@ -37,15 +44,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy the virtual environment from builder
-COPY --from=builder /app /app
+# Copy the virtual environment and source from python builder
+COPY --from=python-builder /app /app
+
+# Copy the frontend build output
+COPY --from=frontend-builder /frontend/dist /app/frontend/dist
 
 # Add uv to runtime for running scripts
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Copy and set entrypoint (auto-migration on startup)
+COPY infra/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Expose the API + UI port
+EXPOSE 8090
 
 # Health check: verify DB is reachable
 HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
     CMD pg_isready -h ${DB_HOST:-localhost} -p ${DB_PORT:-5432} || exit 1
 
-# Run the APScheduler-based collector
+# Entrypoint: wait for DB, run migrations, then start CMD
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# Run FastAPI + Scheduler via uvicorn
 CMD ["uv", "run", "python", "-m", "trading_signals.main"]
