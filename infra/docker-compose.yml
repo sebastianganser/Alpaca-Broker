@@ -4,24 +4,37 @@
 # Die PostgreSQL-Datenbank läuft als separater Container (postgresql18-alpaca)
 # auf dem Unraid-Server und wird NICHT hier verwaltet.
 #
-# Deployment auf Unraid:
-#   1. Repo clonen:  git clone https://github.com/sebastianganser/Alpaca-Broker.git
-#   2. .env Datei im Repo-Root ablegen (Vorlage: .env.example)
-#   3. Build + Start: docker compose -f infra/docker-compose.yml up --build -d
+# ─── Unraid Compose Manager Setup ───────────────────────────────────────
+# 1. SSH auf Unraid:
+#      git clone https://github.com/sebastianganser/Alpaca-Broker.git \
+#        /mnt/user/appdata/alpaca-broker
+# 2. .env anlegen:
+#      cp /mnt/user/appdata/alpaca-broker/.env.example \
+#         /mnt/user/appdata/alpaca-broker/.env
+#      nano /mnt/user/appdata/alpaca-broker/.env  → echte Werte eintragen
+# 3. Compose Manager → Stack "Alpaca-Broker":
+#      COMPOSE FILE  → Inhalt dieser Datei einfügen
+#      ENV FILE      → Inhalt der .env einfügen
+# 4. Stack starten → "Compose Up"
 #
-# Für lokale Entwicklung: docker compose -f infra/docker-compose.yml up --build
+# ─── Updates deployen ───────────────────────────────────────────────────
+#   ssh unraid
+#   cd /mnt/user/appdata/alpaca-broker && git pull
+#   → Compose Manager → Stack "Alpaca-Broker" → "Compose Down" → "Compose Up"
+#
+# ─── Lokale Entwicklung ────────────────────────────────────────────────
+#   docker compose -f infra/docker-compose.yml up --build
 
 services:
   alpaca-broker:
     build:
-      context: ..
+      context: /mnt/user/appdata/alpaca-broker
       dockerfile: infra/Dockerfile.collector
+    image: alpaca-broker:latest
     container_name: alpaca-broker
     env_file:
-      - ../.env
+      - /mnt/user/appdata/alpaca-broker/.env
     environment:
-      # Innerhalb von Docker-Netzwerken auf Unraid:
-      # DB_HOST wird über .env gesetzt (192.168.1.93)
       TZ: Europe/Berlin
     ports:
       - "8090:8090"
