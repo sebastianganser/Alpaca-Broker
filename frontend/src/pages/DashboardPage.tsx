@@ -46,13 +46,33 @@ function CollectorCard({ c }: { c: CollectorStatus }) {
     .replace(' (yfinance)', '').replace(' (Alpaca)', '')
     .replace(' (Senate eFD)', '');
 
+  // Build result label based on last_status and records_written
+  let resultLabel: React.ReactNode = null;
+  if (c.last_run && c.last_status === 'success' && c.records_written !== null) {
+    resultLabel = (
+      <span style={{ color: c.records_written > 0 ? 'var(--primary)' : 'var(--on-surface-dim)' }}>
+        ({formatNumber(c.records_written)} neue Einträge)
+      </span>
+    );
+  } else if (c.last_run && (c.last_status === 'failed' || c.last_status === 'error')) {
+    resultLabel = (
+      <a href="/logs" style={{ color: 'var(--error)', fontSize: '0.75rem' }}>
+        → siehe Logs
+      </a>
+    );
+  } else if (c.last_run && c.last_status === 'running') {
+    resultLabel = (
+      <span style={{ color: 'var(--warning)' }}>läuft…</span>
+    );
+  }
+
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-md">
         <StatusBadge status={c.last_status} />
         {c.last_status === 'success' ? (
           <CheckCircle size={16} style={{ color: 'var(--primary)' }} />
-        ) : c.last_status === 'error' ? (
+        ) : c.last_status === 'error' || c.last_status === 'failed' ? (
           <XCircle size={16} style={{ color: 'var(--error)' }} />
         ) : (
           <Clock size={16} style={{ color: 'var(--on-surface-dim)' }} />
@@ -61,14 +81,10 @@ function CollectorCard({ c }: { c: CollectorStatus }) {
       <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '4px' }}>
         {shortName}
       </div>
-      <div className="text-xs text-dim" style={{ marginBottom: '8px' }}>
+      <div className="text-xs text-dim" style={{ marginBottom: '2px' }}>
         {formatRelativeTime(c.last_run)}
+        {resultLabel && <>{' '}{resultLabel}</>}
       </div>
-      {c.records_written !== null && (
-        <div className="text-xs text-variant">
-          {formatNumber(c.records_written)} records
-        </div>
-      )}
       <div className="label-dim" style={{ marginTop: '8px', fontSize: '0.6rem' }}>
         Nächster Lauf: {c.next_run ? new Date(c.next_run).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '—'}
       </div>
