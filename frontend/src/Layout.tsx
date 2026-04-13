@@ -19,7 +19,6 @@ const worldClockZones = [
   { label: 'New York', tz: 'America/New_York', flag: '🇺🇸' },
   { label: 'London', tz: 'Europe/London', flag: '🇬🇧' },
   { label: 'Tokyo', tz: 'Asia/Tokyo', flag: '🇯🇵' },
-  { label: 'Hong Kong', tz: 'Asia/Hong_Kong', flag: '🇭🇰' },
 ];
 
 function WorldClock() {
