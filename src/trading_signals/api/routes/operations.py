@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from trading_signals.api.deps import get_db, get_scheduler
+from trading_signals.api.job_tracker import job_tracker
 from trading_signals.api.schemas import (
     AlembicStatus,
     BackfillStatus,
@@ -36,6 +37,7 @@ def get_scheduler_jobs(scheduler=Depends(get_scheduler)):
             trigger=str(job.trigger),
             next_run=job.next_run_time,
             pending=job.pending,
+            is_running=job_tracker.is_running(job.id),
         )
         for job in scheduler.get_jobs()
     ]

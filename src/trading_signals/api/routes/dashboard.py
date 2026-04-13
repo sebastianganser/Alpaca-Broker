@@ -11,6 +11,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from trading_signals.api.deps import get_db, get_scheduler
+from trading_signals.api.job_tracker import job_tracker
 from trading_signals.api.schemas import (
     CollectorStatus,
     DashboardSummary,
@@ -78,14 +79,20 @@ def get_dashboard_summary(
                 .first()
             )
 
+            # Check if currently running
+            running = job_tracker.is_running(job.id)
+
             collectors.append(
                 CollectorStatus(
                     id=job.id,
                     name=job.name,
                     last_run=last_log.started_at if last_log else None,
-                    last_status=last_log.status if last_log else None,
+                    last_status="running" if running else (
+                        last_log.status if last_log else None
+                    ),
                     records_written=last_log.records_written if last_log else None,
                     next_run=job.next_run_time,
+                    is_running=running,
                 )
             )
 

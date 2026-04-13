@@ -18,6 +18,7 @@ class CollectorStatus(BaseModel):
     last_status: str | None = None
     records_written: int | None = None
     next_run: datetime | None = None
+    is_running: bool = False
 
 
 class TableStats(BaseModel):
@@ -193,6 +194,7 @@ class SchedulerJobInfo(BaseModel):
     trigger: str
     next_run: datetime | None = None
     pending: bool = False
+    is_running: bool = False
 
 
 class AlembicStatus(BaseModel):

@@ -110,7 +110,7 @@ export default function DashboardPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['dashboard'],
     queryFn: fetchDashboard,
-    refetchInterval: 30_000,
+    refetchInterval: 5_000,
   });
 
   if (isLoading) {

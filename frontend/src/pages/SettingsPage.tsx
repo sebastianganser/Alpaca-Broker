@@ -33,7 +33,7 @@ function SchedulerSection() {
   const { data: jobs, isLoading } = useQuery({
     queryKey: ['scheduler-jobs'],
     queryFn: fetchSchedulerJobs,
-    refetchInterval: 10_000,
+    refetchInterval: 3_000,
   });
   const [triggering, setTriggering] = useState<string | null>(null);
 
@@ -81,18 +81,21 @@ function SchedulerSection() {
                       : '—'}
                   </td>
                   <td>
-                    <span className={`badge ${job.pending ? 'badge-warning' : 'badge-success'}`}>
-                      {job.pending ? 'Ausstehend' : 'Bereit'}
+                    <span className={`badge ${
+                      job.is_running ? 'badge-warning' :
+                      job.pending ? 'badge-neutral' : 'badge-success'
+                    }`}>
+                      {job.is_running ? '⟳ Läuft...' : job.pending ? 'Ausstehend' : 'Bereit'}
                     </span>
                   </td>
                   <td style={{ textAlign: 'right' }}>
                     <button
                       className="btn btn-ghost btn-sm"
                       onClick={() => handleTrigger(job.id)}
-                      disabled={triggering === job.id}
+                      disabled={triggering === job.id || job.is_running}
                     >
                       <Play size={12} />
-                      {triggering === job.id ? 'Gestartet...' : 'Jetzt starten'}
+                      {triggering === job.id ? 'Gestartet...' : job.is_running ? 'Aktiv' : 'Jetzt starten'}
                     </button>
                   </td>
                 </tr>

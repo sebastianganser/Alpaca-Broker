@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from trading_signals.api.deps import set_scheduler
+from trading_signals.api.job_tracker import job_tracker
 from trading_signals.api.routes.dashboard import router as dashboard_router
 from trading_signals.api.routes.operations import router as operations_router
 from trading_signals.api.routes.signals import router as signals_router
@@ -159,6 +160,7 @@ async def lifespan(app: FastAPI):
 
     _scheduler = create_scheduler()
     set_scheduler(_scheduler)
+    job_tracker.register(_scheduler)
     _scheduler.start()
 
     # Log all registered jobs

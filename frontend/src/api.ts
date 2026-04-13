@@ -40,6 +40,7 @@ export interface CollectorStatus {
   last_status: string | null;
   records_written: number | null;
   next_run: string | null;
+  is_running: boolean;
 }
 
 export interface TableStats {
@@ -225,6 +226,7 @@ export interface SchedulerJob {
   trigger: string;
   next_run: string | null;
   pending: boolean;
+  is_running: boolean;
 }
 
 export interface BackfillStatus {
