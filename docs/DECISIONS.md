@@ -768,6 +768,45 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 
 ---
 
+### [2026-04-13] SPA-Routing: Catch-All Fallback statt StaticFiles
+
+**Kontext:** Strg+F5 (Hard Refresh) auf jeder Seite außer `/` lieferte `{"detail":"Not Found"}` vom FastAPI-Backend, weil `StaticFiles(html=True)` nur `/` → `index.html` auflöst, nicht `/universe`, `/settings` etc.
+
+**Optionen:**
+- A: `StaticFiles(html=True)` beibehalten, Benutzer muss über root navigieren (schlecht)
+- B: Catch-all `@app.get("/{full_path:path}")` Route, die `index.html` für alle Nicht-API-Pfade liefert
+- C: Nginx-Reverse-Proxy mit `try_files` (zusätzliche Komplexität)
+
+**Entscheidung:** Option B – FastAPI Catch-All Route.
+
+**Begründung:**
+- Kein zusätzlicher Container/Proxy nötig
+- `/assets/*` wird direkt als `StaticFiles` mount ausgeliefert (JS, CSS)
+- Alle anderen Pfade liefern `index.html` → React Router übernimmt
+- Statische Dateien (favicon.ico) werden direkt ausgeliefert, wenn sie existieren
+
+---
+
+### [2026-04-13] Live Job-Status via APScheduler Event Listener
+
+**Kontext:** In Settings und Dashboard wurden Jobs immer als "BEREIT" / "Ausstehend" angezeigt, selbst während sie gerade liefen. Es gab keine Möglichkeit zu sehen, ob ein Job aktiv ist.
+
+**Optionen:**
+- A: Polling der `collection_log`-Tabelle (zeigt nur abgeschlossene Jobs, nicht laufende)
+- B: APScheduler Event Listener (`EVENT_JOB_SUBMITTED` + `EVENT_JOB_EXECUTED/ERROR`) mit In-Memory-Tracker
+- C: Redis/DB für Job-State (Overhead für 10 Jobs)
+
+**Entscheidung:** Option B – `JobTracker` mit APScheduler Events.
+
+**Begründung:**
+- Thread-safe In-Memory-Tracker ist ausreichend für 10 Jobs
+- Kein zusätzlicher Speicher/DB-Query nötig
+- Events werden synchron gefeuert → sofortige Statusaktualisierung
+- Dashboard pollt alle 5s, Settings alle 3s → reaktionsschnelle Anzeige
+- UI zeigt "⟳ Läuft..." (gelb) + deaktiviert "Jetzt starten" Button
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.

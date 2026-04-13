@@ -484,5 +484,10 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
   - Aktualisiert S&P 500 / Nasdaq 100 Mitgliedschaft von Wikipedia
   - Validiert neue Ticker gegen Alpaca, fügt sie automatisch zum Universe hinzu
 - 303 Tests (alle grün)
+- **SPA-Routing Fix**: Catch-All Fallback in FastAPI für Strg+F5 auf allen Seiten
+- **Live Job-Status**: `JobTracker` mit APScheduler Event Listener
+  - Settings: „⟳ Läuft..." Badge + deaktivierter Trigger-Button
+  - Dashboard: Collector-Cards zeigen Echtzeit-Running-Status
+  - Polling: Dashboard 5s, Settings 3s
 - Dokumentation aktualisiert: CLAUDE.md, ROADMAP.md, ARCHITECTURE.md, DECISIONS.md, README.md
 - Nächster Schritt: **Sprint 8 (Feature Pipeline)**

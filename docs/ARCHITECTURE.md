@@ -107,8 +107,9 @@ Alpaca-Broker/
 │   │   │   └── index_sync.py      # ✅ Sprint 1b (S&P/Nasdaq sync)
 │   │   ├── api/                   # ✅ Sprint 7 (FastAPI Backend)
 │   │   │   ├── __init__.py
-│   │   │   ├── deps.py            # DB Session + Scheduler DI
-│   │   │   ├── schemas.py         # 19 Pydantic Response-Modelle
+│   │   │   ├── deps.py           # ✅ DB session + Scheduler dependency injection
+│   │   │   ├── job_tracker.py     # ✅ APScheduler event listener (live running status)
+│   │   │   ├── schemas.py         # ✅ 19+ Pydantic response schemas
 │   │   │   ├── tasks.py           # BackfillManager (Threading)
 │   │   │   └── routes/
 │   │   │       ├── dashboard.py   # /api/v1/dashboard/summary
