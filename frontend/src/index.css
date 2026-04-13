@@ -213,6 +213,52 @@ h4 { font-size: 1.1rem; }
   border-radius: 0 2px 2px 0;
 }
 
+/* ── World Clock ─────────────────────────────────────────────────── */
+
+.world-clock {
+  padding: var(--space-md) var(--space-lg);
+  margin-bottom: var(--space-sm);
+}
+
+.world-clock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 0;
+}
+
+.world-clock-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.65rem;
+  color: var(--on-surface-dim);
+  letter-spacing: 0.02em;
+}
+
+.world-clock-flag {
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.world-clock-time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--on-surface);
+  letter-spacing: 0.04em;
+}
+
+.world-clock-day {
+  font-size: 0.55rem;
+  color: var(--on-surface-dim);
+  font-weight: 400;
+  min-width: 24px;
+}
+
 .nav-item svg {
   width: 18px;
   height: 18px;
