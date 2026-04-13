@@ -30,6 +30,7 @@ RUN uv sync --no-install-project --frozen
 COPY src/ ./src/
 COPY alembic.ini ./
 COPY scripts/ ./scripts/
+COPY README.md ./
 
 # Install the project
 RUN uv sync --frozen
