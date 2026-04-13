@@ -4,6 +4,8 @@ import {
   Globe,
   Activity,
   Settings,
+  LockOpen,
+  Lock,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -14,12 +16,48 @@ const navItems = [
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
+// Trading hours in local time for each exchange
 const worldClockZones = [
-  { label: 'Berlin', tz: 'Europe/Berlin', flag: '🇩🇪' },
-  { label: 'New York', tz: 'America/New_York', flag: '🇺🇸' },
-  { label: 'London', tz: 'Europe/London', flag: '🇬🇧' },
-  { label: 'Tokyo', tz: 'Asia/Tokyo', flag: '🇯🇵' },
+  { label: 'Frankfurt', tz: 'Europe/Berlin', flag: '🇩🇪', openH: 9, openM: 0, closeH: 17, closeM: 30 },
+  { label: 'New York', tz: 'America/New_York', flag: '🇺🇸', openH: 9, openM: 30, closeH: 16, closeM: 0 },
+  { label: 'London', tz: 'Europe/London', flag: '🇬🇧', openH: 8, openM: 0, closeH: 16, closeM: 30 },
+  { label: 'Tokyo', tz: 'Asia/Tokyo', flag: '🇯🇵', openH: 9, openM: 0, closeH: 15, closeM: 0 },
 ];
+
+function isExchangeOpen(
+  now: Date,
+  tz: string,
+  openH: number, openM: number,
+  closeH: number, closeM: number,
+): boolean {
+  // Get local time at the exchange
+  const parts = now.toLocaleString('en-US', {
+    timeZone: tz,
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    weekday: 'short',
+  });
+
+  // Parse weekday
+  const dayMatch = now.toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' });
+  if (['Sat', 'Sun'].includes(dayMatch)) return false;
+
+  // Parse hour and minute
+  const timeStr = now.toLocaleTimeString('en-US', {
+    timeZone: tz,
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const [h, m] = timeStr.split(':').map(Number);
+
+  const nowMinutes = h * 60 + m;
+  const openMinutes = openH * 60 + openM;
+  const closeMinutes = closeH * 60 + closeM;
+
+  return nowMinutes >= openMinutes && nowMinutes < closeMinutes;
+}
 
 function WorldClock() {
   const [now, setNow] = useState(new Date());
@@ -43,18 +81,26 @@ function WorldClock() {
 
   return (
     <div className="world-clock">
-      {worldClockZones.map(({ label, tz, flag }) => (
-        <div key={tz} className="world-clock-row">
-          <span className="world-clock-label">
-            <span className="world-clock-flag">{flag}</span>
-            {label}
-          </span>
-          <span className="world-clock-time">
-            <span className="world-clock-day">{formatDay(tz)}</span>
-            {formatTime(tz)}
-          </span>
-        </div>
-      ))}
+      {worldClockZones.map(({ label, tz, flag, openH, openM, closeH, closeM }) => {
+        const open = isExchangeOpen(now, tz, openH, openM, closeH, closeM);
+        return (
+          <div key={tz} className="world-clock-row">
+            <span className="world-clock-label">
+              <span className="world-clock-flag">{flag}</span>
+              {label}
+            </span>
+            <span className="world-clock-time">
+              <span className="world-clock-day">{formatDay(tz)}</span>
+              {formatTime(tz)}
+              {open ? (
+                <LockOpen size={10} className="world-clock-status open" />
+              ) : (
+                <Lock size={10} className="world-clock-status closed" />
+              )}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

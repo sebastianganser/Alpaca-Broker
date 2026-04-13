@@ -259,6 +259,20 @@ h4 { font-size: 1.1rem; }
   min-width: 24px;
 }
 
+.world-clock-status {
+  flex-shrink: 0;
+  margin-left: 3px;
+}
+
+.world-clock-status.open {
+  color: var(--primary);
+}
+
+.world-clock-status.closed {
+  color: var(--on-surface-dim);
+  opacity: 0.3;
+}
+
 .nav-item svg {
   width: 18px;
   height: 18px;
