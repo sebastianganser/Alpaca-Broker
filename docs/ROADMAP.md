@@ -514,5 +514,12 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
   - Settings-Page: "Sektoren nachladen" Card (3. Backfill-Karte neben Prices/TA)
   - Progress-Bar + Ticker-Anzeige während Enrichment
 - **CLI:** `scripts/enrich_universe_sectors.py` (standalone, mit --dry-run)
+- **UI-Polish:**
+  - Rebranding: Sidebar-Header "ALPACA BROKER" (Haupttitel) + "Signal Warehouse" (Untertitel)
+  - Browser-Tab: "Alpaca Broker"
+  - Weltuhr im Sidebar: Frankfurt (Xetra), New York (NYSE), London (LSE), Tokyo (TSE)
+  - Börsen-Status: Lucide Lock/LockOpen Icons zeigen Öffnungsstatus in Echtzeit
+  - Handelszeiten: Xetra 9–17:30, NYSE 9:30–16, LSE 8–16:30, TSE 9–15
+- **Bugfix:** Alembic-Revision im Dashboard zeigte "—" → Query nutzte falsches Schema (`public` statt `signals`)
 - Dokumentation aktualisiert: ARCHITECTURE.md, ROADMAP.md, DATA_SOURCES.md, DECISIONS.md
 - Nächster Schritt: **Enrichment auf Unraid auslösen**, dann **Sprint 8 (Feature Pipeline)**
