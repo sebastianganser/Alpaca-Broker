@@ -496,10 +496,22 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
 ### Session 10 – 13. April 2026 – Datenqualitäts-Kachel
 - **Datenqualitäts-Kachel** auf der TickerPage: Zeigt pro Ticker den Vollständigkeitsstatus
   - 4 Dimensionen: Preise (Tage + letztes Update), TA-Indikatoren (bis wann berechnet), Fundamentals (letzter Snapshot), Signal-Updates (Scheduler-Status + nächster Lauf)
-  - Farbcodierte Status-Icons: ✅ complete (grün), ⚠️ partial (gelb), ❌ missing (rot)
-  - Fortschrittsbalken am oberen Kartenrand zeigt Overall-Completeness
   - Neuer Backend-Endpoint: `GET /api/v1/ticker/{symbol}/data-quality`
   - 2 neue Pydantic-Schemas: `DataQualityDimension`, `TickerDataQuality`
-  - Frontend: `DataQualityCard`-Komponente mit StatusIcon-Helfer
+  - Frontend: `DataQualityCard` mit farbcodierten Werten (cyan/gelb/rot statt Icons)
+  - Design-Fix: Redesign nach Stitch "Precision Architect" Regeln (grid-2, No-Line-Rule, keine Icons)
 - Dokumentation aktualisiert: ARCHITECTURE.md, ROADMAP.md, DECISIONS.md
-- Nächster Schritt: **Sprint 8 (Feature Pipeline)**
+
+### Session 11 – 13. April 2026 – Sektor-Enrichment
+- **Problem:** ~740 von 845 Tickern hatten keinen Sektor (Alpaca liefert kein `sector`)
+- **Lösung:** Sektor/Branche-Enrichment via yfinance (`ticker.info` → `sector` + `industry`)
+- **Backend:**
+  - `YFinanceClient.fetch_sector_info()`: Neue leichtgewichtige Methode
+  - `BackfillManager.start_sector_enrichment()`: Background-Thread wie Price/TA Backfill
+  - `POST /api/v1/ops/backfill/sectors`: Neuer API-Endpoint
+- **Frontend:**
+  - Settings-Page: "Sektoren nachladen" Card (3. Backfill-Karte neben Prices/TA)
+  - Progress-Bar + Ticker-Anzeige während Enrichment
+- **CLI:** `scripts/enrich_universe_sectors.py` (standalone, mit --dry-run)
+- Dokumentation aktualisiert: ARCHITECTURE.md, ROADMAP.md, DATA_SOURCES.md, DECISIONS.md
+- Nächster Schritt: **Enrichment auf Unraid auslösen**, dann **Sprint 8 (Feature Pipeline)**

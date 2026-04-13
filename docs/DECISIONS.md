@@ -835,6 +835,34 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 
 ---
 
+### [2026-04-13] Sektor/Branche: yfinance-Enrichment statt Alpaca
+
+**Kontext:** ~740 von 845 Universe-Tickern haben keinen Sektor – die Universe-Tabelle hat `sector`- und `industry`-Spalten, aber Alpaca's Assets-API liefert diese Daten nicht. Nur die ~100 Ticker aus dem init-Script (S&P 100) hatten manuell gesetzte Sektoren.
+
+**Optionen:**
+1. **Manuell pflegen** – unrealistisch bei 845+ Tickern
+2. **yfinance `ticker.info`** – liefert `sector` + `industry` zuverlässig
+3. **Drittanbieter-API** (z.B. Financial Modeling Prep) – kostet Geld
+
+**Entscheidung:** Option 2 – yfinance Enrichment
+
+**Begründung:**
+- yfinance ist bereits Dependency (Fundamentals/Ratings/Earnings in Sprint 5)
+- `ticker.info` liefert GICS-kompatible Sektor-Klassifikation
+- Keine zusätzlichen Kosten oder API-Keys
+- Einmal-Enrichment (~7 Minuten für ~740 Ticker) + manuell wiederholbar
+- Kein Schema-Change – `sector` und `industry` Spalten existieren bereits
+
+**Implementierung:**
+- `YFinanceClient.fetch_sector_info()` – leichtgewichtige Methode (nur 2 Felder)
+- `BackfillManager.start_sector_enrichment()` – Background-Thread via Settings-UI
+- `POST /api/v1/ops/backfill/sectors` – API-Endpoint
+- `scripts/enrich_universe_sectors.py` – CLI-Alternative
+
+**Nicht automatisiert:** Kein Scheduler-Job, da Sektoren sich fast nie ändern. Bei Index-Rebalancing (1x/Monat) werden neue Ticker ohne Sektor hinzugefügt → manueller Enrichment-Trigger reicht.
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.

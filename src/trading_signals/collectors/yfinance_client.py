@@ -157,6 +157,37 @@ class YFinanceClient:
 
         return self._iterate_with_rate_limit(tickers, _fetch_single, "fundamentals")
 
+    def fetch_sector_info(self, tickers: list[str]) -> list[dict]:
+        """Fetch sector and industry classification for each ticker.
+
+        Uses ticker.info to extract sector/industry. Much lighter than
+        full fundamentals since we only need two fields.
+
+        Returns:
+            List of dicts with 'ticker', 'sector', and 'industry'.
+        """
+
+        def _fetch_single(ticker_str: str) -> dict | None:
+            t = yf.Ticker(ticker_str)
+            info = t.info
+
+            if not info:
+                return None
+
+            sector = info.get("sector")
+            industry = info.get("industry")
+
+            if not sector and not industry:
+                return None
+
+            return {
+                "ticker": ticker_str,
+                "sector": sector,
+                "industry": industry,
+            }
+
+        return self._iterate_with_rate_limit(tickers, _fetch_single, "sector_info")
+
     def fetch_analyst_ratings(
         self, tickers: list[str], lookback_days: int = 30
     ) -> list[dict]:

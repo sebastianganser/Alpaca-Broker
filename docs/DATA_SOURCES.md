@@ -61,6 +61,7 @@ Multi-Symbol-Batch-Endpoint mit täglichen OHLCV-Daten:
 > **Seit Sprint 1b:** yfinance wurde als primäre Preisquelle durch Alpaca ersetzt.
 > Grund: Alpaca ist die offizielle Trading-Plattform, liefert konsistente Kurse.
 > **Sprint 5:** yfinance wird aktiv für Fundamentals, Analyst-Ratings und Earnings-Kalender genutzt.
+> **Post-Sprint 7:** yfinance wird zusätzlich für Sektor/Branche-Enrichment genutzt (Universe-Anreicherung).
 
 ### Was es liefert
 
@@ -82,6 +83,12 @@ Multi-Symbol-Batch-Endpoint mit täglichen OHLCV-Daten:
 
 **EPS Growth (via `ticker.get_earnings_estimate()`):**
 - `growth`-Feld für aktuelles Quartal (0q)
+
+**Sektor/Branche (via `ticker.info`):**
+- `sector` (z.B. "Technology", "Healthcare", "Financials")
+- `industry` (z.B. "Semiconductors", "Drug Manufacturers—General")
+- Genutzt für Universe-Enrichment: Füllt fehlende Sektor-/Branchendaten auf
+- Auslösung: Manuell via Settings-UI oder CLI-Script
 
 ### Konfiguration (Sprint 5)
 

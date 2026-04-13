@@ -145,6 +145,25 @@ def get_backfill_status():
     ]
 
 
+@router.post("/backfill/sectors", response_model=TriggerResponse)
+def start_sector_enrichment():
+    """Start sector/industry enrichment from yfinance.
+
+    Fetches missing sector and industry data for all active tickers
+    that lack this information. Long-running background operation.
+    Poll /backfill/status to track progress.
+    """
+    try:
+        task_id = backfill_manager.start_sector_enrichment()
+        return TriggerResponse(
+            success=True,
+            message="Sector enrichment started",
+            task_id=task_id,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
 # ── Database Operations ──────────────────────────────────────────────────
 
 @router.get("/db/stats", response_model=list[DbTableInfo])

@@ -136,6 +136,7 @@ Alpaca-Broker/
 │   ├── init_universe.py           # ✅ S&P 100 + SPY
 │   ├── validate_universe.py       # ✅ Alpaca-Validierung
 │   ├── sync_universe_indexes.py   # ✅ S&P 500 + Nasdaq 100
+│   ├── enrich_universe_sectors.py # ✅ Sektor/Branche via yfinance
 │   └── backfill_prices.py         # ✅ Sprint 6 (Preis-Backfill ab 2021)
 ├── pyproject.toml                 # uv Paketmanager
 ├── uv.lock                        # uv Lockfile
@@ -158,7 +159,7 @@ frontend/                          # ✅ Sprint 7 (Vite + React SPA)
         ├── DashboardPage.tsx      # Collector-Status, Stats, Health
         ├── UniversePage.tsx       # Filtered/Paginated Ticker Table
         ├── SignalsPage.tsx        # Tabbed: ARK, Insider, Politicians, Analyst
-        ├── SettingsPage.tsx       # Scheduler, Backfill, DB Ops
+        ├── SettingsPage.tsx       # Scheduler, Backfill (Prices/TA/Sectors), DB Ops
         └── TickerPage.tsx         # Chart, Indicators, Fundamentals, Data Quality
 infra/
 ├── Dockerfile.collector           # ✅ 3-Stage Build (Node+Python+Runtime)

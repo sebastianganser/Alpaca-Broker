@@ -286,6 +286,9 @@ export const startIndicatorBackfill = () =>
 export const fetchBackfillStatus = () =>
   request<BackfillStatus[]>('/ops/backfill/status');
 
+export const startSectorEnrichment = () =>
+  request<TriggerResponse>('/ops/backfill/sectors', { method: 'POST' });
+
 export const fetchDbStats = () =>
   request<DbTableInfo[]>('/ops/db/stats');
 

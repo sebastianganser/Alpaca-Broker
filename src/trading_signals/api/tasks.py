@@ -385,6 +385,113 @@ class BackfillManager:
             task.completed_at = datetime.now(UTC)
             logger.error(f"[Backfill {task_id}] TA backfill failed: {e}")
 
+    def start_sector_enrichment(self) -> str:
+        """Start sector/industry enrichment in a background thread.
+
+        Fetches missing sector/industry data from yfinance for all
+        active tickers that lack this information.
+
+        Returns:
+            task_id for tracking progress.
+        """
+        if self.is_operation_running("sector_enrichment"):
+            raise RuntimeError("Sector enrichment is already running")
+
+        task_id = f"enrich_{uuid.uuid4().hex[:8]}"
+        task = BackfillTask(task_id=task_id, operation="sector_enrichment")
+
+        with self._lock:
+            self._tasks[task_id] = task
+
+        thread = threading.Thread(
+            target=self._run_sector_enrichment,
+            args=(task_id,),
+            daemon=True,
+        )
+        thread.start()
+        return task_id
+
+    def _run_sector_enrichment(self, task_id: str) -> None:
+        """Execute sector enrichment with per-ticker progress."""
+        task = self._tasks[task_id]
+        task.status = TaskStatus.RUNNING
+        task.started_at = datetime.now(UTC)
+
+        try:
+            from sqlalchemy import select, update
+
+            from trading_signals.collectors.yfinance_client import YFinanceClient
+            from trading_signals.db.models.universe import Universe
+            from trading_signals.db.session import get_session
+
+            # Find tickers with missing sector
+            with get_session() as session:
+                stmt = (
+                    select(Universe.ticker)
+                    .where(Universe.is_active.is_(True))
+                    .where(
+                        (Universe.sector.is_(None)) | (Universe.sector == "")
+                    )
+                    .order_by(Universe.ticker)
+                )
+                missing = [row[0] for row in session.execute(stmt).all()]
+
+            if not missing:
+                task.status = TaskStatus.COMPLETED
+                task.completed_at = datetime.now(UTC)
+                task.progress_pct = 100.0
+                logger.info(f"[Enrichment {task_id}] No tickers need enrichment")
+                return
+
+            task.total_items = len(missing)
+            logger.info(
+                f"[Enrichment {task_id}] Starting sector enrichment: "
+                f"{len(missing)} tickers"
+            )
+
+            start_time = time.time()
+            client = YFinanceClient(
+                batch_size=50,
+                delay_between_tickers=0.5,
+                delay_between_batches=3.0,
+            )
+
+            # Fetch sector data (uses internal progress tracking)
+            results = client.fetch_sector_info(missing)
+
+            # Update universe
+            updated = 0
+            with get_session() as session:
+                for record in results:
+                    session.execute(
+                        update(Universe)
+                        .where(Universe.ticker == record["ticker"])
+                        .values(
+                            sector=record.get("sector"),
+                            industry=record.get("industry"),
+                        )
+                    )
+                    updated += 1
+
+            # Final update
+            task.processed_items = len(missing)
+            task.progress_pct = 100.0
+            task.status = TaskStatus.COMPLETED
+            task.completed_at = datetime.now(UTC)
+            task.current_ticker = None
+
+            logger.info(
+                f"[Enrichment {task_id}] Completed: "
+                f"{updated}/{len(missing)} tickers enriched in "
+                f"{time.time() - start_time:.0f}s"
+            )
+
+        except Exception as e:
+            task.status = TaskStatus.FAILED
+            task.error = str(e)
+            task.completed_at = datetime.now(UTC)
+            logger.error(f"[Enrichment {task_id}] Failed: {e}")
+
 
 # Singleton instance
 backfill_manager = BackfillManager()

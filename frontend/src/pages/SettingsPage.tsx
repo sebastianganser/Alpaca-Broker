@@ -6,10 +6,11 @@ import {
   triggerJob,
   startPriceBackfill,
   startIndicatorBackfill,
+  startSectorEnrichment,
   runVacuum,
   resetDatabase,
 } from '../api';
-import { Play, RefreshCw, Download, Wrench, Trash2, AlertTriangle } from 'lucide-react';
+import { Play, RefreshCw, Download, Wrench, Trash2, AlertTriangle, Tags } from 'lucide-react';
 import { useState } from 'react';
 
 export default function SettingsPage() {
@@ -140,11 +141,24 @@ function BackfillSection() {
     setLoading(null);
   };
 
+  const handleSectorEnrichment = async () => {
+    setLoading('sectors');
+    try {
+      await startSectorEnrichment();
+      queryClient.invalidateQueries({ queryKey: ['backfill-status'] });
+    } catch (e) {
+      console.error(e);
+    }
+    setLoading(null);
+  };
+
   const priceTask = status?.find((t) => t.operation === 'price_backfill' && t.status === 'running');
   const taTask = status?.find((t) => t.operation === 'indicator_backfill' && t.status === 'running');
+  const sectorTask = status?.find((t) => t.operation === 'sector_enrichment' && t.status === 'running');
 
   const isPriceRunning = !!priceTask;
   const isTaRunning = !!taTask;
+  const isSectorRunning = !!sectorTask;
 
   const formatEta = (seconds: number | null) => {
     if (!seconds || seconds <= 0) return '';
@@ -156,7 +170,7 @@ function BackfillSection() {
   return (
     <div>
       <div className="label mb-md">Backfill</div>
-      <div className="grid grid-2">
+      <div className="grid grid-3">
         <div className="card">
           <div className="flex items-center gap-sm mb-md">
             <Download size={18} style={{ color: 'var(--primary)' }} />
@@ -237,6 +251,49 @@ function BackfillSection() {
               {taTask.eta_seconds && (
                 <div className="text-xs text-dim mt-xs" style={{ textAlign: 'center' }}>
                   {formatEta(taTask.eta_seconds)}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <div className="flex items-center gap-sm mb-md">
+            <Tags size={18} style={{ color: 'var(--primary)' }} />
+            <div style={{ fontWeight: 600 }}>Sektoren nachladen</div>
+          </div>
+          <div className="text-xs text-dim mb-md">
+            Fehlende Sektor- und Branchendaten von Yahoo Finance laden
+          </div>
+          <button
+            className="btn btn-primary btn-sm w-full"
+            onClick={handleSectorEnrichment}
+            disabled={isSectorRunning || loading === 'sectors'}
+          >
+            {isSectorRunning ? 'Läuft...' : loading === 'sectors' ? 'Starte...' : 'Sektoren laden'}
+          </button>
+          {isSectorRunning && sectorTask && (
+            <div className="mt-md">
+              <div className="progress-bar">
+                <div
+                  className="progress-bar-fill"
+                  style={{
+                    width: `${sectorTask.progress_pct}%`,
+                    transition: 'width 0.5s ease',
+                  }}
+                />
+              </div>
+              <div className="flex justify-between mt-sm">
+                <span className="text-xs text-dim mono">
+                  {sectorTask.current_ticker ?? '...'}
+                </span>
+                <span className="text-xs text-dim mono">
+                  {sectorTask.progress_pct.toFixed(0)}%
+                </span>
+              </div>
+              {sectorTask.eta_seconds && (
+                <div className="text-xs text-dim mt-xs" style={{ textAlign: 'center' }}>
+                  {formatEta(sectorTask.eta_seconds)}
                 </div>
               )}
             </div>
