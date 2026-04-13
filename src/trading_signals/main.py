@@ -213,12 +213,38 @@ def health_check():
 
 
 # ── Static Files (React SPA) ────────────────────────────────────────────
-# Mount the React build output as the root static files.
-# This MUST be the last mount to avoid catching API routes.
+# Mount static assets (JS, CSS, images) and add a catch-all fallback
+# that serves index.html for any client-side route (SPA pattern).
+# This MUST be after all API routes to avoid catching them.
 
 _frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
 if _frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True))
+    # Serve static assets (JS, CSS, fonts, images)
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(_frontend_dist / "assets")),
+        name="assets",
+    )
+
+    # SPA fallback: serve index.html for all non-API routes
+    _index_html = _frontend_dist / "index.html"
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve React SPA index.html for all client-side routes.
+
+        This enables direct URL access and Ctrl+F5 refresh on any page
+        (e.g. /universe, /settings, /ticker/AAPL).
+        """
+        from fastapi.responses import FileResponse
+
+        # If a real file exists in dist/ (e.g. favicon.ico), serve it
+        file_path = _frontend_dist / full_path
+        if full_path and file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        # Otherwise serve index.html and let React Router handle it
+        return FileResponse(_index_html)
+
     logger.info(f"Serving frontend from {_frontend_dist}")
 else:
     logger.warning(
