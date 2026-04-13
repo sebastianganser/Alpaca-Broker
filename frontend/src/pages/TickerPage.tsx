@@ -7,9 +7,10 @@ import {
 } from 'recharts';
 import {
   fetchTickerDetail, fetchPrices, fetchIndicators,
-  fetchFundamentals, fetchTickerSignals,
+  fetchFundamentals, fetchTickerSignals, fetchDataQuality,
 } from '../api';
-import { ArrowLeft, TrendingUp, TrendingDown } from 'lucide-react';
+import type { DataQualityDimension } from '../api';
+import { ArrowLeft, TrendingUp, TrendingDown, Shield, CheckCircle, AlertCircle, XCircle } from 'lucide-react';
 
 const periods = ['1m', '3m', '6m', '1y', 'all'] as const;
 
@@ -45,6 +46,12 @@ export default function TickerPage() {
   const { data: signals } = useQuery({
     queryKey: ['ticker-signals', symbol],
     queryFn: () => fetchTickerSignals(symbol!, 90),
+    enabled: !!symbol,
+  });
+
+  const { data: dataQuality } = useQuery({
+    queryKey: ['ticker-data-quality', symbol],
+    queryFn: () => fetchDataQuality(symbol!),
     enabled: !!symbol,
   });
 
@@ -251,6 +258,9 @@ export default function TickerPage() {
         </div>
       </div>
 
+      {/* Data Quality */}
+      {dataQuality && <DataQualityCard quality={dataQuality} />}
+
       {/* Signal Summary */}
       {signals && (
         <div className="card">
@@ -305,6 +315,69 @@ function MetricCard({ label, value }: { label: string; value: string }) {
     <div>
       <div className="label-dim">{label}</div>
       <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>{value}</div>
+    </div>
+  );
+}
+
+function StatusIcon({ status }: { status: string }) {
+  if (status === 'complete') return <CheckCircle size={14} style={{ color: 'var(--primary)' }} />;
+  if (status === 'partial') return <AlertCircle size={14} style={{ color: 'var(--warning)' }} />;
+  return <XCircle size={14} style={{ color: 'var(--error)' }} />;
+}
+
+function DataQualityCard({ quality }: { quality: { dimensions: DataQualityDimension[]; overall_completeness: number } }) {
+  return (
+    <div className="card mb-lg" style={{ position: 'relative', overflow: 'hidden' }}>
+      {/* Subtle completeness bar at top */}
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: '3px',
+        background: 'var(--surface-lowest)',
+      }}>
+        <div style={{
+          height: '100%',
+          width: `${quality.overall_completeness * 100}%`,
+          background: quality.overall_completeness === 1
+            ? 'var(--primary)'
+            : quality.overall_completeness >= 0.5
+              ? 'var(--warning)'
+              : 'var(--error)',
+          borderRadius: '0 2px 2px 0',
+          transition: 'width 0.4s ease',
+        }} />
+      </div>
+      <div className="flex items-center gap-sm" style={{ marginBottom: 'var(--space-md)' }}>
+        <Shield size={14} style={{ color: 'var(--on-surface-variant)' }} />
+        <span className="card-title" style={{ marginBottom: 0 }}>Datenqualität</span>
+      </div>
+      <div className="flex flex-col gap-sm">
+        {quality.dimensions.map((dim) => (
+          <div
+            key={dim.label}
+            className="flex items-center justify-between"
+            style={{
+              padding: '8px 12px',
+              background: 'var(--surface-lowest)',
+              borderRadius: 'var(--radius)',
+            }}
+          >
+            <div className="flex items-center gap-sm">
+              <StatusIcon status={dim.status} />
+              <span style={{ fontSize: '0.85rem', fontWeight: 600, minWidth: '120px' }}>
+                {dim.label}
+              </span>
+            </div>
+            <span style={{
+              fontSize: '0.8rem',
+              color: dim.status === 'missing' ? 'var(--warning)'
+                : dim.status === 'complete' ? 'var(--on-surface-variant)'
+                : 'var(--on-surface-dim)',
+              fontWeight: dim.status === 'missing' ? 600 : 400,
+            }}>
+              {dim.summary}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

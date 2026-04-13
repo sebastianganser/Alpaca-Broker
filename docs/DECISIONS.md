@@ -807,6 +807,34 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 
 ---
 
+### [2026-04-13] Datenqualitäts-Kachel: UI-Feature statt DB-Tabelle
+
+**Kontext:** Auf der TickerPage soll für jeden Ticker sichtbar sein, ob alle Daten-Dimensionen (Preise, TA-Indikatoren, Fundamentals, Signal-Updates) vollständig sind oder Lücken haben.
+
+**Optionen:**
+1. **Eigene DB-Tabelle** `data_quality_snapshots` – vorab berechnet, schnell abrufbar
+2. **Live-Berechnung im API-Endpoint** – bei jedem Request aus bestehenden Tabellen berechnet
+3. **Frontend-only** – separate Queries im Frontend, Client-seitig ausgewertet
+
+**Entscheidung:** Option 2 – Live-Berechnung im Backend-Endpoint `GET /api/v1/ticker/{symbol}/data-quality`.
+
+**Begründung:**
+- Nur 4 einfache `COUNT`/`MAX`-Queries + Scheduler-Lookup → Millisekunden-Performance
+- Kein Schema-Change, keine Migration, keine Data Staleness
+- Ergebnis ist immer tagesaktuell
+- Scheduler-Status (nächster Lauf) kann nur live abgefragt werden (nicht persistierbar)
+- Frontend bekommt ein sauberes, fertig bewertetes Objekt (status: complete/partial/missing)
+
+**Status-Schwellwerte:**
+- Preise: ≥200 Tage + letzte 3 Tage aktuell → complete
+- TA-Indikatoren: letzte 3 Tage aktuell → complete
+- Fundamentals: Snapshot ≤14 Tage alt → complete
+- Signal-Updates: Scheduler aktiv + letzter Collection-Log nicht failed → complete
+
+**Revisit-Trigger:** Falls der Endpoint spürbar langsam wird (unwahrscheinlich bei Index-basierten COUNT/MAX-Queries).
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.

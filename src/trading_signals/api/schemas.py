@@ -185,6 +185,23 @@ class FundamentalsData(BaseModel):
     beta: float | None = None
 
 
+# ── Data Quality Schemas ─────────────────────────────────────────────────
+
+class DataQualityDimension(BaseModel):
+    """Single data quality dimension status for a ticker."""
+    label: str
+    status: str  # "complete", "partial", "missing"
+    summary: str
+    detail: str | None = None
+
+
+class TickerDataQuality(BaseModel):
+    """Complete data quality assessment for a ticker."""
+    ticker: str
+    dimensions: list[DataQualityDimension]
+    overall_completeness: float = 0.0  # 0.0 - 1.0
+
+
 # ── Operations Schemas ───────────────────────────────────────────────────
 
 class SchedulerJobInfo(BaseModel):

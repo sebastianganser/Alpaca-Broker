@@ -218,6 +218,24 @@ export const fetchTickerSignals = (symbol: string, days = 30) =>
     analyst_ratings: AnalystRating[];
   }>(`/ticker/${symbol}/signals?days=${days}`);
 
+// ── Data Quality ──────────────────────────────────────────────────────
+
+export interface DataQualityDimension {
+  label: string;
+  status: 'complete' | 'partial' | 'missing';
+  summary: string;
+  detail: string | null;
+}
+
+export interface TickerDataQuality {
+  ticker: string;
+  dimensions: DataQualityDimension[];
+  overall_completeness: number;
+}
+
+export const fetchDataQuality = (symbol: string) =>
+  request<TickerDataQuality>(`/ticker/${symbol}/data-quality`);
+
 // ── Operations ────────────────────────────────────────────────────────
 
 export interface SchedulerJob {

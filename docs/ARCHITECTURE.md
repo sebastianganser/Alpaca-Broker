@@ -109,13 +109,13 @@ Alpaca-Broker/
 │   │   │   ├── __init__.py
 │   │   │   ├── deps.py           # ✅ DB session + Scheduler dependency injection
 │   │   │   ├── job_tracker.py     # ✅ APScheduler event listener (live running status)
-│   │   │   ├── schemas.py         # ✅ 19+ Pydantic response schemas
+│   │   │   ├── schemas.py         # ✅ 21+ Pydantic response schemas
 │   │   │   ├── tasks.py           # BackfillManager (Threading)
 │   │   │   └── routes/
 │   │   │       ├── dashboard.py   # /api/v1/dashboard/summary
 │   │   │       ├── universe.py    # /api/v1/universe (paginated)
 │   │   │       ├── signals.py     # /api/v1/signals/ark,insider,...
-│   │   │       ├── ticker.py      # /api/v1/ticker/{sym}/prices,...
+│   │   │       ├── ticker.py      # /api/v1/ticker/{sym}/prices,data-quality,...
 │   │   │       └── operations.py  # /api/v1/ops/scheduler,backfill,db
 │   │   ├── scheduler/             # Job-Orchestrierung
 │   │   │   ├── __init__.py
@@ -159,7 +159,7 @@ frontend/                          # ✅ Sprint 7 (Vite + React SPA)
         ├── UniversePage.tsx       # Filtered/Paginated Ticker Table
         ├── SignalsPage.tsx        # Tabbed: ARK, Insider, Politicians, Analyst
         ├── SettingsPage.tsx       # Scheduler, Backfill, DB Ops
-        └── TickerPage.tsx         # Chart, Indicators, Fundamentals
+        └── TickerPage.tsx         # Chart, Indicators, Fundamentals, Data Quality
 infra/
 ├── Dockerfile.collector           # ✅ 3-Stage Build (Node+Python+Runtime)
 ├── docker-compose.yml             # Port 8090

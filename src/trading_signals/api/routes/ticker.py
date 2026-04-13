@@ -7,22 +7,25 @@ and all signals for a specific ticker.
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
-from trading_signals.api.deps import get_db
+from trading_signals.api.deps import get_db, get_scheduler
 from trading_signals.api.schemas import (
     AnalystRatingItem,
     ARKDeltaItem,
+    DataQualityDimension,
     FundamentalsData,
     IndicatorPoint,
     InsiderClusterItem,
     PoliticianTradeItem,
     PricePoint,
+    TickerDataQuality,
 )
 from trading_signals.db.models import (
     AnalystRating,
     ARKDelta,
+    CollectionLog,
     FundamentalsSnapshot,
     InsiderCluster,
     PoliticianTrade,
@@ -279,3 +282,143 @@ def get_ticker_signals(
             for r in ratings
         ],
     }
+
+
+@router.get("/{symbol}/data-quality", response_model=TickerDataQuality)
+def get_data_quality(
+    symbol: str,
+    db: Session = Depends(get_db),
+    scheduler=Depends(get_scheduler),
+):
+    """Assess data quality/completeness for a ticker.
+
+    Returns per-dimension status (prices, TA indicators, fundamentals,
+    signal updates) with human-readable summaries.
+    """
+    ticker = _validate_ticker(symbol, db)
+    today = date.today()
+    dimensions: list[DataQualityDimension] = []
+
+    # ── 1. Preise ────────────────────────────────────────────────────
+    price_stats = (
+        db.query(
+            func.count(PriceDaily.trade_date),
+            func.max(PriceDaily.trade_date),
+        )
+        .filter(PriceDaily.ticker == ticker)
+        .first()
+    )
+    price_count = price_stats[0] if price_stats else 0
+    price_latest = price_stats[1] if price_stats else None
+
+    if price_count == 0:
+        p_status, p_summary = "missing", "Keine Preisdaten vorhanden"
+    else:
+        days_ago = (today - price_latest).days if price_latest else 999
+        formatted_date = price_latest.strftime("%d.%m.%Y") if price_latest else "—"
+        p_summary = (
+            f"{price_count:,} Tage verfügbar, "
+            f"letztes Update {formatted_date}"
+        ).replace(",", ".")
+        if price_count >= 200 and days_ago <= 3:
+            p_status = "complete"
+        elif price_count > 0 and days_ago <= 7:
+            p_status = "partial"
+        else:
+            p_status = "partial"
+
+    dimensions.append(
+        DataQualityDimension(label="Preise", status=p_status, summary=p_summary)
+    )
+
+    # ── 2. Technische Indikatoren ────────────────────────────────────
+    ta_latest = (
+        db.query(func.max(TechnicalIndicator.trade_date))
+        .filter(TechnicalIndicator.ticker == ticker)
+        .scalar()
+    )
+
+    if ta_latest is None:
+        t_status, t_summary = "missing", "Keine Indikatordaten vorhanden"
+    else:
+        ta_days_ago = (today - ta_latest).days
+        formatted_ta = ta_latest.strftime("%d.%m.%Y")
+        t_summary = f"Berechnet bis {formatted_ta}"
+        t_status = "complete" if ta_days_ago <= 3 else "partial"
+
+    dimensions.append(
+        DataQualityDimension(
+            label="TA-Indikatoren", status=t_status, summary=t_summary
+        )
+    )
+
+    # ── 3. Fundamentals ──────────────────────────────────────────────
+    fund_latest = (
+        db.query(func.max(FundamentalsSnapshot.snapshot_date))
+        .filter(FundamentalsSnapshot.ticker == ticker)
+        .scalar()
+    )
+
+    if fund_latest is None:
+        f_status, f_summary = "missing", "Noch nicht erfasst"
+    else:
+        fund_days = (today - fund_latest).days
+        formatted_fund = fund_latest.strftime("%d.%m.%Y")
+        f_summary = f"Letzter Snapshot {formatted_fund}"
+        f_status = "complete" if fund_days <= 14 else "partial"
+
+    dimensions.append(
+        DataQualityDimension(
+            label="Fundamentals", status=f_status, summary=f_summary
+        )
+    )
+
+    # ── 4. Signal-Updates (Scheduler-Status) ─────────────────────────
+    next_price_run = None
+    scheduler_active = False
+    if scheduler and scheduler.running:
+        scheduler_active = True
+        for job in scheduler.get_jobs():
+            if job.id == "price_collector":
+                next_price_run = job.next_run_time
+                break
+
+    # Check last collection log
+    last_log = (
+        db.query(CollectionLog)
+        .filter(CollectionLog.collector_name == "price_collector")
+        .order_by(desc(CollectionLog.started_at))
+        .first()
+    )
+
+    if not scheduler_active:
+        s_status, s_summary = "missing", "Scheduler nicht aktiv"
+    elif last_log and last_log.status == "failed":
+        s_status = "partial"
+        s_summary = "Letzter Lauf fehlgeschlagen"
+        if next_price_run:
+            s_summary += f", nächster: {next_price_run.strftime('%d.%m. %H:%M')}"
+    else:
+        s_status = "complete"
+        if next_price_run:
+            s_summary = (
+                f"Nächster Lauf: {next_price_run.strftime('%d.%m. %H:%M')}"
+            )
+        else:
+            s_summary = "Scheduler aktiv"
+
+    dimensions.append(
+        DataQualityDimension(
+            label="Signal-Updates", status=s_status, summary=s_summary
+        )
+    )
+
+    # ── Overall completeness ─────────────────────────────────────────
+    complete_count = sum(1 for d in dimensions if d.status == "complete")
+    overall = complete_count / len(dimensions) if dimensions else 0.0
+
+    return TickerDataQuality(
+        ticker=ticker,
+        dimensions=dimensions,
+        overall_completeness=round(overall, 2),
+    )

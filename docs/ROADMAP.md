@@ -262,6 +262,7 @@
 - [x] Backfill Progress Tracking: Echtzeit-Fortschritt für Price + TA Backfills (Ticker, %, ETA)
 - [x] Factory Reset: DB-Werkszustand über UI (löscht alle Daten, behält Universe)
 - [x] Monthly Index Sync: Automatischer S&P 500 / Nasdaq 100 Abgleich (1. des Monats, 03:00)
+- [x] Datenqualitäts-Kachel: Per-Ticker Data Quality Assessment auf der TickerPage (Preise, TA, Fundamentals, Scheduler)
 
 ## ⏸ Wartephase: 2–3 Monate Datensammlung
 
@@ -490,4 +491,15 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
   - Dashboard: Collector-Cards zeigen Echtzeit-Running-Status
   - Polling: Dashboard 5s, Settings 3s
 - Dokumentation aktualisiert: CLAUDE.md, ROADMAP.md, ARCHITECTURE.md, DECISIONS.md, README.md
+- Nächster Schritt: **Sprint 8 (Feature Pipeline)**
+
+### Session 10 – 13. April 2026 – Datenqualitäts-Kachel
+- **Datenqualitäts-Kachel** auf der TickerPage: Zeigt pro Ticker den Vollständigkeitsstatus
+  - 4 Dimensionen: Preise (Tage + letztes Update), TA-Indikatoren (bis wann berechnet), Fundamentals (letzter Snapshot), Signal-Updates (Scheduler-Status + nächster Lauf)
+  - Farbcodierte Status-Icons: ✅ complete (grün), ⚠️ partial (gelb), ❌ missing (rot)
+  - Fortschrittsbalken am oberen Kartenrand zeigt Overall-Completeness
+  - Neuer Backend-Endpoint: `GET /api/v1/ticker/{symbol}/data-quality`
+  - 2 neue Pydantic-Schemas: `DataQualityDimension`, `TickerDataQuality`
+  - Frontend: `DataQualityCard`-Komponente mit StatusIcon-Helfer
+- Dokumentation aktualisiert: ARCHITECTURE.md, ROADMAP.md, DECISIONS.md
 - Nächster Schritt: **Sprint 8 (Feature Pipeline)**
