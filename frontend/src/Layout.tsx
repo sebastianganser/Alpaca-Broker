@@ -30,15 +30,6 @@ function isExchangeOpen(
   openH: number, openM: number,
   closeH: number, closeM: number,
 ): boolean {
-  // Get local time at the exchange
-  const parts = now.toLocaleString('en-US', {
-    timeZone: tz,
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    weekday: 'short',
-  });
-
   // Parse weekday
   const dayMatch = now.toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' });
   if (['Sat', 'Sun'].includes(dayMatch)) return false;
