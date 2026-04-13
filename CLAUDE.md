@@ -45,10 +45,11 @@ Die kritischen Pfade (Daten-Fetching, Berechnungen, später Order-Ausführung) s
 
 ## Aktueller Status
 
-**Phase:** 🟢 Sprint 7 abgeschlossen
-**Aktueller Sprint:** Sprint 7 (Dashboard & Operations UI) – abgeschlossen ✅
-**Nächster Schritt:** Deployment auf Unraid, dann Sprint 8 (Feature Pipeline)
+**Phase:** 🟢 Sprint 7 abgeschlossen + Produktionsbetrieb
+**Aktueller Sprint:** Operational – System läuft auf Unraid, Datensammlung aktiv
+**Nächster Schritt:** Sprint 8 (Feature Pipeline)
 **Letzte Aktualisierung:** 13. April 2026
+**Deployment:** ✅ Unraid Docker (192.168.1.93:8090)
 
 Siehe [ROADMAP.md](docs/ROADMAP.md) für den detaillierten Fortschritt.
 
@@ -68,7 +69,8 @@ Siehe [ROADMAP.md](docs/ROADMAP.md) für den detaillierten Fortschritt.
 | **Scheduler** | APScheduler (im Python-Prozess) |
 | **Preisdaten** | Alpaca Market Data API (IEX feed, Multi-Symbol-Batch) |
 | **Universe** | 644 aktive Ticker (S&P 500 + Nasdaq 100 + ARK) |
-| **Deployment** | Docker Compose auf Unraid (1 Container: Collector + API + UI) |
+| **Deployment** | Docker Compose auf Unraid (1 Container: Collector + API + UI, Port 8090) |
+| **Scheduler** | APScheduler (10 Jobs: 5 täglich, 4 wöchentlich, 1 monatlich) |
 | **Broker (später)** | Alpaca Paper Trading (NIEMALS Live!) |
 | **Versionskontrolle** | Git, [GitHub (sebastianganser/Alpaca-Broker)](https://github.com/sebastianganser/Alpaca-Broker) |
 

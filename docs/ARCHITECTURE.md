@@ -18,7 +18,7 @@
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Unraid-Server (Produktion)                                 │
-│  Sprint 7 (Dashboard) abgeschlossen – Deployment-ready      │
+│  ✅ LIVE – Container läuft auf 192.168.1.93:8090             │
 │                                                             │
 │  ┌───────────────────┐    ┌────────────────────────────┐    │
 │  │ signal-collector  │    │ postgresql18-alpaca        │    │
@@ -42,7 +42,7 @@
 
 **Netzwerk:** Der Collector-Container verbindet sich direkt zur bestehenden PostgreSQL-Instanz via Host-IP.
 **Backup:** Tägliches pg_dump via Cron auf Unraid, in den bestehenden Backup-Ordner.
-**Deployment-Gate:** Sprint 7 (Dashboard/UI) abgeschlossen – Deployment freigegeben. Siehe [DECISIONS.md](DECISIONS.md).
+**Deployment-Gate:** ✅ Deployment abgeschlossen. System läuft produktiv seit 13.04.2026.
 
 ---
 
@@ -118,7 +118,7 @@ Alpaca-Broker/
 │   │   │       └── operations.py  # /api/v1/ops/scheduler,backfill,db
 │   │   ├── scheduler/             # Job-Orchestrierung
 │   │   │   ├── __init__.py
-│   │   │   └── jobs.py            # ✅ Prices + ARK + Form4 + 13F + Politicians + yfinance(3) + TA
+│   │   │   └── jobs.py            # ✅ 10 Jobs: Prices + ARK + Form4 + 13F + Politicians + yfinance(3) + TA + IndexSync
 │   │   └── utils/
 │   │       ├── __init__.py
 │   │       ├── logging.py         # ✅ implementiert
@@ -621,8 +621,15 @@ CREATE TABLE signals.collection_log (
 - `earnings_calendar_collector` – Earnings-Termine via yfinance (02:00 MEZ) ✅ Sprint 5
 - `form13f_collector` – Neue 13F-Filings (falls Quartalsende gewesen) (10:00 MEZ)
 - `politician_trades_collector` – Senate eFD PTR-Scraping (11:00 MEZ)
-- `universe_cleanup` – Inaktive Titel markieren
-- `db_maintenance` – VACUUM, ANALYZE
+
+**Monatlich (1. des Monats):**
+- `index_sync` – S&P 500 / Nasdaq 100 Mitgliedschaft aktualisieren (03:00 MEZ) ✅ Sprint 7+
+
+**Manuell (via UI):**
+- `price_backfill` – Historische Preise ab 2021-01-01 laden (Settings > Backfill)
+- `indicator_backfill` – Alle TA-Indikatoren neu berechnen (Settings > Backfill)
+- `db_reset` – Factory Reset: Alle Datentabellen löschen (Settings > Werkszustand)
+- `vacuum_analyze` – PostgreSQL VACUUM + ANALYZE (Settings > VACUUM)
 
 ---
 

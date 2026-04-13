@@ -711,6 +711,63 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 
 ---
 
+### [2026-04-13] Echtzeit-Backfill-Fortschritt statt "Fire and Forget"
+
+**Kontext:** Beim ersten Produktionseinsatz blieben Price- und TA-Backfills minutenlang bei 0% stehen, da der BackfillManager Fortschritt nur als Ganzes (0% → 100%) meldete.
+
+**Optionen:**
+- A: Weiterhin nur Start/Ende melden (einfach, aber schlechte UX)
+- B: Per-Batch (Price) und Per-Ticker (TA) Fortschrittsupdate mit ETA-Schätzung im UI
+
+**Entscheidung:** Option B – granularer Fortschritt mit ETA.
+
+**Begründung:**
+- Backfills dauern 5–15 Minuten – Benutzer braucht sofortiges Feedback
+- ETA-Berechnung basiert auf durchschnittlicher Batch-Dauer (einfach, aber effektiv)
+- Frontend pollt alle 2 Sekunden → reaktionsschnelle Anzeige
+- Thread-safe updates via Lock in BackfillManager
+
+---
+
+### [2026-04-13] Factory Reset: Daten löschen statt DB droppen
+
+**Kontext:** Bedarf nach einer Option, die DB komplett zu bereinigen (Werkszustand), z.B. nach fehlerhaften Imports oder zum Neustart.
+
+**Optionen:**
+- A: `DROP SCHEMA signals CASCADE` + Alembic von vorn (zerstört Schema + Universe)
+- B: `TRUNCATE` aller Datentabellen (behält Schema, Universe, Alembic intakt)
+- C: `DELETE FROM` aller Datentabellen (langsamer als TRUNCATE, aber transaktionssicher)
+
+**Entscheidung:** Option C – `DELETE FROM` in einer Transaktion.
+
+**Begründung:**
+- Universe (644 Ticker) ist Basisinventar und soll erhalten bleiben
+- DELETE statt TRUNCATE, weil TRUNCATE nicht in einer Transaktion rollbackbar ist
+- Reihenfolge respektiert FK-Constraints (dependent tables zuerst)
+- UI zeigt Bestätigungsdialog mit klarer Warnung
+
+---
+
+### [2026-04-13] Monatlicher Index-Sync statt manuell
+
+**Kontext:** Die Ticker-Universe (S&P 500, Nasdaq 100) wurde einmalig per Script befüllt, aber nie automatisch aktualisiert. Bei Index-Rebalancings (ca. 4x/Jahr) würden Änderungen nicht erkannt.
+
+**Optionen:**
+- A: Manuelles Script bei Bedarf (vergisst man leicht)
+- B: Wöchentlicher Sync (zu häufig, Index-Zusammensetzungen ändern sich selten)
+- C: Monatlicher Sync (am 1. des Monats, deckt alle Rebalancings ab)
+
+**Entscheidung:** Option C – monatlich am 1., 03:00 MEZ.
+
+**Begründung:**
+- Index-Rebalancings finden quartalsweise statt → monatlich reicht sicher
+- Geringer API-Aufwand (2 Wikipedia-Requests + ggf. Alpaca-Validierung)
+- Neue Ticker werden automatisch validiert und dem Universe hinzugefügt
+- Bestandsdaten bestehender Ticker werden sofort gesammelt (nächster täglicher Lauf)
+- IndexSyncer existierte bereits, musste nur als Job registriert werden
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.

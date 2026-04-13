@@ -16,7 +16,7 @@
 | 4 | Politiker-Trades (Senate eFD) | 🟢 Erledigt | April 2026 |
 | 5 | Fundamentals + Analyst-Daten | 🟢 Erledigt | April 2026 |
 | 6 | Technische Indikatoren | 🟢 Erledigt | April 2026 |
-| 7 | Dashboard & Operations UI | 🔴 Offen | – |
+| 7 | Dashboard & Operations UI | 🟢 Erledigt | April 2026 |
 | 8 | Feature Pipeline | 🔴 Offen | – |
 | **⏸ Wartephase** | **2–3 Monate Datensammlung** | **–** | **–** |
 | 9 | Erste explorative Analyse (Jupyter) | 🔴 Offen | – |
@@ -240,7 +240,28 @@
 **Voraussetzungen:**
 - [x] Alle Daten-Collectors implementiert (Sprint 1–6 ✅)
 - [x] Dashboard/UI mit Operations-Tools (Sprint 7 ✅)
-- [ ] Erster erfolgreicher Docker-Deployment auf Unraid
+- [x] Erster erfolgreicher Docker-Deployment auf Unraid ✅
+
+## ⚓ Deployment auf Unraid – Abgeschlossen ✅
+
+**Status:** System läuft produktiv auf `192.168.1.93:8090`.
+
+**Infrastruktur:**
+- Clone-and-Build auf Unraid: `/mnt/user/appdata/alpaca-broker`
+- Docker Compose via Compose Manager: `/boot/config/plugins/compose.manager/projects/Alpaca-Broker/`
+- PostgreSQL 18 extern (`postgresql18-alpaca`, Port 5435)
+- Alembic-Migrationen laufen automatisch via `entrypoint.sh`
+- 10 Scheduler-Jobs aktiv (5 täglich, 4 wöchentlich, 1 monatlich)
+
+**Update-Workflow:**
+1. `git push` von Windows
+2. Unraid Terminal: `cd /mnt/user/appdata/alpaca-broker && git pull && docker compose -f /boot/config/plugins/compose.manager/projects/Alpaca-Broker/docker-compose.yml up --build -d`
+
+**Post-Deployment Features (Sprint 7+):**
+- [x] Fix: Dashboard Health Check (public.alembic_version)
+- [x] Backfill Progress Tracking: Echtzeit-Fortschritt für Price + TA Backfills (Ticker, %, ETA)
+- [x] Factory Reset: DB-Werkszustand über UI (löscht alle Daten, behält Universe)
+- [x] Monthly Index Sync: Automatischer S&P 500 / Nasdaq 100 Abgleich (1. des Monats, 03:00)
 
 ## ⏸ Wartephase: 2–3 Monate Datensammlung
 
@@ -446,3 +467,22 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
 - TypeScript + Ruff Lint: 0 Errors, Vite Build erfolgreich (650KB JS, 9KB CSS)
 - 303 Tests (alle grün, keine Regression)
 - Nächster Schritt: **Deployment auf Unraid**, dann **Sprint 8 (Feature Pipeline)**
+
+### Session 9 – 13. April 2026 – Unraid Deployment + Operational Fixes
+- **Deployment auf Unraid**: Container läuft auf `192.168.1.93:8090`
+- **Compose Manager**: `docker-compose.yml` + `.env` auf Unraid eingerichtet
+- **Fix: README.md im Docker Build**: `Dockerfile.collector` fehlte `COPY README.md` für pyproject.toml
+- **Fix: Dashboard Health Check**: Alembic-Query geändert auf `public.alembic_version`
+- **Daten-Erstbefüllung**: ~820k Preisdatensätze + ~818k TA-Indikatoren via Backfill geladen
+- **Backfill Progress Tracking**: `BackfillManager` komplett refactored
+  - Price Backfill: Per-Batch Fortschritt (7 Batches à 100 Ticker), ETA-Schätzung
+  - TA Backfill: Per-Ticker Fortschritt (644 Ticker), ETA-Schätzung
+  - Frontend: Echtzeit-Anzeige (Ticker, %, ETA) mit 2s Polling
+- **Factory Reset**: `POST /ops/db/reset` Endpoint + UI-Button mit Bestätigungsdialog
+  - Löscht alle Datentabellen, behält Universe (644 Ticker) und Schema
+- **Monthly Index Sync**: Neuer Scheduler-Job (1. des Monats, 03:00 MEZ)
+  - Aktualisiert S&P 500 / Nasdaq 100 Mitgliedschaft von Wikipedia
+  - Validiert neue Ticker gegen Alpaca, fügt sie automatisch zum Universe hinzu
+- 303 Tests (alle grün)
+- Dokumentation aktualisiert: CLAUDE.md, ROADMAP.md, ARCHITECTURE.md, DECISIONS.md, README.md
+- Nächster Schritt: **Sprint 8 (Feature Pipeline)**

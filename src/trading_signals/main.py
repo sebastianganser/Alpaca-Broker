@@ -30,6 +30,7 @@ from trading_signals.scheduler.jobs import (
     run_form4_collector,
     run_form13f_collector,
     run_fundamentals_collector,
+    run_index_sync,
     run_politician_trades_collector,
     run_price_collector,
     run_technical_indicators_computer,
@@ -125,6 +126,14 @@ def create_scheduler() -> BackgroundScheduler:
         CronTrigger(day_of_week="sun", hour=2, minute=0),
         id="earnings_calendar_collector",
         name="Weekly Earnings Calendar (yfinance)",
+    )
+
+    # ── Index Sync: Monthly 1st at 03:00 ──
+    scheduler.add_job(
+        run_index_sync,
+        CronTrigger(day=1, hour=3, minute=0),
+        id="index_sync",
+        name="Monthly Index Membership Sync (S&P 500 + Nasdaq 100)",
     )
 
     return scheduler

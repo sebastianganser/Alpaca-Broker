@@ -59,8 +59,8 @@ Die vollständige Dokumentation liegt im Projekt selbst:
 
 ## Status
 
-🟢 **Sprint 7 abgeschlossen** – Dashboard & Operations UI implementiert. FastAPI Backend (5 Router, 20+ Endpoints) + Vite/React SPA mit Precision Architect Design System. Alle Datenquellen angebunden, 644 Ticker, 303 Tests.
-Nächster Schritt: Deployment auf Unraid, dann Sprint 8 (Feature Pipeline).
+🟢 **Produktionsbetrieb** – Deployed auf Unraid (192.168.1.93:8090). Dashboard & Operations UI (Sprint 7) live. 10 Scheduler-Jobs aktiv (5 täglich, 4 wöchentlich, 1 monatlich). 644 Ticker, ~820k Preisdatensätze, ~818k TA-Indikatoren. 303 Tests.
+Nächster Schritt: Sprint 8 (Feature Pipeline).
 
 ## Lizenz
 

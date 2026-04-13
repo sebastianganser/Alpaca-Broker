@@ -202,3 +202,31 @@ def run_technical_indicators_computer() -> None:
             f"technical_indicators_computer_job finished: "
             f"{written} records computed"
         )
+
+
+def run_index_sync() -> None:
+    """Monthly index membership sync.
+
+    Scheduled for 1st of each month at 03:00 Europe/Berlin.
+    Updates S&P 500 / Nasdaq 100 membership from Wikipedia,
+    validates new tickers against Alpaca, and adds them to
+    the universe.
+    """
+    from trading_signals.db.session import get_session
+    from trading_signals.universe.index_sync import IndexSyncer
+
+    logger.info("Scheduler triggered: index_sync_job")
+
+    with get_session() as session:
+        syncer = IndexSyncer(session)
+        result = syncer.sync()
+        session.commit()
+        logger.info(
+            f"index_sync_job finished: "
+            f"S&P 500={result.sp500_count}, Nasdaq 100={result.nasdaq100_count}, "
+            f"added={result.newly_added}, updated={result.membership_updated}"
+        )
+        if result.new_tickers:
+            logger.info(
+                f"index_sync_job new tickers: {', '.join(result.new_tickers)}"
+            )
