@@ -509,6 +509,7 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
   - `YFinanceClient.fetch_sector_info()`: Neue leichtgewichtige Methode
   - `BackfillManager.start_sector_enrichment()`: Background-Thread wie Price/TA Backfill
   - `POST /api/v1/ops/backfill/sectors`: Neuer API-Endpoint
+  - **Automatisierung:** `run_index_sync()` Job führt nach dem IndexSync automatisch Sektor-Enrichment für alle Ticker ohne Sektor aus
 - **Frontend:**
   - Settings-Page: "Sektoren nachladen" Card (3. Backfill-Karte neben Prices/TA)
   - Progress-Bar + Ticker-Anzeige während Enrichment

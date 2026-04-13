@@ -859,7 +859,7 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 - `POST /api/v1/ops/backfill/sectors` – API-Endpoint
 - `scripts/enrich_universe_sectors.py` – CLI-Alternative
 
-**Nicht automatisiert:** Kein Scheduler-Job, da Sektoren sich fast nie ändern. Bei Index-Rebalancing (1x/Monat) werden neue Ticker ohne Sektor hinzugefügt → manueller Enrichment-Trigger reicht.
+**Automatisierung:** In den monatlichen `run_index_sync()` Job integriert (1. des Monats, 03:00 MEZ). Nach dem IndexSync werden automatisch alle Ticker ohne Sektor via yfinance enriched. Zusätzlich manuell auslösbar via Settings-UI oder CLI.
 
 ---
 

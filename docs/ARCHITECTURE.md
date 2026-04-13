@@ -119,7 +119,7 @@ Alpaca-Broker/
 │   │   │       └── operations.py  # /api/v1/ops/scheduler,backfill,db
 │   │   ├── scheduler/             # Job-Orchestrierung
 │   │   │   ├── __init__.py
-│   │   │   └── jobs.py            # ✅ 10 Jobs: Prices + ARK + Form4 + 13F + Politicians + yfinance(3) + TA + IndexSync
+│   │   │   └── jobs.py            # ✅ 10 Jobs: Prices + ARK + Form4 + 13F + Politicians + yfinance(3) + TA + IndexSync (inkl. Sektor-Enrichment)
 │   │   └── utils/
 │   │       ├── __init__.py
 │   │       ├── logging.py         # ✅ implementiert

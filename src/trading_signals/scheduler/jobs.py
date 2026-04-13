@@ -205,13 +205,17 @@ def run_technical_indicators_computer() -> None:
 
 
 def run_index_sync() -> None:
-    """Monthly index membership sync.
+    """Monthly index membership sync + sector enrichment.
 
     Scheduled for 1st of each month at 03:00 Europe/Berlin.
     Updates S&P 500 / Nasdaq 100 membership from Wikipedia,
-    validates new tickers against Alpaca, and adds them to
-    the universe.
+    validates new tickers against Alpaca, adds them to the
+    universe, and enriches any tickers missing sector data.
     """
+    from sqlalchemy import select, update
+
+    from trading_signals.collectors.yfinance_client import YFinanceClient
+    from trading_signals.db.models.universe import Universe
     from trading_signals.db.session import get_session
     from trading_signals.universe.index_sync import IndexSyncer
 
@@ -230,3 +234,45 @@ def run_index_sync() -> None:
             logger.info(
                 f"index_sync_job new tickers: {', '.join(result.new_tickers)}"
             )
+
+    # Step 2: Enrich tickers missing sector/industry data
+    with get_session() as session:
+        stmt = (
+            select(Universe.ticker)
+            .where(Universe.is_active.is_(True))
+            .where(
+                (Universe.sector.is_(None)) | (Universe.sector == "")
+            )
+            .order_by(Universe.ticker)
+        )
+        missing = [row[0] for row in session.execute(stmt).all()]
+
+    if missing:
+        logger.info(
+            f"index_sync_job: enriching {len(missing)} tickers "
+            f"with sector/industry from yfinance"
+        )
+        client = YFinanceClient(
+            batch_size=50,
+            delay_between_tickers=0.5,
+            delay_between_batches=3.0,
+        )
+        results = client.fetch_sector_info(missing)
+
+        with get_session() as session:
+            for record in results:
+                session.execute(
+                    update(Universe)
+                    .where(Universe.ticker == record["ticker"])
+                    .values(
+                        sector=record.get("sector"),
+                        industry=record.get("industry"),
+                    )
+                )
+
+        logger.info(
+            f"index_sync_job sector enrichment: "
+            f"{len(results)}/{len(missing)} tickers enriched"
+        )
+    else:
+        logger.info("index_sync_job: all tickers have sector data")
