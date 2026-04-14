@@ -185,21 +185,19 @@ class Form4Collector(BaseCollector):
         if "/" in doc_name:
             doc_name = doc_name.rsplit("/", 1)[-1]
 
-        # The filer CIK (insider) is the first segment of the accession number.
-        # SEC archives files under the filer's CIK, NOT the company's CIK.
-        # e.g. accession "0001936006-26-000010" → filer CIK "0001936006"
-        filer_cik = accession.split("-")[0] if "-" in accession else cik
-
-        # Download the XML filing using the filer's CIK
+        # SEC archives filings under the SUBJECT COMPANY CIK (the `cik` param),
+        # NOT the filer CIK from the accession number. The filer might be a
+        # third-party agent (law firm), but files are in the company's directory.
+        # Download the XML filing using the company's CIK
         xml_content = self.sec_client.download_filing_document(
-            filer_cik, accession, doc_name
+            cik, accession, doc_name
         )
 
         # Build the URL for reference
         acc_no_dashes = accession.replace("-", "")
         form4_url = (
             f"https://www.sec.gov/Archives/edgar/data/"
-            f"{self.sec_client.pad_cik(filer_cik)}/{acc_no_dashes}/{doc_name}"
+            f"{self.sec_client.pad_cik(cik)}/{acc_no_dashes}/{doc_name}"
         )
 
         # Parse filing date
