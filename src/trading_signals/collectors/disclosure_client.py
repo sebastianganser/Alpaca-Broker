@@ -54,27 +54,57 @@ class DisclosureClient:
     def _agree_to_senate_terms(self) -> None:
         """Visit the Senate eFD home page and agree to terms.
 
-        The Senate site requires clicking "I agree" which sets a session
-        cookie. We simulate this by visiting the home page and extracting
-        the CSRF token.
+        The Senate site requires accepting the prohibition agreement
+        which sets a session cookie. This method:
+          1. GET /search/home/ → receive csrftoken cookie + HTML form
+          2. POST /search/home/ with CSRF token + prohibition_agreement=1
+          3. Verify we got redirected to /search/ (agreement accepted)
         """
         if self._senate_agreed:
             return
 
+        logger.info("[disclosure_client] Starting Senate eFD agreement flow...")
+
+        # Step 1: GET the home page to get CSRF cookie and form token
         self._rate_limit()
-        resp = self.session.get(SENATE_SEARCH_HOME)
+        resp = self.session.get(SENATE_SEARCH_HOME, allow_redirects=True)
         resp.raise_for_status()
 
-        # Extract CSRF token from the form
+        logger.info(
+            f"[disclosure_client] GET /search/home/ -> "
+            f"status={resp.status_code}, url={resp.url}, "
+            f"cookies={list(self.session.cookies.keys())}"
+        )
+
+        # If we were redirected to /search/ directly, we're already agreed
+        if "/search/home/" not in resp.url:
+            self._csrf_token = self.session.cookies.get("csrftoken", "")
+            self._senate_agreed = True
+            logger.info("[disclosure_client] Already agreed (redirected to search)")
+            return
+
+        # Extract CSRF token from the hidden form field
         soup = BeautifulSoup(resp.text, "lxml")
         csrf_input = soup.find("input", {"name": "csrfmiddlewaretoken"})
-        if csrf_input:
-            self._csrf_token = csrf_input.get("value", "")
-        else:
-            # Try from cookies
-            self._csrf_token = self.session.cookies.get("csrftoken", "")
+        form_csrf = csrf_input.get("value", "") if csrf_input else ""
 
-        # POST to agree to terms
+        # Also get CSRF from cookie
+        cookie_csrf = self.session.cookies.get("csrftoken", "")
+
+        # Prefer form token, fall back to cookie
+        self._csrf_token = form_csrf or cookie_csrf
+
+        logger.info(
+            f"[disclosure_client] CSRF tokens: "
+            f"form={form_csrf[:20]}{'...' if len(form_csrf) > 20 else ''}, "
+            f"cookie={cookie_csrf[:20]}{'...' if len(cookie_csrf) > 20 else ''}"
+        )
+
+        if not self._csrf_token:
+            logger.error("[disclosure_client] No CSRF token found!")
+            raise RuntimeError("Senate eFD: No CSRF token found in form or cookies")
+
+        # Step 2: POST to agree to terms
         self._rate_limit()
         agree_resp = self.session.post(
             SENATE_SEARCH_HOME,
@@ -84,16 +114,25 @@ class DisclosureClient:
             },
             headers={
                 "Referer": SENATE_SEARCH_HOME,
+                "Origin": SENATE_BASE_URL,
             },
+            allow_redirects=True,
         )
         agree_resp.raise_for_status()
 
-        # Update CSRF token from response if available
+        logger.info(
+            f"[disclosure_client] POST /search/home/ -> "
+            f"status={agree_resp.status_code}, "
+            f"final_url={agree_resp.url}, "
+            f"cookies={list(self.session.cookies.keys())}"
+        )
+
+        # Update CSRF token from response
         if "csrftoken" in self.session.cookies:
             self._csrf_token = self.session.cookies["csrftoken"]
 
         self._senate_agreed = True
-        logger.info("[disclosure_client] Agreed to Senate eFD terms")
+        logger.info("[disclosure_client] Agreed to Senate eFD terms successfully")
 
     @retry(max_attempts=3, base_delay=2.0)
     def fetch_senate_ptrs(
@@ -118,6 +157,15 @@ class DisclosureClient:
         if to_date is None:
             to_date = date.today()
 
+        # Refresh CSRF token from cookies (may have been updated)
+        if "csrftoken" in self.session.cookies:
+            self._csrf_token = self.session.cookies["csrftoken"]
+
+        logger.info(
+            f"[disclosure_client] Searching PTRs from "
+            f"{from_date.strftime('%m/%d/%Y')} to {to_date.strftime('%m/%d/%Y')}"
+        )
+
         self._rate_limit()
         resp = self.session.post(
             SENATE_SEARCH_URL,
@@ -132,6 +180,7 @@ class DisclosureClient:
             },
             headers={
                 "Referer": SENATE_SEARCH_URL,
+                "Origin": SENATE_BASE_URL,
             },
         )
         resp.raise_for_status()
