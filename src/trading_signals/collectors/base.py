@@ -80,6 +80,7 @@ class BaseCollector(ABC):
         # Step 4: Finalize log entry (always runs, separate transaction)
         # This ensures status/finished_at is persisted even on failure
         finished_at = datetime.now()
+        duration = 0.0
         with get_session() as session:
             log = session.get(CollectionLog, log_id)
             if log:
@@ -95,8 +96,13 @@ class BaseCollector(ABC):
                     log.gaps_extrapolated = gap_result.gaps_extrapolated
 
                 duration = (finished_at - log.started_at).total_seconds()
+            # NOTE: Do NOT expunge before commit!
+            # get_session() commits on exit – expunge would prevent that.
 
-                # Detach from session for return value
+        # Re-fetch the committed log for return value
+        with get_session() as session:
+            log = session.get(CollectionLog, log_id)
+            if log:
                 session.expunge(log)
 
         if status == "success":
