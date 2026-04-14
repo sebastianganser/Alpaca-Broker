@@ -149,6 +149,9 @@ class DisclosureClient:
     ) -> list[dict]:
         """Fetch list of Senate Periodic Transaction Reports.
 
+        Uses the DataTables AJAX endpoint (/search/report/data/) which
+        returns JSON instead of server-rendered HTML.
+
         Args:
             from_date: Start date for search. Defaults to 1 year ago.
             to_date: End date for search. Defaults to today.
@@ -173,104 +176,106 @@ class DisclosureClient:
             f"{from_date.strftime('%m/%d/%Y')} to {to_date.strftime('%m/%d/%Y')}"
         )
 
-        self._rate_limit()
-        resp = self.session.post(
-            SENATE_SEARCH_URL,
-            data={
-                "csrfmiddlewaretoken": self._csrf_token,
-                "first_name": "",
-                "last_name": "",
-                "filer_type": "1",  # Senator
-                "report_type": "11",  # Periodic Transactions
-                "submitted_start_date": from_date.strftime("%m/%d/%Y"),
-                "submitted_end_date": to_date.strftime("%m/%d/%Y"),
-            },
-            headers={
-                "Referer": SENATE_SEARCH_URL,
-                "Origin": SENATE_BASE_URL,
-            },
-        )
-        resp.raise_for_status()
+        # Senate eFD uses DataTables with server-side processing.
+        # The actual data comes from /search/report/data/ as JSON.
+        all_filings: list[dict] = []
+        start = 0
+        page_size = 100  # Max records per page
 
-        logger.info(
-            f"[disclosure_client] Senate search response: "
-            f"status={resp.status_code}, content_length={len(resp.text)}, "
-            f"final_url={resp.url}"
-        )
-
-        # Detect if we were redirected back to the agreement page
-        if "prohibition_agreement" in resp.text:
-            logger.warning(
-                "[disclosure_client] Search response contains agreement form! "
-                "CSRF/session may have failed. Resetting agreement state."
+        while True:
+            self._rate_limit()
+            resp = self.session.post(
+                f"{SENATE_BASE_URL}/search/report/data/",
+                data={
+                    "report_types": "[11]",       # Periodic Transaction Report
+                    "filer_types": "[1]",          # Senator
+                    "submitted_start_date": from_date.strftime("%m/%d/%Y"),
+                    "submitted_end_date": to_date.strftime("%m/%d/%Y"),
+                    "candidate_state": "",
+                    "senator_state": "",
+                    "office_id": "",
+                    "first_name": "",
+                    "last_name": "",
+                    "csrfmiddlewaretoken": self._csrf_token,
+                    # DataTables pagination params
+                    "draw": "1",
+                    "start": str(start),
+                    "length": str(page_size),
+                    "search[value]": "",
+                    "search[regex]": "false",
+                    "order[0][column]": "4",       # Sort by date filed
+                    "order[0][dir]": "desc",
+                },
+                headers={
+                    "Referer": SENATE_SEARCH_URL,
+                    "Origin": SENATE_BASE_URL,
+                    "X-Requested-With": "XMLHttpRequest",
+                },
             )
-            self._senate_agreed = False
-            # Try to re-agree and retry
-            raise RuntimeError(
-                "Senate eFD returned agreement page instead of search results"
-            )
+            resp.raise_for_status()
 
-        return self._parse_senate_search_results(resp.text)
+            try:
+                data = resp.json()
+            except Exception as e:
+                logger.error(
+                    f"[disclosure_client] Failed to parse JSON response: {e}. "
+                    f"Response preview: {resp.text[:300]}"
+                )
+                break
 
-    def _parse_senate_search_results(self, html: str) -> list[dict]:
-        """Parse Senate eFD search results HTML into filing metadata."""
-        soup = BeautifulSoup(html, "lxml")
+            records_total = data.get("recordsTotal", 0)
+            records = data.get("data", [])
 
-        # Log the page title for debugging
-        title = soup.find("title")
-        title_text = title.get_text(strip=True) if title else "NO TITLE"
-        logger.info(f"[disclosure_client] Response page title: '{title_text}'")
-
-        table = soup.find("table", class_="table")
-        if not table:
-            # Also try finding by id (the table has id="filedReports")
-            table = soup.find("table", id="filedReports")
-
-        if not table:
             logger.info(
-                f"[disclosure_client] No results table found in HTML "
-                f"(length={len(html)}, has '<table': {'<table' in html.lower()}, "
-                f"title='{title_text}')"
+                f"[disclosure_client] AJAX page: start={start}, "
+                f"got {len(records)} records, total={records_total}"
             )
-            # Log first 500 chars for debugging
-            logger.info(f"[disclosure_client] HTML preview: {html[:500]}")
-            return []
 
-        tbody = table.find("tbody")
-        if not tbody:
-            logger.info("[disclosure_client] Table found but no <tbody>")
-            return []
+            for record in records:
+                filing = self._parse_ajax_record(record)
+                if filing:
+                    all_filings.append(filing)
 
-        filings = []
-        for row in tbody.find_all("tr"):
-            cells = row.find_all("td")
-            if len(cells) < 5:
-                continue
-
-            # Extract link
-            link_tag = cells[3].find("a")
-            if not link_tag:
-                continue
-
-            href = link_tag.get("href", "")
-            # We only want electronic filings (/ptr/) not paper ones (/paper/)
-            if "/ptr/" not in href:
-                continue
-
-            filing = {
-                "first_name": cells[0].get_text(strip=True),
-                "last_name": cells[1].get_text(strip=True),
-                "office": cells[2].get_text(strip=True),
-                "report_type": cells[3].get_text(strip=True),
-                "date_filed": cells[4].get_text(strip=True),
-                "ptr_link": href if href.startswith("http") else f"{SENATE_BASE_URL}{href}",
-            }
-            filings.append(filing)
+            # Check if we've fetched all records
+            start += page_size
+            if start >= records_total or not records:
+                break
 
         logger.info(
-            f"[disclosure_client] Found {len(filings)} Senate PTR filings"
+            f"[disclosure_client] Found {len(all_filings)} Senate PTR filings "
+            f"(total on server: {records_total})"
         )
-        return filings
+        return all_filings
+
+    def _parse_ajax_record(self, record: list) -> dict | None:
+        """Parse a single DataTables AJAX record into filing metadata.
+
+        Each record is a list of HTML-encoded cell values from the DataTables
+        server response. Format: [first_name, last_name, office, report_link, date]
+        """
+        if not isinstance(record, list) or len(record) < 5:
+            return None
+
+        # Extract link from HTML cell (e.g. '<a href="/search/view/ptr/...">')
+        report_html = str(record[3])
+        soup = BeautifulSoup(report_html, "lxml")
+        link_tag = soup.find("a")
+        if not link_tag:
+            return None
+
+        href = link_tag.get("href", "")
+        # Only electronic filings (/ptr/), not paper ones (/paper/)
+        if "/ptr/" not in href:
+            return None
+
+        return {
+            "first_name": BeautifulSoup(str(record[0]), "lxml").get_text(strip=True),
+            "last_name": BeautifulSoup(str(record[1]), "lxml").get_text(strip=True),
+            "office": BeautifulSoup(str(record[2]), "lxml").get_text(strip=True),
+            "report_type": link_tag.get_text(strip=True),
+            "date_filed": BeautifulSoup(str(record[4]), "lxml").get_text(strip=True),
+            "ptr_link": href if href.startswith("http") else f"{SENATE_BASE_URL}{href}",
+        }
 
     @retry(max_attempts=3, base_delay=2.0)
     def fetch_senate_ptr_transactions(self, ptr_url: str) -> list[dict]:
