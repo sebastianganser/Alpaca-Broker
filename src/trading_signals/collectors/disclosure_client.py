@@ -9,6 +9,9 @@ Senate eFD workflow:
   3. GET /search/view/ptr/{guid}/ → HTML table with transactions
 
 Rate limit: max 2 req/s (conservative, government site).
+
+Note: Senate eFD uses TLS fingerprinting (JA3) to block bot traffic.
+We use curl_cffi to impersonate a real Chrome browser TLS fingerprint.
 """
 
 import re
@@ -16,7 +19,7 @@ import time
 from datetime import date, datetime
 from typing import Any
 
-import requests
+from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 
 from trading_signals.utils.logging import get_logger
@@ -42,25 +45,9 @@ class DisclosureClient:
     """Client for fetching politician trade disclosures from official portals."""
 
     def __init__(self, user_agent: str = USER_AGENT) -> None:
-        self.session = requests.Session()
-        # Senate eFD requires full browser-like headers, not just User-Agent.
-        # Without these, the site returns 403 Forbidden.
-        self.session.headers.update({
-            "User-Agent": user_agent,
-            "Accept": (
-                "text/html,application/xhtml+xml,application/xml;"
-                "q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Cache-Control": "max-age=0",
-        })
+        # Use curl_cffi with Chrome impersonation to bypass TLS fingerprinting.
+        # Senate eFD blocks Python's requests library (JA3 hash detection).
+        self.session = cffi_requests.Session(impersonate="chrome131")
         self._last_request_time: float = 0.0
         self._senate_agreed = False
 

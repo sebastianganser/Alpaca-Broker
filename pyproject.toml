@@ -21,6 +21,7 @@ dependencies = [
     "lxml>=6.0.4",
     "requests>=2.31",
     "beautifulsoup4>=4.12",
+    "curl_cffi>=0.7",
 ]
 
 [project.optional-dependencies]
