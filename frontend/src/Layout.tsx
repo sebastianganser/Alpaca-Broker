@@ -103,6 +103,7 @@ export default function Layout() {
     <div className="app-layout">
       <aside className="sidebar">
         <div className="sidebar-logo">
+          <img src="/logo.png" alt="Alpaca Broker" className="sidebar-logo-img" />
           <h1>Alpaca Broker</h1>
           <div className="subtitle">Signal Warehouse</div>
         </div>

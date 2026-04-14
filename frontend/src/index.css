@@ -151,6 +151,13 @@ h4 { font-size: 1.1rem; }
   margin-bottom: var(--space-2xl);
 }
 
+.sidebar-logo-img {
+  height: 44px;
+  width: auto;
+  margin-bottom: var(--space-sm);
+  opacity: 0.9;
+}
+
 .sidebar-logo h1 {
   font-size: 1rem;
   font-weight: 700;
@@ -180,7 +187,7 @@ h4 { font-size: 1.1rem; }
 .nav-item {
   display: flex;
   align-items: center;
-  gap: var(--space-sm);
+  gap: var(--space-md);
   padding: var(--space-sm) var(--space-lg);
   color: var(--on-surface-variant);
   font-size: 0.875rem;
