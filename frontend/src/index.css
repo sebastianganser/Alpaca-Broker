@@ -147,19 +147,26 @@ h4 { font-size: 1.1rem; }
 }
 
 .sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   padding: 0 var(--space-lg);
   margin-bottom: var(--space-2xl);
 }
 
 .sidebar-logo-img {
-  height: 44px;
-  width: auto;
-  margin-bottom: var(--space-sm);
-  opacity: 0.9;
+  height: 36px;
+  width: 36px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.sidebar-logo-text {
+  min-width: 0;
 }
 
 .sidebar-logo h1 {
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -167,14 +174,15 @@ h4 { font-size: 1.1rem; }
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  line-height: 1.2;
 }
 
 .sidebar-logo .subtitle {
-  font-size: 0.65rem;
+  font-size: 0.6rem;
   color: var(--on-surface-dim);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .sidebar-nav {
@@ -184,11 +192,16 @@ h4 { font-size: 1.1rem; }
   gap: 2px;
 }
 
+/* Nav icons center under logo (36px), text aligns with title text.
+   Logo center = space-lg (24px) + 36/2 = 42px from left.
+   Icon center = padding-left + 18/2 → padding-left = 42 - 9 = 33px.
+   Title text = 24 + 36 + 12 = 72px from left.
+   Nav text = 33 + 18 + gap → gap = 72 - 33 - 18 = 21px. */
 .nav-item {
   display: flex;
   align-items: center;
-  gap: var(--space-md);
-  padding: var(--space-sm) var(--space-lg);
+  gap: 21px;
+  padding: var(--space-sm) var(--space-lg) var(--space-sm) 33px;
   color: var(--on-surface-variant);
   font-size: 0.875rem;
   font-weight: 500;
