@@ -176,8 +176,40 @@ class DisclosureClient:
             f"{from_date.strftime('%m/%d/%Y')} to {to_date.strftime('%m/%d/%Y')}"
         )
 
-        # Senate eFD uses DataTables with server-side processing.
-        # The actual data comes from /search/report/data/ as JSON.
+        # Step 1: Submit the search form to /search/ first.
+        # This sets up the search context in the server session.
+        # Without this, the AJAX endpoint returns 503.
+        search_params = {
+            "csrfmiddlewaretoken": self._csrf_token,
+            "first_name": "",
+            "last_name": "",
+            "filer_type": "1",
+            "report_type": "11",
+            "submitted_start_date": from_date.strftime("%m/%d/%Y"),
+            "submitted_end_date": to_date.strftime("%m/%d/%Y"),
+        }
+        self._rate_limit()
+        search_resp = self.session.post(
+            SENATE_SEARCH_URL,
+            data=search_params,
+            headers={
+                "Referer": SENATE_SEARCH_URL,
+                "Origin": SENATE_BASE_URL,
+            },
+        )
+        search_resp.raise_for_status()
+
+        logger.info(
+            f"[disclosure_client] Search form POST -> status={search_resp.status_code}, "
+            f"content_length={len(search_resp.text)}"
+        )
+
+        # Update CSRF token after form submission
+        if "csrftoken" in self.session.cookies:
+            self._csrf_token = self.session.cookies["csrftoken"]
+
+        # Step 2: Fetch results from DataTables AJAX endpoint.
+        # Senate eFD uses server-side processing, data comes as JSON.
         all_filings: list[dict] = []
         start = 0
         page_size = 100  # Max records per page
