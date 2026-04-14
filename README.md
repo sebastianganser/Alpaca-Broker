@@ -45,6 +45,7 @@ Datenquellen → Collectors → PostgreSQL (Raw) → Derived Layer → Feature S
 - Alpaca API (Market Data + Paper Trading)
 - FastAPI (Backend-API + SPA Host)
 - Vite + React (Dashboard UI)
+- curl_cffi (TLS-Fingerprinting für Senate eFD)
 - Docker Compose (Unraid)
 
 ## Dokumentation

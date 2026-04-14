@@ -525,3 +525,20 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
 - **Bugfix:** Alembic-Revision im Dashboard zeigte "—" → Query nutzte falsches Schema (`public` statt `signals`)
 - Dokumentation aktualisiert: ARCHITECTURE.md, ROADMAP.md, DATA_SOURCES.md, DECISIONS.md
 - Nächster Schritt: **Sprint 8 (Feature Pipeline)**
+
+### Session 12 – 14. April 2026 – SEC Form 4 & Senate eFD Bugfix
+- **Problem 1 – SEC Form 4 (404-Fehler):** Form 4 Collector konnte keine XML-Dateien herunterladen (alle 404)
+  - **XSLT-Prefix-Bug:** `primaryDocument` enthielt XSLT-Wrapper-Pfade (`xslF345X06/ownership.xml`) → physische Dateien existieren ohne Prefix
+  - **CIK-Routing-Bug:** URL-Konstruktion verwendete den Filer-CIK (aus Accession Number) statt Subject-Company-CIK → Dateien liegen unter Unternehmens-Verzeichnis
+  - **Fix:** XSLT-Prefix strippen + Company-CIK aus `company_tickers.json` verwenden
+  - **Ergebnis:** 1.329 Transaktionen erfolgreich importiert ✅
+- **Problem 2 – Senate eFD (403 → 503 → 0 Ergebnisse):**
+  - **TLS-Fingerprinting (403):** Senate eFD blockiert Python `requests` über JA3-Hash-Detection
+  - **Fix:** Migration auf `curl_cffi` mit `impersonate="chrome131"` → 403 gelöst ✅
+  - **HTML-Parsing (0 Ergebnisse):** Suchergebnisse werden per DataTables AJAX geladen, HTML-Tabelle ist leer
+  - **Fix:** Direkt den AJAX-Endpoint `POST /search/report/data/` aufrufen → JSON statt HTML
+  - **Session-Flow (503):** AJAX-Endpoint braucht vorherigen Search-Form POST um Session zu initialisieren
+  - **Fix:** Search-Form POST an `/search/` vor AJAX-Call einfügen
+  - **Status:** Agreement + Search funktioniert, AJAX-Datenabfrage in Verifikation
+- **Neue Dependency:** `curl_cffi>=0.7` (in pyproject.toml)
+- Dokumentation aktualisiert: DATA_SOURCES.md, DECISIONS.md (5 neue Entscheidungen), ROADMAP.md

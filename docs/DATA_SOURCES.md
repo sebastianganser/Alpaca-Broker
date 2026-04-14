@@ -288,13 +288,17 @@ Alle Periodic Transaction Reports (PTRs) von US-Senatoren – offizielle Finanz-
 ### Zugang & Kosten
 
 - **Kostenlos** – Offizielle US-Regierungsquelle
-- **Kein API-Token nötig** – HTML-Scraping des Suchformulars
+- **Kein API-Token nötig** – DataTables AJAX-Endpoint (JSON)
 - **Session-basiert** – Erfordert Terms Agreement + CSRF-Token
+- **TLS-Fingerprinting:** Senate eFD blockiert Python `requests` (JA3-Hash-Detection)
 - **Rate Limiting:** Konservativ 2 req/s (keine offiziellen Limits dokumentiert)
 
 ### Implementierung
 
-- **Client:** `DisclosureClient` mit `requests.Session()` + BeautifulSoup
+- **Client:** `DisclosureClient` mit `curl_cffi` (Chrome TLS-Impersonation) + BeautifulSoup
+- **HTTP-Client:** `curl_cffi.requests.Session(impersonate="chrome131")` – umgeht TLS-Fingerprinting
+- **Daten-Endpoint:** `POST /search/report/data/` (DataTables AJAX, JSON statt HTML)
+- **Session-Flow:** GET `/search/home/` → POST Agreement → POST `/search/` → AJAX
 - **Collector:** `PoliticianTradesCollector(BaseCollector)` – Template-Method-Pattern
 - **Tabelle:** `signals.politician_trades` mit Dedup via Unique Constraint
 - **Schedule:** Wöchentlich Sonntag 11:00 MEZ
@@ -305,7 +309,8 @@ Alle Periodic Transaction Reports (PTRs) von US-Senatoren – offizielle Finanz-
 - **Verzögerung: 30–45 Tage** (STOCK Act erlaubt bis zu 45 Tage Meldefrist)
 - **Amount-Ranges statt exakter Beträge** ("$1,001 – $15,000")
 - **Nur Senate** – House PTRs sind PDF-only (zukünftiges Enhancement)
-- **HTML-Scraping fragil** – Strukturänderungen können den Parser brechen
+- **TLS-Fingerprinting** – Standard Python `requests` wird mit 403 blockiert → `curl_cffi` erforderlich
+- **DataTables AJAX** – Suchergebnisse werden per JavaScript/AJAX geladen, nicht server-rendered
 - **Keine Party/State-Info** aus der Suchseite (ggf. über Merge mit Bioguide)
 
 ### Verworfene Alternativen

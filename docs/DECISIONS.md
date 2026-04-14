@@ -863,6 +863,68 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 
 ---
 
+### [2026-04-14] SEC Form 4: XSLT-Prefix stripping für primaryDocument
+
+**Kontext:** SEC Submissions API liefert für `primaryDocument` oft XSLT-Wrapper-Pfade wie `xslF345X06/ownership.xml`. Diese Pfade existieren nicht als physische Dateien auf SEC.gov → 404.
+
+**Entscheidung:** XSLT-Prefix `xslF345X06/` aus dem `primaryDocument`-Pfad strippen → nur `ownership.xml`.
+
+**Begründung:** SEC rendert XSLT-Transformationen on-the-fly, speichert aber nur die rohen XML-Dateien. Der Prefix ist ein virtueller Pfad für die HTML-Ansicht, nicht für programmatischen Zugriff.
+
+---
+
+### [2026-04-14] SEC Form 4: Company-CIK für Archiv-URLs, nicht Filer-CIK
+
+**Kontext:** Die Accession Number `0001178913-26-002089` enthält den Filer-CIK (`1178913`), der eine Anwaltskanzlei/Filing-Agent ist. Die tatsächlichen Dateien liegen aber unter dem Subject-Company-CIK.
+
+**Entscheidung:** Den Company-CIK (aus `company_tickers.json`) für den Download verwenden, nicht den Filer-CIK aus der Accession Number.
+
+**Begründung:** SEC speichert Filings unter dem Verzeichnis des Unternehmens (Subject), nicht des Filers (Agent). Beispiel: Compugen (CIK `1119774`), Filer ist Anwaltskanzlei (CIK `1178913`) → Datei liegt unter `.../data/1119774/...`.
+
+---
+
+### [2026-04-14] Senate eFD: curl_cffi statt Python requests
+
+**Kontext:** Senate eFD blockiert Python `requests` mit 403 Forbidden, trotz Browser-User-Agent und vollständigen Browser-Headers. Die Seite nutzt TLS-Fingerprinting (JA3-Hash).
+
+**Optionen:**
+- A: Browser-like Headers in `requests` → 403 bleibt
+- B: `curl_cffi` mit Chrome-Impersonation → TLS-Fingerprint passt
+- C: `cloudscraper` → zu Cloudflare-spezifisch
+- D: Headless Browser (Selenium/Playwright) → Overhead zu hoch
+
+**Entscheidung:** Option B – `curl_cffi.requests.Session(impersonate="chrome131")`.
+
+**Begründung:** `curl_cffi` ist ein Drop-in-Replacement für `requests` mit identischer API (Session, cookies, get/post), aber mit echtem Chrome-TLS-Fingerprint. Minimaler Code-Aufwand, keine Architekturänderung. Neue Dependency: `curl_cffi>=0.7`.
+
+**Revisit-Trigger:** Falls Senate eFD die Bot-Detection weiter verschärft (JS-Challenge/Captcha).
+
+---
+
+### [2026-04-14] Senate eFD: DataTables AJAX-Endpoint statt HTML-Parsing
+
+**Kontext:** Senate eFD liefert eine HTML-Seite mit leerer Tabelle – die Suchergebnisse werden per JavaScript/DataTables AJAX (`POST /search/report/data/`) als JSON nachgeladen. HTML-Parsing lieferte deshalb immer 0 Ergebnisse.
+
+**Entscheidung:** Direkt den DataTables AJAX-Endpoint aufrufen statt HTML zu parsen.
+
+**Begründung:**
+- AJAX-Endpoint liefert JSON (strukturiert, robust) statt HTML (fragil)
+- Server-Side Processing mit Pagination (100 Records/Seite)
+- Session-Flow: 1. Agreement → 2. Search-Form POST → 3. AJAX-Daten
+- Der Search-Form POST ist nötig um die Suchparameter in der Server-Session zu setzen (sonst 503)
+
+---
+
+### [2026-04-14] Collection-Log `notes`-Feld für Diagnose-Informationen
+
+**Kontext:** Collector-Fehler waren ohne Container-stdout-Zugriff schwer zu debuggen. Das Collection-Log in der DB hatte nur `status`, `records_fetched` und `records_written`.
+
+**Entscheidung:** `notes` TEXT-Spalte zum `collection_log` hinzufügen. BaseCollector speichert Diagnose-Infos (z.B. `fetch returned 1420 items`) automatisch.
+
+**Begründung:** Macht Silent Failures sichtbar in der UI/API, ohne Container-Logs lesen zu müssen. Minimale Schema-Änderung (eine nullable TEXT-Spalte).
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.

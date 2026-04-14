@@ -88,7 +88,7 @@ Alpaca-Broker/
 │   │   │   ├── sec_client.py      # ✅ Sprint 3 (SEC API Client)
 │   │   │   ├── form4_collector.py # ✅ Sprint 3 (Insider-Trades)
 │   │   │   ├── form13f_collector.py # ✅ Sprint 3 (Institutionelle)
-│   │   │   ├── disclosure_client.py # ✅ Sprint 4 (Senate eFD)
+│   │   │   ├── disclosure_client.py # ✅ Sprint 4 (Senate eFD, curl_cffi + AJAX)
 │   │   │   ├── politician_trades_collector.py # ✅ Sprint 4
 │   │   │   ├── yfinance_client.py   # ✅ Sprint 5 (Shared Client)
 │   │   │   ├── fundamentals_collector.py # ✅ Sprint 5
@@ -660,3 +660,6 @@ Siehe [DECISIONS.md](DECISIONS.md) für Begründungen.
 - **Einzelner Container**: Collector + API + UI in einem Container auf Port 8090, Multi-Stage Docker Build
 - **Dashboard vor Feature Pipeline**: UI (Sprint 7) vor Backend-Aggregation (Sprint 8) für sofortiges grafisches Feedback
 - **yfinance für Sektor-Enrichment**: Alpaca liefert kein `sector`/`industry`; yfinance `ticker.info` als kostenlose Quelle, in monatlichen IndexSync integriert
+- **curl_cffi für Senate eFD**: Senate blockiert Python `requests` via TLS-Fingerprinting (JA3); `curl_cffi` mit Chrome-Impersonation umgeht das transparent
+- **DataTables AJAX statt HTML-Parsing (Senate eFD)**: Suchergebnisse werden per AJAX (`/search/report/data/`) als JSON geladen; HTML-Tabelle ist nur leeres Template
+- **SEC Form 4: Company-CIK, nicht Filer-CIK**: SEC archiviert unter dem Subject-Company-CIK, nicht dem Filing-Agent-CIK aus der Accession Number
