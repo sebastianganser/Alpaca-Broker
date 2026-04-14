@@ -32,7 +32,7 @@ SENATE_SEARCH_URL = f"{SENATE_BASE_URL}/search/"
 SENATE_SEARCH_HOME = f"{SENATE_BASE_URL}/search/home/"
 
 # User-Agent following the same approach as SEC EDGAR
-USER_AGENT = "TradingSignals/1.0 (private research project)"
+USER_AGENT = "TradingSignals/1.0 (sebastian.ganser@hotmail.com)"
 
 
 class DisclosureClient:
@@ -93,7 +93,7 @@ class DisclosureClient:
             self._csrf_token = self.session.cookies["csrftoken"]
 
         self._senate_agreed = True
-        logger.debug("[disclosure_client] Agreed to Senate eFD terms")
+        logger.info("[disclosure_client] Agreed to Senate eFD terms")
 
     @retry(max_attempts=3, base_delay=2.0)
     def fetch_senate_ptrs(
@@ -136,6 +136,11 @@ class DisclosureClient:
         )
         resp.raise_for_status()
 
+        logger.info(
+            f"[disclosure_client] Senate search response: "
+            f"status={resp.status_code}, content_length={len(resp.text)}"
+        )
+
         return self._parse_senate_search_results(resp.text)
 
     def _parse_senate_search_results(self, html: str) -> list[dict]:
@@ -143,7 +148,10 @@ class DisclosureClient:
         soup = BeautifulSoup(html, "lxml")
         table = soup.find("table", class_="table")
         if not table:
-            logger.debug("[disclosure_client] No results table found")
+            logger.info(
+                f"[disclosure_client] No results table found in HTML "
+                f"(length={len(html)}, has 'table' tag: {'<table' in html.lower()})"
+            )
             return []
 
         tbody = table.find("tbody")

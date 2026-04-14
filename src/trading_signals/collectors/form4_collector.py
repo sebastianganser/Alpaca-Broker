@@ -97,7 +97,7 @@ class Form4Collector(BaseCollector):
                     cik, since_date=since_date
                 )
             except Exception as e:
-                logger.debug(
+                logger.info(
                     f"[{self.name}] {ticker} (CIK {cik}): submissions error: {e}"
                 )
                 errors += 1
@@ -115,7 +115,7 @@ class Form4Collector(BaseCollector):
                     )
                     all_transactions.extend(transactions)
                 except Exception as e:
-                    logger.debug(
+                    logger.info(
                         f"[{self.name}] {ticker}: filing parse error: {e}"
                     )
                     errors += 1

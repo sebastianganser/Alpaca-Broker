@@ -66,6 +66,16 @@ class PoliticianTradesCollector(BaseCollector):
             filings = []
             errors += 1
 
+        logger.info(
+            f"[{self.name}] Senate PTR search returned {len(filings)} filings"
+        )
+        for i, f in enumerate(filings[:5]):  # Log first 5 for debugging
+            logger.info(
+                f"[{self.name}]   Filing {i+1}: "
+                f"{f.get('first_name', '')} {f.get('last_name', '')} "
+                f"({f.get('date_filed', '')}) -> {f.get('ptr_link', '')}"
+            )
+
         filings_processed = 0
         for filing in filings:
             try:
@@ -73,7 +83,7 @@ class PoliticianTradesCollector(BaseCollector):
                     filing["ptr_link"]
                 )
             except Exception as e:
-                logger.debug(
+                logger.info(
                     f"[{self.name}] Failed to parse PTR for "
                     f"{filing.get('first_name', '')} {filing.get('last_name', '')}: {e}"
                 )

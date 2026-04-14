@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     ALPACA_ENDPOINT: str = "https://paper-api.alpaca.markets"
 
     # ── SEC EDGAR ─────────────────────────────────────────────────
-    SEC_USER_AGENT: str = "TradingSignals/1.0 (contact@example.com)"
+    SEC_USER_AGENT: str = "TradingSignals/1.0 (sebastian.ganser@hotmail.com)"
 
     # ── Logging ───────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
