@@ -61,7 +61,7 @@ Die vollständige Dokumentation liegt im Projekt selbst:
 
 ## Status
 
-🟢 **Produktionsbetrieb** – Deployed auf Unraid (192.168.1.93:8090). Dashboard & Operations UI (Sprint 7) live. 10 Scheduler-Jobs aktiv (5 täglich, 4 wöchentlich, 1 monatlich inkl. Sektor-Enrichment). ~845 Ticker, ~820k Preisdatensätze, ~818k TA-Indikatoren. 303 Tests.
+🟢 **Produktionsbetrieb** – Deployed auf Unraid (192.168.1.93:8090). Dashboard & Operations UI (Sprint 7) live. 10 Scheduler-Jobs aktiv (5 täglich, 4 wöchentlich, 1 monatlich inkl. Sektor-Enrichment). ~845 Ticker, ~820k Preisdatensätze, ~818k TA-Indikatoren, ~1.329 Insider-Trades, 636 Politiker-Trades. 303 Tests.
 Nächster Schritt: Sprint 8 (Feature Pipeline).
 
 ## Lizenz

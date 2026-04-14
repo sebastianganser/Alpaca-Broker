@@ -36,7 +36,17 @@ Wir tracken Erkenntnisse in mehreren Kategorien:
 
 ## Erkenntnisse
 
-*(Dieses Dokument ist noch leer – die erste Erkenntnis kommt, sobald der erste Datensammler läuft.)*
+### [2026-04-15] 📊 Erste Politiker-Trade-Daten: Auffällige Aktivität einzelner Senatoren
+
+**Beobachtung:** Beim ersten erfolgreichen Senate eFD Import (161 PTR-Filings, 636 Transaktionen) fällt auf, dass einige wenige Senatoren extrem aktiv handeln. John Boozman hat allein am 14.04.2026 mindestens 10 Transaktionen gemeldet (diverse Purchases + Sales: VLA, SPYN, NVDA, MSFT, ARES, FIGC, TPVP, TNC, BREU). John Fetterman zeigt ähnliches Muster mit 8+ Trades am 03.04.2026 (MSFT, ERIE, AMZN, GOOG, FRTF, NU).
+
+**Daten:** 636 Politiker-Trades aus 161 PTR-Filings (12 Monate Lookback).
+
+**Hypothese:** Diese Senatoren diversifizieren aktiv ihre Portfolios. Die hohe Transaktionsfrequenz bei kleinen Beträgen ($1,001-$15,000) deutet auf regelmäßiges Rebalancing hin – wahrscheinlich **kein starkes Alpha-Signal** für Einzeltrades. Interessanter wären große Einzeltrades (>$50,000), wie Tina Smiths MMM-Sale ($50,001-$100,000) und BRK.B-Sale ($100,001-$250,000).
+
+**Nächste Schritte:** Nach 1 Monat: Kategorisierung nach Betragshöhe, Frequenz-Analyse pro Senator.
+
+**Status:** 🟡 Offen
 
 ---
 
@@ -115,4 +125,14 @@ Hier landen Strategien, die wir ausprobiert haben und die sich als nicht funktio
 
 ## Meta-Learnings zum Projekt selbst
 
-*(Noch leer – füllt sich mit Lessons Learned zur Umsetzung)*
+### [2026-04-15] 🛠️ TLS-Fingerprinting wird zum Standard bei Government-Seiten
+
+Die Senate eFD Seite blockiert Python `requests` nicht über User-Agent oder Header-Analyse, sondern über **TLS-Fingerprinting (JA3-Hash)**. Das bedeutet: egal welche Headers wir senden, die TLS-Handshake-Signatur verrät, dass kein echter Browser verbindet. Lösung: `curl_cffi` mit Chrome-Impersonation. Erwartung: Weitere Government- und Finanz-Seiten werden ähnliche Bot-Detection nutzen.
+
+### [2026-04-15] 🛠️ DataTables Server-Side Processing erfordert Session-Kontext
+
+Die Senate eFD Seite rendert keine HTML-Tabellen mehr Server-seitig. Stattdessen: leeres HTML-Template + JavaScript/AJAX-Datenabruf (`/search/report/data/`). Der AJAX-Endpoint braucht aber einen vorherigen Search-Form POST, um die Suchparameter in der Server-Session zu speichern (sonst 503). Lesson: Bei Scraping immer erst den vollständigen Browser-Flow nachbilden.
+
+### [2026-04-15] 🛠️ SEC archiviert unter Subject-CIK, nicht Filer-CIK
+
+Die Accession Number eines SEC Filing enthält den CIK des **Filers** (oft eine Anwaltskanzlei oder Filing-Agent), aber die Dateien liegen im Archiv unter dem CIK des **Subject Company** (also des Unternehmens). Lesson: Bei SEC-Downloads immer den Company-CIK aus `company_tickers.json` verwenden, nicht den CIK aus der Accession Number.
