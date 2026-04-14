@@ -48,7 +48,7 @@ Die kritischen Pfade (Daten-Fetching, Berechnungen, später Order-Ausführung) s
 **Phase:** 🟢 Sprint 7 abgeschlossen + Produktionsbetrieb
 **Aktueller Sprint:** Operational – System läuft auf Unraid, Datensammlung aktiv
 **Nächster Schritt:** Sprint 8 (Feature Pipeline)
-**Letzte Aktualisierung:** 13. April 2026
+**Letzte Aktualisierung:** 14. April 2026
 **Deployment:** ✅ Unraid Docker (192.168.1.93:8090)
 
 Siehe [ROADMAP.md](docs/ROADMAP.md) für den detaillierten Fortschritt.

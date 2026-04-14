@@ -152,13 +152,14 @@ frontend/                          # ✅ Sprint 7 (Vite + React SPA)
 └── src/
     ├── main.tsx
     ├── App.tsx                    # Router + QueryClient
-    ├── Layout.tsx                 # Sidebar + World Clock + Outlet
+    ├── Layout.tsx                 # Sidebar (Logo + World Clock) + Outlet
     ├── api.ts                     # Typed API Client (fetch-wrapper)
     ├── index.css                  # Precision Architect Design System
     └── pages/
         ├── DashboardPage.tsx      # Collector-Status, Stats, Health
         ├── UniversePage.tsx       # Filtered/Paginated Ticker Table
         ├── SignalsPage.tsx        # Tabbed: ARK, Insider, Politicians, Analyst
+        ├── LogsPage.tsx           # Scheduler-Logs (Tabbed: alle / Fehler)
         ├── SettingsPage.tsx       # Scheduler, Backfill (Prices/TA/Sectors), DB Ops
         └── TickerPage.tsx         # Chart, Indicators, Fundamentals, Data Quality
 infra/
