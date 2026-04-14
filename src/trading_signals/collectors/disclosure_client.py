@@ -31,8 +31,11 @@ SENATE_BASE_URL = "https://efdsearch.senate.gov"
 SENATE_SEARCH_URL = f"{SENATE_BASE_URL}/search/"
 SENATE_SEARCH_HOME = f"{SENATE_BASE_URL}/search/home/"
 
-# User-Agent following the same approach as SEC EDGAR
-USER_AGENT = "TradingSignals/1.0 (sebastian.ganser@hotmail.com)"
+# Senate eFD requires a browser-like User-Agent (returns 403 for bot-like agents)
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 
 
 class DisclosureClient:
@@ -187,24 +190,51 @@ class DisclosureClient:
 
         logger.info(
             f"[disclosure_client] Senate search response: "
-            f"status={resp.status_code}, content_length={len(resp.text)}"
+            f"status={resp.status_code}, content_length={len(resp.text)}, "
+            f"final_url={resp.url}"
         )
+
+        # Detect if we were redirected back to the agreement page
+        if "prohibition_agreement" in resp.text:
+            logger.warning(
+                "[disclosure_client] Search response contains agreement form! "
+                "CSRF/session may have failed. Resetting agreement state."
+            )
+            self._senate_agreed = False
+            # Try to re-agree and retry
+            raise RuntimeError(
+                "Senate eFD returned agreement page instead of search results"
+            )
 
         return self._parse_senate_search_results(resp.text)
 
     def _parse_senate_search_results(self, html: str) -> list[dict]:
         """Parse Senate eFD search results HTML into filing metadata."""
         soup = BeautifulSoup(html, "lxml")
+
+        # Log the page title for debugging
+        title = soup.find("title")
+        title_text = title.get_text(strip=True) if title else "NO TITLE"
+        logger.info(f"[disclosure_client] Response page title: '{title_text}'")
+
         table = soup.find("table", class_="table")
+        if not table:
+            # Also try finding by id (the table has id="filedReports")
+            table = soup.find("table", id="filedReports")
+
         if not table:
             logger.info(
                 f"[disclosure_client] No results table found in HTML "
-                f"(length={len(html)}, has 'table' tag: {'<table' in html.lower()})"
+                f"(length={len(html)}, has '<table': {'<table' in html.lower()}, "
+                f"title='{title_text}')"
             )
+            # Log first 500 chars for debugging
+            logger.info(f"[disclosure_client] HTML preview: {html[:500]}")
             return []
 
         tbody = table.find("tbody")
         if not tbody:
+            logger.info("[disclosure_client] Table found but no <tbody>")
             return []
 
         filings = []

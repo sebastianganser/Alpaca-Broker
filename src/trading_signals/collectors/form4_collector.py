@@ -179,6 +179,12 @@ class Form4Collector(BaseCollector):
         if not accession or not doc_name:
             return []
 
+        # SEC's primaryDocument field often contains XSLT-transformed paths
+        # like "xslF345X06/ownership.xml" - these are virtual paths that 404.
+        # Strip the XSLT prefix to get the actual raw XML filename.
+        if "/" in doc_name:
+            doc_name = doc_name.rsplit("/", 1)[-1]
+
         # The filer CIK (insider) is the first segment of the accession number.
         # SEC archives files under the filer's CIK, NOT the company's CIK.
         # e.g. accession "0001936006-26-000010" → filer CIK "0001936006"
