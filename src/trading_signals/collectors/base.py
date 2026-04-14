@@ -60,6 +60,7 @@ class BaseCollector(ABC):
         gap_result = None
         status = "success"
         errors_dict = None
+        notes = None
 
         try:
             with get_session() as session:
@@ -68,6 +69,7 @@ class BaseCollector(ABC):
 
                 # Step 2: Fetch new data
                 raw_data = self.fetch(session)
+                notes = f"fetch returned {len(raw_data)} items"
 
                 # Step 3: Store fetched data
                 records_fetched, records_written = self.store(session, raw_data)
@@ -75,6 +77,7 @@ class BaseCollector(ABC):
         except Exception as e:
             status = "failed"
             errors_dict = {"error": str(e), "type": type(e).__name__}
+            notes = f"exception: {type(e).__name__}: {str(e)[:200]}"
             logger.error(f"[{self.name}] Failed: {e}")
 
         # Step 4: Finalize log entry (always runs, separate transaction)
@@ -89,6 +92,7 @@ class BaseCollector(ABC):
                 log.records_fetched = records_fetched
                 log.records_written = records_written
                 log.errors = errors_dict
+                log.notes = notes
 
                 if gap_result:
                     log.gaps_detected = gap_result.gaps_detected
