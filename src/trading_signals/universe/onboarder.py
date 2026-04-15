@@ -2,20 +2,20 @@
 
 When signal collectors (ARK, Politician Trades) discover tickers that
 are not yet in our universe, this service:
-  1. Validates them against Alpaca (only tradeable tickers)
-  2. Filters out ETFs (we only want individual stocks)
-  3. Adds them to the universe via UniverseManager
-  4. Backfills historical prices from Alpaca (~4 years)
-  5. Computes TA indicators from the backfilled prices
-  6. Fetches a fundamentals snapshot from yfinance
-  7. Enriches sector/industry data from yfinance
+  1. Checks against the ticker blacklist (learned ETF filter)
+  2. Validates them against Alpaca (only tradeable tickers)
+  3. Verifies quoteType via yfinance (only EQUITY, not ETF/MUTUALFUND)
+  4. Adds them to the universe via UniverseManager
+  5. Backfills historical prices from Alpaca (~4 years)
+  6. Computes TA indicators from the backfilled prices
+  7. Fetches a fundamentals snapshot from yfinance
+  8. Enriches sector/industry data from yfinance
 
 This runs synchronously within the collector's thread – at 1-5 new
 tickers per run, the overhead is ~30-60 seconds, acceptable for
 night-scheduled collectors.
 """
 
-import re
 from datetime import date, timedelta
 
 from sqlalchemy import select
@@ -28,17 +28,6 @@ from trading_signals.universe.manager import UniverseManager
 from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-# Heuristic: Alpaca doesn't distinguish ETFs from stocks. We detect ETFs
-# by matching common keywords in the asset name. This catches ~99% of ETFs.
-_ETF_NAME_RE = re.compile(
-    r"\b("
-    r"ETF|Fund|Trust|Index|Shares|BulletShares|iShares|SPDR|Vanguard|"
-    r"ProShares|Invesco|WisdomTree|VanEck|Direxion|GraniteShares|"
-    r"First Trust|Global X|ARK [A-Z]"
-    r")\b",
-    re.IGNORECASE,
-)
 
 # How far back to fetch prices for newly discovered tickers
 BACKFILL_LOOKBACK_DAYS = 4 * 365  # ~4 years
@@ -87,7 +76,7 @@ class NewTickerOnboarder:
         if not new_tickers:
             return []
 
-        # Step 1b: Filter against blacklist (learned ETF filter)
+        # Step 2: Filter against blacklist (learned ETF filter)
         from trading_signals.universe.blacklist import filter_blacklisted
 
         new_tickers, blocked = filter_blacklisted(self.session, new_tickers)
@@ -104,7 +93,7 @@ class NewTickerOnboarder:
             f"{source}: {sorted(new_tickers)}"
         )
 
-        # Step 2: Validate against Alpaca (only tradeable tickers)
+        # Step 3: Validate against Alpaca (only tradeable tickers)
         try:
             validator = AlpacaAssetValidator()
             alpaca_assets = validator.fetch_all_assets()
@@ -115,8 +104,7 @@ class NewTickerOnboarder:
             )
             return []
 
-        added: list[str] = []
-        skipped_etfs: list[str] = []
+        candidates: list[str] = []
         for ticker in sorted(new_tickers):
             asset = alpaca_assets.get(ticker)
             if not asset or not asset.tradable:
@@ -125,38 +113,16 @@ class NewTickerOnboarder:
                     f"[onboarder] Skipping {ticker}: {reason} on Alpaca"
                 )
                 continue
+            candidates.append(ticker)
 
-            # Step 3: Filter out ETFs via name heuristic (adds to blacklist)
-            if _ETF_NAME_RE.search(asset.name or ""):
-                skipped_etfs.append(ticker)
-                from trading_signals.universe.blacklist import add_to_blacklist
-                add_to_blacklist(
-                    self.session, ticker,
-                    quote_type="ETF_NAME_HEURISTIC",
-                    source=f"onboarder/{source}",
-                    reason=f"name_match: {asset.name}",
-                )
-                logger.info(
-                    f"[onboarder] Blacklisted ETF {ticker}: {asset.name}"
-                )
-                continue
-
-            added.append(ticker)
-
-        if skipped_etfs:
-            logger.info(
-                f"[onboarder] Filtered {len(skipped_etfs)} ETFs: "
-                f"{skipped_etfs}"
-            )
-
-        if not added:
+        if not candidates:
             logger.info("[onboarder] No new Alpaca-tradeable tickers to add.")
             return []
 
-        # Step 4: Quick yfinance quoteType check BEFORE backfill
-        # This catches ETFs that slipped past the name heuristic,
-        # BEFORE we waste resources on 4 years of price/indicator data.
-        verified = self._verify_equity_type(added)
+        # Step 4: yfinance quoteType check BEFORE backfill
+        # Only tickers confirmed as EQUITY will proceed. Non-equities
+        # are blacklisted so they won't be checked again.
+        verified = self._verify_equity_type(candidates)
 
         if not verified:
             logger.info("[onboarder] No verified equities to add.")
