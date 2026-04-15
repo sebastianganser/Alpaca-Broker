@@ -583,3 +583,24 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
 - **Betroffene Dateien:** `derived/ark_deltas.py`, `api/schemas.py`, `api/routes/signals.py`, `api/routes/ticker.py`, `frontend/src/api.ts`, `frontend/src/pages/SignalsPage.tsx`
 - **DB-Bereinigung:** `DELETE FROM signals.ark_deltas WHERE delta_type = 'unchanged'` (pgAdmin)
 - Dokumentation aktualisiert: ARCHITECTURE.md, DECISIONS.md, LEARNINGS.md, ROADMAP.md
+
+### Session 16 – 15. April 2026 – ETF-Blacklist & Universe-Bereinigung
+- **Problem:** Universe enthielt ~50+ ETFs/Fonds (ARKK, SPY, BITB, etc.), die als Equity-Ticker onboarded worden waren → unnötige Datensammlung, verzerrte Statistiken
+- **Lernendes Blacklist-System:**
+  - Neue Tabelle `signals.ticker_blacklist` (Migration 015) als permanenter Speicher für Non-Equity-Ticker
+  - yfinance `quoteType` als autoritativer Check (statt unzuverlässiger Name-Regex-Heuristik)
+  - 3 Integrationen: Onboarding (Pre-Backfill-Check), Index-Sync (monatlich), Sektor-Reload (manuell)
+  - Never-Delete-Policy: ETFs werden deaktiviert (`is_active = false`), nie gelöscht
+- **Onboarder-Refactoring:**
+  - Flow: Blacklist-Check → Alpaca-Validierung → quoteType-Prüfung → erst dann teurer 4-Jahres-Backfill
+  - Name-Heuristik komplett entfernt (produzierte False Positives bei REITs, internationalen Aktien)
+- **Sektor-Reload als Full-Scan:**
+  - "Sektoren nachladen" prüft jetzt ALLE aktiven Ticker (nicht nur fehlende), damit Sektor-Änderungen durch Umstrukturierungen erkannt werden
+  - Parallel: quoteType-Check + Blacklist-Update für jeden Ticker
+- **API-Fix: Aktiv-Filter als Default:**
+  - `GET /api/v1/universe` zeigt standardmäßig nur `is_active = true`
+  - Dashboard-Zähler zählt nur aktive Ticker
+  - Sectors-Endpoint filtert auf aktive Ticker (keine Phantom-Sektoren)
+  - Deaktivierte Ticker per `?active=false` weiterhin einsehbar
+- **Cleanup-Script:** `scripts/cleanup_etfs.py` für initiales Blacklist-Seeding
+- Dokumentation aktualisiert: CLAUDE.md, ARCHITECTURE.md, DECISIONS.md, ROADMAP.md, README.md

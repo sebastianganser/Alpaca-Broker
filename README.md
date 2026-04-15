@@ -24,7 +24,7 @@ Datenquellen → Collectors → PostgreSQL (Raw) → Derived Layer → Feature S
 
 - **Marktdaten:** Alpaca Market Data API (OHLCV, IEX feed) – *yfinance als Fallback* ✅
 - **Smart Money:** ARK Invest ETF Holdings via arkfunds.io API (täglich) ✅
-- **Universe:** S&P 500 + Nasdaq 100 + ARK-Ergänzungen (~845 aktive Ticker) ✅
+- **Universe:** S&P 500 + Nasdaq 100 + ARK-Ergänzungen (~670 aktive Equity-Ticker, ETFs via Blacklist gefiltert) ✅
 - **Insider-Trades:** SEC EDGAR Form 4 ✅
 - **Institutionelle:** SEC EDGAR Form 13F ✅
 - **Politiker:** Senate eFD (efdsearch.senate.gov, kostenlos) ✅
@@ -61,7 +61,7 @@ Die vollständige Dokumentation liegt im Projekt selbst:
 
 ## Status
 
-🟢 **Produktionsbetrieb** – Deployed auf Unraid (192.168.1.93:8090). Dashboard & Operations UI (Sprint 7) live. 10 Scheduler-Jobs aktiv (5 täglich, 4 wöchentlich, 1 monatlich inkl. Sektor-Enrichment). ~845 Ticker, ~820k Preisdatensätze, ~818k TA-Indikatoren, ~1.329 Insider-Trades, 636 Politiker-Trades. 303 Tests.
+🟢 **Produktionsbetrieb** – Deployed auf Unraid (192.168.1.93:8090). Dashboard & Operations UI (Sprint 7) live. 10 Scheduler-Jobs aktiv (5 täglich, 4 wöchentlich, 1 monatlich inkl. Sektor-Enrichment + ETF-Blacklist). ~670 aktive Equity-Ticker (ETFs via Blacklist deaktiviert), ~820k Preisdatensätze, ~818k TA-Indikatoren, ~1.329 Insider-Trades, 636 Politiker-Trades. 303 Tests.
 Nächster Schritt: Sprint 8 (Feature Pipeline).
 
 ## Lizenz

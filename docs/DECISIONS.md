@@ -1035,6 +1035,57 @@ Die API-Route (`signals.py`, `ticker.py`) und das Pydantic-Schema (`ARKDeltaItem
 
 ---
 
+### [2026-04-15] Lernendes ETF-Blacklist-System statt Name-Heuristik
+
+**Kontext:** Das Universe enthielt ~50+ ETFs/Fonds (ARKK, SPY, BITB, etc.), die als Equity-Ticker onboarded wurden. Eine anfängliche Name-Heuristik (`/ETF|Fund|Trust|Shares/`) produzierte False Positives bei REITs und internationalen Aktien (z.B. „Realty Income Trust").
+
+**Optionen:**
+- A: Name-basierte Regex-Heuristik (schnell, aber unzuverlässig – False Positives)
+- B: yfinance `quoteType`-Check als autoritativer Filter (zuverlässig, aber 1 API-Call/Ticker)
+- C: Manuelle Blacklist-Pflege (sicher, aber nicht skalierbar)
+
+**Entscheidung:** Option B – yfinance `quoteType` als autoritative Quelle + selbst lernende Blacklist-Tabelle.
+
+**Begründung:**
+- `quoteType` ist die einzige zuverlässige Quelle: Nur `EQUITY` wird als Aktie behandelt, alles andere (ETF, MUTUALFUND, INDEX) wird geblockt
+- Einmal erkannte Non-Equities werden permanent in `signals.ticker_blacklist` gespeichert → O(1) DB-Lookup beim nächsten Onboarding
+- Die Blacklist wächst organisch: Jeder Sektor-Reload, Index-Sync und Onboarding-Versuch füttert sie
+- Deaktivierte Ticker bleiben in der DB (`is_active = false`, Never-Delete-Policy) für historische Integrität
+
+**Implementierung:**
+- Neue Tabelle `signals.ticker_blacklist` (Migration 015)
+- `NewTickerOnboarder`: Blacklist-Check → Alpaca-Validierung → quoteType-Check → erst dann Backfill
+- `BackfillManager._run_sector_enrichment()`: Prüft ALLE aktiven Ticker (nicht nur fehlende), schreibt Blacklist-Einträge
+- `run_index_sync()`: Schreibt erkannte Non-Equities in die Blacklist
+- `scripts/cleanup_etfs.py`: Standalone-Tool für initiales Blacklist-Seeding
+
+**Revisit-Trigger:** Falls yfinance `quoteType` unzuverlässig wird oder neue Asset-Typen (z.B. Crypto-ETPs) onboarded werden sollen.
+
+---
+
+### [2026-04-15] API Universe-Filter: Standardmäßig nur aktive Ticker
+
+**Kontext:** Nach der ETF-Deaktivierung (~50 Ticker auf `is_active = false` gesetzt) waren diese weiterhin in der Universe-Suche und im Dashboard-Zähler sichtbar.
+
+**Optionen:**
+- A: Frontend-Filter (Client filtert, Server liefert alles) – verschwendet Bandbreite
+- B: API-Default `is_active = true` mit optionalem Override – sauber, effizient
+- C: Deaktivierte Ticker aus der DB löschen – verletzt Never-Delete-Policy
+
+**Entscheidung:** Option B – API filtert standardmäßig auf `is_active = true`.
+
+**Begründung:**
+- Deaktivierte Ticker sind im Normalbetrieb irrelevant und sollen die Ansicht nicht verschmutzen
+- Per `?active=false` weiterhin einsehbar (Audit, Debugging)
+- Dashboard-Zähler zeigt nur aktive Ticker → realistisches Bild des Trading-Universums
+- Sectors-Endpoint filtert ebenfalls auf aktiv → keine Phantom-Sektoren von ETFs
+
+**Betroffene Dateien:** `api/routes/universe.py` (list_tickers, list_sectors), `api/routes/dashboard.py` (universe count)
+
+**Revisit-Trigger:** Falls ein Use Case für die Anzeige aller Ticker (inkl. deaktivierter) im Standard-View entsteht.
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.

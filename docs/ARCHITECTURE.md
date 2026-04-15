@@ -125,7 +125,7 @@ Alpaca-Broker/
 │   │       ├── __init__.py
 │   │       ├── logging.py         # ✅ implementiert
 │   │       └── retry.py           # ✅ implementiert
-│   └── alembic/                   # Datenbank-Migrationen (001-012)
+│   └── alembic/                   # Datenbank-Migrationen (001-015)
 │       ├── env.py
 │       ├── script.py.mako
 │       └── versions/
@@ -138,7 +138,8 @@ Alpaca-Broker/
 │   ├── validate_universe.py       # ✅ Alpaca-Validierung
 │   ├── sync_universe_indexes.py   # ✅ S&P 500 + Nasdaq 100
 │   ├── enrich_universe_sectors.py # ✅ Sektor/Branche via yfinance
-│   └── backfill_prices.py         # ✅ Sprint 6 (Preis-Backfill ab 2021)
+│   ├── backfill_prices.py         # ✅ Sprint 6 (Preis-Backfill ab 2021)
+   └── cleanup_etfs.py            # ✅ Initiales Blacklist-Seeding + Universe-Bereinigung
 ├── pyproject.toml                 # uv Paketmanager
 ├── uv.lock                        # uv Lockfile
 ├── alembic.ini                    # Alembic-Konfiguration
@@ -207,6 +208,19 @@ CREATE TABLE signals.universe (
 );
 
 CREATE INDEX idx_universe_active ON signals.universe(is_active);
+```
+
+#### `signals.ticker_blacklist`
+Selbst lernende Blacklist für Non-Equity-Ticker (ETFs, Fonds, etc.). Wird beim Onboarding als O(1)-Filter verwendet.
+
+```sql
+CREATE TABLE signals.ticker_blacklist (
+  ticker          VARCHAR(20) PRIMARY KEY,
+  reason          VARCHAR(200),         -- z.B. 'quoteType=ETF', 'manual'
+  quote_type      VARCHAR(50),          -- yfinance quoteType (ETF, MUTUALFUND, INDEX, ...)
+  detected_by     VARCHAR(100),         -- Quelle der Erkennung
+  detected_at     TIMESTAMP DEFAULT NOW()
+);
 ```
 
 #### `signals.prices_daily`
@@ -633,7 +647,7 @@ CREATE TABLE signals.collection_log (
 **Manuell (via UI):**
 - `price_backfill` – Historische Preise ab 2021-01-01 laden (Settings > Backfill)
 - `indicator_backfill` – Alle TA-Indikatoren neu berechnen (Settings > Backfill)
-- `sector_enrichment` – Fehlende Sektor-/Branchendaten von yfinance laden (Settings > Sektoren nachladen)
+- `sector_enrichment` – Sektoren/Branchen für ALLE aktiven Ticker von yfinance neu laden + ETF-Blacklist-Check (Settings > Sektoren nachladen)
 - `db_reset` – Factory Reset: Alle Datentabellen löschen (Settings > Werkszustand)
 - `vacuum_analyze` – PostgreSQL VACUUM + ANALYZE (Settings > VACUUM)
 
@@ -665,5 +679,8 @@ Siehe [DECISIONS.md](DECISIONS.md) für Begründungen.
 - **curl_cffi für Senate eFD**: Senate blockiert Python `requests` via TLS-Fingerprinting (JA3); `curl_cffi` mit Chrome-Impersonation umgeht das transparent
 - **DataTables AJAX statt HTML-Parsing (Senate eFD)**: Suchergebnisse werden per AJAX (`/search/report/data/`) als JSON geladen; HTML-Tabelle ist nur leeres Template
 - **SEC Form 4: Company-CIK, nicht Filer-CIK**: SEC archiviert unter dem Subject-Company-CIK, nicht dem Filing-Agent-CIK aus der Accession Number
-- **Zentraler NewTickerOnboarder**: Statt verstreuter `_expand_universe()`-Methoden ein zentraler Service (`universe/onboarder.py`), der Alpaca-Validierung + vollständigen Backfill (Preise→TA→Fundamentals→Sektor) in einem Durchlauf erledigt. Wird von ARK- und Politiker-Collector automatisch aufgerufen.
+- **Zentraler NewTickerOnboarder**: Statt verstreuter `_expand_universe()`-Methoden ein zentraler Service (`universe/onboarder.py`), der Blacklist-Check → Alpaca-Validierung → yfinance quoteType-Prüfung → Backfill (Preise→TA→Fundamentals→Sektor) in einem Durchlauf erledigt. Nur bestätigte EQUITY-Ticker durchlaufen den teuren Backfill.
+- **Lernendes ETF-Blacklist-System**: Statt unsicherer Name-Heuristik (`/ETF|Fund|Trust|Shares/`) wird yfinance `quoteType` als autoritativer Check verwendet. Blacklisted Ticker werden in `signals.ticker_blacklist` gespeichert und beim nächsten Onboarding sofort abgelehnt (O(1) DB-Lookup). Quellen: `onboarder/quoteType_check`, `index_sync`, `manual_enrichment`.
+- **Sektor-Reload statt Sektor-Ergänzung**: "Sektoren nachladen" prüft ALLE aktiven Ticker (nicht nur fehlende), um auch Umstrukturierungen/Neuausrichtungen von Unternehmen zu erfassen.
+- **Aktiv-Filter auf UI-Ebene**: Universe-API und Dashboard zeigen standardmäßig nur `is_active = true` Ticker. Deaktivierte Ticker (ETFs) verschwinden aus Suche und Zähler.
 - **In-Process Log-Capture**: `CollectorLogCapture` Handler fängt WARNING/ERROR + collector-spezifische INFO-Zeilen pro Run, speichert in `collection_log.log_lines` JSONB. UI zeigt aufklappbaren Bereich mit farbcodierten Einträgen. Kein Docker-Socket nötig.
