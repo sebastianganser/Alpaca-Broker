@@ -665,3 +665,4 @@ Siehe [DECISIONS.md](DECISIONS.md) für Begründungen.
 - **DataTables AJAX statt HTML-Parsing (Senate eFD)**: Suchergebnisse werden per AJAX (`/search/report/data/`) als JSON geladen; HTML-Tabelle ist nur leeres Template
 - **SEC Form 4: Company-CIK, nicht Filer-CIK**: SEC archiviert unter dem Subject-Company-CIK, nicht dem Filing-Agent-CIK aus der Accession Number
 - **Zentraler NewTickerOnboarder**: Statt verstreuter `_expand_universe()`-Methoden ein zentraler Service (`universe/onboarder.py`), der Alpaca-Validierung + vollständigen Backfill (Preise→TA→Fundamentals→Sektor) in einem Durchlauf erledigt. Wird von ARK- und Politiker-Collector automatisch aufgerufen.
+- **In-Process Log-Capture**: `CollectorLogCapture` Handler fängt WARNING/ERROR + collector-spezifische INFO-Zeilen pro Run, speichert in `collection_log.log_lines` JSONB. UI zeigt aufklappbaren Bereich mit farbcodierten Einträgen. Kein Docker-Socket nötig.

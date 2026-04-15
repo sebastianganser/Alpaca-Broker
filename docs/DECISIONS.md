@@ -989,6 +989,28 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 
 ---
 
+### [2026-04-15] In-Process Log-Capture statt Docker-Log-API
+
+**Kontext:** Beim Debugging von Collector-Problemen (z.B. Politiker-Trades, Form4) mussten Container-Logs manuell vom Unraid-Server kopiert werden. Die Logs-Seite im Dashboard zeigte nur `notes` und `errors`, aber keine Detail-Zeilen.
+
+**Optionen:**
+- A: Docker-Log-API vom Container lesen (benötigt Docker-Socket-Mount)
+- B: Log-Zeilen in separater DB-Tabelle speichern (viel I/O)
+- C: In-Process Logging Handler, der relevante Zeilen pro Collector-Run fängt und im `collection_log` speichert
+
+**Entscheidung:** Option C – `CollectorLogCapture` als Context-Manager im `BaseCollector`.
+
+**Begründung:**
+- Kein Docker-Socket-Zugriff nötig (Sicherheit)
+- Intelligent gefiltert: Nur WARNING+, plus collector-spezifische INFO-Zeilen
+- Ring-Buffer (max 200 Zeilen) verhindert Memory-Issues
+- Keine separate Tabelle, keine zusätzlichen Queries – alles in der bestehenden `collection_log.log_lines` JSONB-Spalte
+- Frontend zeigt aufklappbaren Bereich mit farbcodierten Einträgen
+
+**Revisit-Trigger:** Falls 200 Zeilen regelmäßig nicht ausreichen → `max_lines` erhöhen oder Log-Level-Filter anpassen.
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.

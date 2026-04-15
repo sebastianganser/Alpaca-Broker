@@ -568,4 +568,9 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
   - Behebt: SIRI und andere Ticker hatten keine Preise/Indikatoren/Fundamentals
   - ARK-Collector: Alte `_expand_universe()` durch zentralen Onboarder ersetzt (+ Backfill)
   - Form4: Keine Änderung nötig (universe-driven, entdeckt keine neuen Ticker)
+- **Feature: Log-Zeilen Capture + UI-Anzeige** (Migration 014)
+  - `CollectorLogCapture` Handler fängt WARNING/ERROR + collector-spezifische INFO-Zeilen
+  - Gespeichert in neuer `log_lines` JSONB-Spalte auf `collection_log`
+  - Detail-Modal im Dashboard: Aufklappbarer "Log-Zeilen"-Bereich mit farbcodierten Einträgen
+  - Tabelle: Warning-Count in "Details"-Spalte für schnelle Anomalie-Erkennung
 - Dokumentation aktualisiert: ROADMAP.md, DECISIONS.md, LEARNINGS.md, ARCHITECTURE.md
