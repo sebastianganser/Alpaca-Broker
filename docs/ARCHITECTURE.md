@@ -411,24 +411,25 @@ CREATE TABLE signals.earnings_calendar (
 ### Layer 2: Derived Data (berechnet, neu erzeugbar)
 
 #### `signals.ark_deltas`
-Tagesveränderungen in ARK-Holdings.
+Tagesveränderungen in ARK-Holdings. Nur echte Portfoliobewegungen – `unchanged`-Positionen werden nicht gespeichert.
 
 ```sql
 CREATE TABLE signals.ark_deltas (
   delta_date      DATE NOT NULL,
   etf_ticker      VARCHAR(10) NOT NULL,
   ticker          VARCHAR(20) NOT NULL,
+  delta_type      VARCHAR(20),            -- 'new_position', 'closed', 'increased', 'decreased'
   shares_prev     NUMERIC(20,4),
-  shares_new      NUMERIC(20,4),
+  shares_curr     NUMERIC(20,4),
   shares_delta    NUMERIC(20,4),
   weight_prev     NUMERIC(8,4),
-  weight_new      NUMERIC(8,4),
-  weight_delta_bps NUMERIC(12,4),        -- in Basispunkten
-  is_new_position BOOLEAN,
-  is_closed_position BOOLEAN,
-  pct_change      NUMERIC(10,4),          -- % Änderung der Shares
+  weight_curr     NUMERIC(8,4),
+  weight_delta    NUMERIC(8,4),
+  computed_at     TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (delta_date, etf_ticker, ticker)
 );
+
+CREATE INDEX idx_ark_deltas_ticker ON signals.ark_deltas(ticker);
 ```
 
 #### `signals.insider_clusters`

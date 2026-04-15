@@ -93,7 +93,7 @@
 - [x] `ARKHoldingsCollector` implementieren (8 ETFs, arkfunds.io API)
 - [x] Cash-/Treasury-Positionen filtern (Regex)
 - [x] Automatische Universum-Erweiterung mit Alpaca-Validierung
-- [x] `ARKDeltaComputer` für Derived Layer (new/closed/increased/decreased/unchanged)
+- [x] `ARKDeltaComputer` für Derived Layer (new/closed/increased/decreased – unchanged wird nicht gespeichert)
 - [x] Tests mit Fixtures + Mocks (25 neue Tests, 71 gesamt)
 - [x] Error-Handling: Retry-Logik, graceful bei API-Fehlern
 - [x] APScheduler-Job (23:00 MEZ)
@@ -574,3 +574,12 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
   - Detail-Modal im Dashboard: Aufklappbarer "Log-Zeilen"-Bereich mit farbcodierten Einträgen
   - Tabelle: Warning-Count in "Details"-Spalte für schnelle Anomalie-Erkennung
 - Dokumentation aktualisiert: ROADMAP.md, DECISIONS.md, LEARNINGS.md, ARCHITECTURE.md
+
+### Session 15 – 15. April 2026 – ARK Deltas Bugfix
+- **Bug 1 – 322 Deltas statt ~71:** `ARKDeltaComputer` schrieb auch `unchanged`-Positionen in die DB → gefixt: `continue` bei `delta_type == "unchanged"`
+- **Bug 2 – Leere Signals-Seite:** API-Schemata referenzierten nicht-existierende DB-Felder (`weight_delta_bps`, `pct_change`, `is_new_position`, `is_closed_position`) → `AttributeError`
+  - **Root Cause:** ARCHITECTURE.md definierte Sprint-2-Entwurf, ORM wurde anders implementiert, API in Sprint 7 gegen Doku statt Code geschrieben
+  - **Fix:** Schema, API-Routes und Frontend auf tatsächliche DB-Felder gemappt (`delta_type`, `shares_prev/curr`, `weight_delta`)
+- **Betroffene Dateien:** `derived/ark_deltas.py`, `api/schemas.py`, `api/routes/signals.py`, `api/routes/ticker.py`, `frontend/src/api.ts`, `frontend/src/pages/SignalsPage.tsx`
+- **DB-Bereinigung:** `DELETE FROM signals.ark_deltas WHERE delta_type = 'unchanged'` (pgAdmin)
+- Dokumentation aktualisiert: ARCHITECTURE.md, DECISIONS.md, LEARNINGS.md, ROADMAP.md

@@ -78,6 +78,37 @@ Wir tracken Erkenntnisse in mehreren Kategorien:
 
 ---
 
+### [2026-04-15] 🛠️ Doku-Schema ≠ ORM-Modell ≠ API-Schema: Triple-Mismatch bei ARK Deltas
+
+**Beobachtung:** Die `ark_deltas`-Tabelle hatte drei verschiedene "Wahrheiten":
+1. **ARCHITECTURE.md** definierte Spalten `shares_new`, `weight_delta_bps`, `is_new_position`, `is_closed_position`, `pct_change`
+2. **ORM-Modell** (`db/models/ark.py`) implementierte `delta_type` (String), `shares_curr`, `weight_delta` (Numeric)
+3. **API-Schema** (`schemas.py`) und **API-Route** (`signals.py`) erwarteten die Doku-Version, nicht das ORM-Modell
+
+**Daten:** Erster ARK-Doppel-Snapshot (14.04. + 15.04.2026) → 322 Deltas (alle `unchanged`), Signals-Seite komplett leer wegen `AttributeError`.
+
+**Hypothese:** Bei Sprint 2 war die Dokumentation der Entwurf, das ORM wurde anders implementiert, und die API in Sprint 7 wurde gegen die Doku statt gegen den echten Code geschrieben. Ohne einen End-to-End-Test mit echten Daten (erst nach Produktionsbetrieb verfügbar) fiel der Mismatch nicht auf.
+
+**Nächste Schritte:** Bei jedem neuen API-Endpoint: ORM-Modell als Single Source of Truth behandeln, Schema/Route dagegen abgleichen. Integration-Tests mit echten DB-Queries erwägen.
+
+**Status:** 🟢 Behoben (Session 15)
+
+---
+
+### [2026-04-15] 📊 ARK-Deltas: `unchanged` ist kein Signal – nur echte Bewegungen zählen
+
+**Beobachtung:** Bei 322 ARK-Holdings und 2 aufeinanderfolgenden Snapshots wurden 322 Deltas berechnet. Davon waren ~251 `unchanged` (Shares identisch). Das Delta-Feature soll Portfoliobewegungen identifizieren – neue Positionen, geschlossene Positionen, Aufstockungen, Reduzierungen. `unchanged` ist per Definition kein Signal.
+
+**Daten:** 322 Deltas → ~71 echte Bewegungen (increased/decreased/new/closed), 251 `unchanged`.
+
+**Hypothese:** Die meisten ARK-Positionen ändern sich an einem normalen Handelstag nicht. Nur ~22% der Positionen haben täglich echte Shares-Bewegungen. Das bedeutet: Weight-Deltas (durch ETF-NAV-Änderungen) sind häufiger als Share-Deltas (durch aktive Trades).
+
+**Nächste Schritte:** Nach 1 Monat: Analyse der `increased`/`decreased`-Verteilung. Sind es hauptsächlich weight-getriebene Rebalances oder echte Conviction-Trades?
+
+**Status:** 🟡 Offen
+
+---
+
 ## Geplante Untersuchungen
 
 Sobald genug Daten vorliegen, wollen wir diese Fragen systematisch untersuchen:

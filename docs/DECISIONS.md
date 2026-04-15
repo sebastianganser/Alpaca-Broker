@@ -1011,6 +1011,30 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 
 ---
 
+### [2026-04-15] ARK Deltas: Nur echte Portfoliobewegungen speichern + Schema-Mismatch-Fix
+
+**Kontext:** Nach dem ersten ARK-Doppel-Snapshot (14.04. + 15.04.) zeigten sich 322 Deltas in der DB – exakt so viele wie Holdings. Die Signals-Seite blieb leer. Zwei unabhängige Bugs:
+
+**Bug 1 – Alle Positionen als Delta gespeichert:**
+Der `ARKDeltaComputer` schrieb **jede** Position als Delta in die DB, auch wenn `delta_type = "unchanged"` (Shares identisch). Bei 322 Holdings ergab das 322 sinnlose Deltas.
+
+**Bug 2 – API-Schema-Mismatch:**
+Die API-Route (`signals.py`, `ticker.py`) und das Pydantic-Schema (`ARKDeltaItem`) erwarteten Felder, die im DB-Modell nicht existieren: `weight_delta_bps`, `pct_change`, `is_new_position`, `is_closed_position`. Das DB-Modell speichert stattdessen `delta_type` als String + `weight_delta` als Numeric. → `AttributeError` bei jedem API-Request → leere Signals-Seite.
+
+**Entscheidung:**
+1. `ARKDeltaComputer`: `unchanged`-Positionen werden übersprungen (`continue`). Nur `new_position`, `closed`, `increased`, `decreased` werden in die DB geschrieben.
+2. `ARKDeltaItem`-Schema: Felder an das tatsächliche DB-Modell angepasst (`delta_type`, `shares_prev/curr`, `weight_prev/curr/delta`).
+3. API-Queries filtern zusätzlich `WHERE delta_type != 'unchanged'` als Defense-in-Depth.
+4. Frontend: Badges (`NEU`, `CLOSED`, `ERHÖHT`, `REDUZIERT`) basieren auf `delta_type` String statt booleans.
+
+**Betroffene Dateien:** `derived/ark_deltas.py`, `api/schemas.py`, `api/routes/signals.py`, `api/routes/ticker.py`, `frontend/src/api.ts`, `frontend/src/pages/SignalsPage.tsx`
+
+**Begründung:** Portfoliobewegungen sind das Signal, nicht die Gesamtliste aller Positionen. `unchanged` ist reines Rauschen und bläht die Tabelle unnötig auf.
+
+**Revisit-Trigger:** Falls später ein Use Case für `unchanged`-Deltas entsteht (z.B. "Position seit X Tagen unverändert").
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.
