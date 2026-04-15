@@ -148,6 +148,9 @@ class YFinanceClient:
             if record.get("dividend_yield") is not None:
                 record["dividend_yield"] = record["dividend_yield"] / 100
 
+            # Plausibility checks – catch yfinance format changes / bad data
+            _validate_fundamentals(record)
+
             # Attempt to get eps_growth_yoy from earnings estimate
             try:
                 est = t.get_earnings_estimate()
@@ -304,3 +307,53 @@ def _clean_numeric(value: Any) -> float | None:
         return val
     except (ValueError, TypeError):
         return None
+
+
+# Plausibility ranges for fundamental fields.
+# Format: field_name -> (min_value, max_value, description)
+# Values outside these ranges are suspicious and get nulled with a warning.
+_PLAUSIBILITY_RULES: dict[str, tuple[float, float, str]] = {
+    # Percentage fields (stored as decimal, 0-1 range)
+    "profit_margin":     (-2.0,  1.0,  "Gewinnmarge -200% bis 100%"),
+    "operating_margin":  (-2.0,  1.0,  "Operative Marge -200% bis 100%"),
+    "return_on_equity":  (-5.0,  10.0, "ROE -500% bis 1000%"),
+    "revenue_growth_yoy": (-1.0, 10.0, "Umsatzwachstum -100% bis 1000%"),
+    "dividend_yield":    (0.0,   0.25, "Dividendenrendite 0% bis 25%"),
+    "eps_growth_yoy":    (-5.0,  20.0, "EPS-Wachstum -500% bis 2000%"),
+    # Ratio fields (no fixed percentage scale)
+    "pe_ratio":          (0.0,   2000.0, "KGV 0 bis 2000"),
+    "forward_pe":        (0.0,   500.0,  "Forward KGV 0 bis 500"),
+    "ps_ratio":          (0.0,   500.0,  "KUV 0 bis 500"),
+    "pb_ratio":          (0.0,   500.0,  "KBV 0 bis 500"),
+    "ev_ebitda":         (-50.0, 500.0,  "EV/EBITDA -50 bis 500"),
+    "debt_to_equity":    (0.0,   2000.0, "Debt/Equity 0 bis 2000"),
+    "current_ratio":     (0.0,   50.0,   "Current Ratio 0 bis 50"),
+    "beta":              (-3.0,  5.0,    "Beta -3 bis 5"),
+    # Absolute fields (revenue_ttm excluded: ADRs report in local currency)
+    "market_cap":        (0.0, 50e12,   "Market Cap 0 bis 50T$"),
+    "eps_ttm":           (-500.0, 5000.0, "EPS -500 bis 5000"),
+}
+
+
+def _validate_fundamentals(record: dict) -> None:
+    """Validate fundamental values against plausibility ranges.
+
+    Values outside plausible ranges are set to None and logged as warnings.
+    This protects against yfinance format changes and Yahoo data quality issues.
+
+    Modifies the record dict in-place.
+    """
+    ticker = record.get("ticker", "???")
+
+    for field, (min_val, max_val, desc) in _PLAUSIBILITY_RULES.items():
+        value = record.get(field)
+        if value is None:
+            continue
+
+        if not (min_val <= value <= max_val):
+            logger.warning(
+                f"[yfinance/plausibility] {ticker}.{field}={value} "
+                f"outside plausible range [{min_val}, {max_val}] ({desc}). "
+                f"Setting to None."
+            )
+            record[field] = None
