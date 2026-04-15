@@ -245,6 +245,73 @@ h4 { font-size: 1.1rem; }
   align-items: center;
   justify-content: space-between;
   padding: 3px 0;
+  position: relative;
+  cursor: default;
+}
+
+/* ── Tooltip (appears on hover) ──────────────────────────── */
+
+.world-clock-tooltip {
+  display: none;
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--surface-high);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+  z-index: 100;
+  font-family: var(--font-mono);
+  animation: tooltip-fade 150ms ease-out;
+}
+
+.world-clock-tooltip::before {
+  content: '';
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-right-color: var(--surface-high);
+}
+
+.world-clock-row:hover .world-clock-tooltip {
+  display: block;
+}
+
+.world-clock-tooltip-exchange {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--on-surface);
+  letter-spacing: 0.03em;
+  margin-bottom: 2px;
+}
+
+.world-clock-tooltip-hours {
+  font-size: 0.65rem;
+  color: var(--on-surface-dim);
+  letter-spacing: 0.02em;
+}
+
+.world-clock-tooltip-status {
+  font-size: 0.6rem;
+  margin-top: 4px;
+  letter-spacing: 0.02em;
+}
+
+.world-clock-tooltip-status.open {
+  color: var(--primary);
+}
+
+.world-clock-tooltip-status.closed {
+  color: var(--on-surface-dim);
+}
+
+@keyframes tooltip-fade {
+  from { opacity: 0; transform: translateY(-50%) translateX(-4px); }
+  to   { opacity: 1; transform: translateY(-50%) translateX(0); }
 }
 
 .world-clock-label {

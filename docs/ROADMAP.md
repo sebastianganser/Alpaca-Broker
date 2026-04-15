@@ -544,3 +544,11 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
 - **Neue Dependency:** `curl_cffi>=0.7` (in pyproject.toml)
 - **Debug-Script:** `scripts/debug_senate_ajax.py` – DataTables JS-Config aus HTML extrahiert
 - Dokumentation aktualisiert: DATA_SOURCES.md, DECISIONS.md (5 neue Entscheidungen), ROADMAP.md, ARCHITECTURE.md, CLAUDE.md, README.md
+
+### Session 13 – 15. April 2026 – Weltuhr-Tooltip
+- **Feature:** Hover-Tooltip auf jedem Weltuhr-Eintrag zeigt Börsen-Infos:
+  - Exchange-Name (Xetra, NYSE/NASDAQ, LSE, TSE)
+  - Handelszeiten mit Zeitzone (z.B. „09:00 – 17:30 CET")
+  - Echtzeit-Status: „● Geöffnet" (cyan) / „● Geschlossen" (dim)
+- **Design:** Precision Architect konform – `surface-high` Hintergrund, kein Border, Monospace-Font, Pfeil-Indikator, 150ms Fade-In Animation
+- Dokumentation aktualisiert: ROADMAP.md

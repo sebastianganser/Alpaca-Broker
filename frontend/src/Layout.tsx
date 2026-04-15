@@ -20,10 +20,10 @@ const navItems = [
 
 // Trading hours in local time for each exchange
 const worldClockZones = [
-  { label: 'Frankfurt', tz: 'Europe/Berlin', flag: '🇩🇪', openH: 9, openM: 0, closeH: 17, closeM: 30 },
-  { label: 'New York', tz: 'America/New_York', flag: '🇺🇸', openH: 9, openM: 30, closeH: 16, closeM: 0 },
-  { label: 'London', tz: 'Europe/London', flag: '🇬🇧', openH: 8, openM: 0, closeH: 16, closeM: 30 },
-  { label: 'Tokyo', tz: 'Asia/Tokyo', flag: '🇯🇵', openH: 9, openM: 0, closeH: 15, closeM: 0 },
+  { label: 'Frankfurt', tz: 'Europe/Berlin', flag: '🇩🇪', openH: 9, openM: 0, closeH: 17, closeM: 30, exchange: 'Xetra', hours: '09:00 – 17:30 CET' },
+  { label: 'New York', tz: 'America/New_York', flag: '🇺🇸', openH: 9, openM: 30, closeH: 16, closeM: 0, exchange: 'NYSE / NASDAQ', hours: '09:30 – 16:00 ET' },
+  { label: 'London', tz: 'Europe/London', flag: '🇬🇧', openH: 8, openM: 0, closeH: 16, closeM: 30, exchange: 'LSE', hours: '08:00 – 16:30 GMT' },
+  { label: 'Tokyo', tz: 'Asia/Tokyo', flag: '🇯🇵', openH: 9, openM: 0, closeH: 15, closeM: 0, exchange: 'TSE', hours: '09:00 – 15:00 JST' },
 ];
 
 function isExchangeOpen(
@@ -74,7 +74,7 @@ function WorldClock() {
 
   return (
     <div className="world-clock">
-      {worldClockZones.map(({ label, tz, flag, openH, openM, closeH, closeM }) => {
+      {worldClockZones.map(({ label, tz, flag, openH, openM, closeH, closeM, exchange, hours }) => {
         const open = isExchangeOpen(now, tz, openH, openM, closeH, closeM);
         return (
           <div key={tz} className="world-clock-row">
@@ -91,6 +91,13 @@ function WorldClock() {
                 <Lock size={10} className="world-clock-status closed" />
               )}
             </span>
+            <div className="world-clock-tooltip">
+              <div className="world-clock-tooltip-exchange">{exchange}</div>
+              <div className="world-clock-tooltip-hours">{hours}</div>
+              <div className={`world-clock-tooltip-status ${open ? 'open' : 'closed'}`}>
+                {open ? '● Geöffnet' : '● Geschlossen'}
+              </div>
+            </div>
           </div>
         );
       })}
