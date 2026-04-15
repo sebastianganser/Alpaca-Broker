@@ -64,6 +64,20 @@ Wir tracken Erkenntnisse in mehreren Kategorien:
 
 ---
 
+### [2026-04-15] 📊 Architektur-Lücke: Ticker ohne Universe-Eintrag haben keine Daten
+
+**Beobachtung:** SIRI (über Politiker-Trade von Hickenlooper) war in der `politician_trades`-Tabelle gespeichert, aber im Dashboard fehlten Preise, Indikatoren und Fundamentals komplett. Grund: Der `politician_trades_collector` fügte Trades nur in seine eigene Tabelle ein, aber **nicht** ins Universum. Alle anderen Collectors (Preise, TA, Fundamentals) lesen nur Ticker aus der `universe`-Tabelle (`WHERE is_active = true`).
+
+**Root Cause:** Inkonsistente Architektur – der ARK-Collector hatte `_expand_universe()`, der Politiker-Collector nicht. Form4 war korrekt (universe-driven).
+
+**Hypothese:** Jeder Collector, der Ticker aus externen Quellen discovert (nicht nur bestehende Ticker abfragt), muss die neuen Ticker dem Universum hinzufügen. → Zentraler Service statt verstreuter Logik.
+
+**Lösung:** `NewTickerOnboarder` (`universe/onboarder.py`) – Alpaca-Validierung + automatischer Backfill-Pipeline (Preise → TA → Fundamentals → Sektor). Wird jetzt von Politiker- und ARK-Collector aufgerufen.
+
+**Status:** 🟢 Behoben (Session 14)
+
+---
+
 ## Geplante Untersuchungen
 
 Sobald genug Daten vorliegen, wollen wir diese Fragen systematisch untersuchen:

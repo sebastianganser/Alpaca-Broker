@@ -624,7 +624,7 @@ CREATE TABLE signals.collection_log (
 - `analyst_ratings_collector` – Läuft auch sonntags (01:00 MEZ)
 - `earnings_calendar_collector` – Earnings-Termine via yfinance (02:00 MEZ) ✅ Sprint 5
 - `form13f_collector` – Neue 13F-Filings (falls Quartalsende gewesen) (10:00 MEZ)
-- `politician_trades_collector` – Senate eFD PTR-Scraping (11:00 MEZ)
+- `politician_trades_collector` – Senate eFD PTR-Scraping (11:00 MEZ) + **Auto-Onboarding neuer Ticker**
 
 **Monatlich (1. des Monats):**
 - `index_sync` – S&P 500 / Nasdaq 100 Mitgliedschaft aktualisieren + **Sektor-Enrichment** für neue Ticker (03:00 MEZ) ✅ Sprint 7+
@@ -664,3 +664,4 @@ Siehe [DECISIONS.md](DECISIONS.md) für Begründungen.
 - **curl_cffi für Senate eFD**: Senate blockiert Python `requests` via TLS-Fingerprinting (JA3); `curl_cffi` mit Chrome-Impersonation umgeht das transparent
 - **DataTables AJAX statt HTML-Parsing (Senate eFD)**: Suchergebnisse werden per AJAX (`/search/report/data/`) als JSON geladen; HTML-Tabelle ist nur leeres Template
 - **SEC Form 4: Company-CIK, nicht Filer-CIK**: SEC archiviert unter dem Subject-Company-CIK, nicht dem Filing-Agent-CIK aus der Accession Number
+- **Zentraler NewTickerOnboarder**: Statt verstreuter `_expand_universe()`-Methoden ein zentraler Service (`universe/onboarder.py`), der Alpaca-Validierung + vollständigen Backfill (Preise→TA→Fundamentals→Sektor) in einem Durchlauf erledigt. Wird von ARK- und Politiker-Collector automatisch aufgerufen.
