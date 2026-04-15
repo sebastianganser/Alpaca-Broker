@@ -3,17 +3,19 @@
 When signal collectors (ARK, Politician Trades) discover tickers that
 are not yet in our universe, this service:
   1. Validates them against Alpaca (only tradeable tickers)
-  2. Adds them to the universe via UniverseManager
-  3. Backfills historical prices from Alpaca (~4 years)
-  4. Computes TA indicators from the backfilled prices
-  5. Fetches a fundamentals snapshot from yfinance
-  6. Enriches sector/industry data from yfinance
+  2. Filters out ETFs (we only want individual stocks)
+  3. Adds them to the universe via UniverseManager
+  4. Backfills historical prices from Alpaca (~4 years)
+  5. Computes TA indicators from the backfilled prices
+  6. Fetches a fundamentals snapshot from yfinance
+  7. Enriches sector/industry data from yfinance
 
 This runs synchronously within the collector's thread – at 1-5 new
 tickers per run, the overhead is ~30-60 seconds, acceptable for
 night-scheduled collectors.
 """
 
+import re
 from datetime import date, timedelta
 
 from sqlalchemy import select
@@ -26,6 +28,17 @@ from trading_signals.universe.manager import UniverseManager
 from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Heuristic: Alpaca doesn't distinguish ETFs from stocks. We detect ETFs
+# by matching common keywords in the asset name. This catches ~99% of ETFs.
+_ETF_NAME_RE = re.compile(
+    r"\b("
+    r"ETF|Fund|Trust|Index|Shares|BulletShares|iShares|SPDR|Vanguard|"
+    r"ProShares|Invesco|WisdomTree|VanEck|Direxion|GraniteShares|"
+    r"First Trust|Global X|ARK [A-Z]"
+    r")\b",
+    re.IGNORECASE,
+)
 
 # How far back to fetch prices for newly discovered tickers
 BACKFILL_LOOKBACK_DAYS = 4 * 365  # ~4 years
@@ -91,21 +104,37 @@ class NewTickerOnboarder:
             return []
 
         added: list[str] = []
+        skipped_etfs: list[str] = []
         for ticker in sorted(new_tickers):
             asset = alpaca_assets.get(ticker)
-            if asset and asset.tradable:
-                self.manager.add_ticker(
-                    ticker=ticker,
-                    company_name=asset.name or None,
-                    added_by=source,
-                    exchange=asset.exchange,
-                )
-                added.append(ticker)
-            else:
+            if not asset or not asset.tradable:
                 reason = "not found" if not asset else "not tradeable"
                 logger.debug(
                     f"[onboarder] Skipping {ticker}: {reason} on Alpaca"
                 )
+                continue
+
+            # Step 3: Filter out ETFs (we only want individual stocks)
+            if _ETF_NAME_RE.search(asset.name or ""):
+                skipped_etfs.append(ticker)
+                logger.info(
+                    f"[onboarder] Skipping ETF {ticker}: {asset.name}"
+                )
+                continue
+
+            self.manager.add_ticker(
+                ticker=ticker,
+                company_name=asset.name or None,
+                added_by=source,
+                exchange=asset.exchange,
+            )
+            added.append(ticker)
+
+        if skipped_etfs:
+            logger.info(
+                f"[onboarder] Filtered {len(skipped_etfs)} ETFs: "
+                f"{skipped_etfs}"
+            )
 
         if not added:
             logger.info("[onboarder] No new Alpaca-tradeable tickers to add.")
