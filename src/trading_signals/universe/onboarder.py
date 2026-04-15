@@ -87,6 +87,18 @@ class NewTickerOnboarder:
         if not new_tickers:
             return []
 
+        # Step 1b: Filter against blacklist (learned ETF filter)
+        from trading_signals.universe.blacklist import filter_blacklisted
+
+        new_tickers, blocked = filter_blacklisted(self.session, new_tickers)
+        if blocked:
+            logger.info(
+                f"[onboarder] Blocked {len(blocked)} blacklisted tickers: "
+                f"{sorted(blocked)}"
+            )
+        if not new_tickers:
+            return []
+
         logger.info(
             f"[onboarder] Found {len(new_tickers)} new tickers from "
             f"{source}: {sorted(new_tickers)}"
@@ -114,11 +126,18 @@ class NewTickerOnboarder:
                 )
                 continue
 
-            # Step 3: Filter out ETFs (we only want individual stocks)
+            # Step 3: Filter out ETFs via name heuristic (adds to blacklist)
             if _ETF_NAME_RE.search(asset.name or ""):
                 skipped_etfs.append(ticker)
+                from trading_signals.universe.blacklist import add_to_blacklist
+                add_to_blacklist(
+                    self.session, ticker,
+                    quote_type="ETF_NAME_HEURISTIC",
+                    source=f"onboarder/{source}",
+                    reason=f"name_match: {asset.name}",
+                )
                 logger.info(
-                    f"[onboarder] Skipping ETF {ticker}: {asset.name}"
+                    f"[onboarder] Blacklisted ETF {ticker}: {asset.name}"
                 )
                 continue
 
@@ -334,12 +353,19 @@ class NewTickerOnboarder:
             deactivated_etfs: list[str] = []
 
             with get_session() as session:
+                from trading_signals.universe.blacklist import add_to_blacklist
+
                 for record in results:
                     ticker = record["ticker"]
                     quote_type = record.get("quote_type", "")
 
-                    # Secondary ETF filter: yfinance quoteType is authoritative
+                    # Learned ETF filter: add to blacklist + deactivate
                     if quote_type and quote_type.upper() != "EQUITY":
+                        add_to_blacklist(
+                            session, ticker,
+                            quote_type=quote_type,
+                            source="sector_enrichment",
+                        )
                         session.execute(
                             update(Universe)
                             .where(Universe.ticker == ticker)
@@ -347,8 +373,8 @@ class NewTickerOnboarder:
                         )
                         deactivated_etfs.append(ticker)
                         logger.warning(
-                            f"[onboarder] Deactivating {ticker}: "
-                            f"quoteType={quote_type} (not EQUITY)"
+                            f"[onboarder] Blacklisted + deactivated {ticker}: "
+                            f"quoteType={quote_type}"
                         )
                         continue
 
@@ -364,8 +390,8 @@ class NewTickerOnboarder:
 
             if deactivated_etfs:
                 logger.info(
-                    f"[onboarder] Deactivated {len(deactivated_etfs)} non-equity "
-                    f"tickers (learned filter): {deactivated_etfs}"
+                    f"[onboarder] Blacklisted {len(deactivated_etfs)} non-equity "
+                    f"tickers: {deactivated_etfs}"
                 )
 
             logger.info(

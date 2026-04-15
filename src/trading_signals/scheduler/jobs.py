@@ -267,12 +267,19 @@ def run_index_sync() -> None:
         deactivated_etfs: list[str] = []
 
         with get_session() as session:
+            from trading_signals.universe.blacklist import add_to_blacklist
+
             for record in results:
                 ticker = record["ticker"]
                 quote_type = record.get("quote_type", "")
 
-                # Learned ETF filter: deactivate non-equity tickers
+                # Learned ETF filter: blacklist + deactivate non-equity tickers
                 if quote_type and quote_type.upper() != "EQUITY":
+                    add_to_blacklist(
+                        session, ticker,
+                        quote_type=quote_type,
+                        source="index_sync",
+                    )
                     session.execute(
                         update(Universe)
                         .where(Universe.ticker == ticker)
@@ -280,8 +287,8 @@ def run_index_sync() -> None:
                     )
                     deactivated_etfs.append(ticker)
                     logger.warning(
-                        f"index_sync_job: deactivating {ticker}: "
-                        f"quoteType={quote_type} (not EQUITY)"
+                        f"index_sync_job: blacklisted + deactivated {ticker}: "
+                        f"quoteType={quote_type}"
                     )
                     continue
 
@@ -297,7 +304,7 @@ def run_index_sync() -> None:
 
         if deactivated_etfs:
             logger.info(
-                f"index_sync_job: deactivated {len(deactivated_etfs)} "
+                f"index_sync_job: blacklisted {len(deactivated_etfs)} "
                 f"non-equity tickers: {deactivated_etfs}"
             )
 

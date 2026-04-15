@@ -489,16 +489,23 @@ class BackfillManager:
                 if (i + 1) % 50 == 0 and i < len(missing) - 1:
                     time.sleep(3.0)
 
-            # Update universe (with ETF deactivation)
+            # Update universe (with blacklist + ETF deactivation)
             updated = 0
             deactivated_etfs: list[str] = []
             with get_session() as session:
+                from trading_signals.universe.blacklist import add_to_blacklist
+
                 for record in enriched:
                     ticker = record["ticker"]
                     quote_type = record.get("quote_type", "")
 
-                    # Learned ETF filter: deactivate non-equity tickers
+                    # Learned ETF filter: blacklist + deactivate non-equity tickers
                     if quote_type and quote_type.upper() != "EQUITY":
+                        add_to_blacklist(
+                            session, ticker,
+                            quote_type=quote_type,
+                            source="manual_enrichment",
+                        )
                         session.execute(
                             update(Universe)
                             .where(Universe.ticker == ticker)
@@ -506,8 +513,8 @@ class BackfillManager:
                         )
                         deactivated_etfs.append(ticker)
                         logger.warning(
-                            f"[Enrichment {task_id}] Deactivating {ticker}: "
-                            f"quoteType={quote_type} (not EQUITY)"
+                            f"[Enrichment {task_id}] Blacklisted + deactivated "
+                            f"{ticker}: quoteType={quote_type}"
                         )
                         continue
 
