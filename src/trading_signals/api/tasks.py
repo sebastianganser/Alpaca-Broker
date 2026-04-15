@@ -425,40 +425,37 @@ class BackfillManager:
             from trading_signals.db.models.universe import Universe
             from trading_signals.db.session import get_session
 
-            # Find tickers with missing sector
+            # Load ALL active tickers (full reload, not just missing)
             with get_session() as session:
                 stmt = (
                     select(Universe.ticker)
                     .where(Universe.is_active.is_(True))
-                    .where(
-                        (Universe.sector.is_(None)) | (Universe.sector == "")
-                    )
                     .order_by(Universe.ticker)
                 )
-                missing = [row[0] for row in session.execute(stmt).all()]
+                tickers_to_check = [row[0] for row in session.execute(stmt).all()]
 
-            if not missing:
+            if not tickers_to_check:
                 task.status = TaskStatus.COMPLETED
                 task.completed_at = datetime.now(UTC)
                 task.progress_pct = 100.0
-                logger.info(f"[Enrichment {task_id}] No tickers need enrichment")
+                logger.info(f"[Enrichment {task_id}] No active tickers to enrich")
                 return
 
-            task.total_items = len(missing)
+            task.total_items = len(tickers_to_check)
             logger.info(
-                f"[Enrichment {task_id}] Starting sector enrichment: "
-                f"{len(missing)} tickers"
+                f"[Enrichment {task_id}] Starting full sector reload: "
+                f"{len(tickers_to_check)} active tickers"
             )
 
             start_time = time.time()
             enriched: list[dict] = []
 
             # Process ticker by ticker with progress updates
-            for i, ticker_str in enumerate(missing):
+            for i, ticker_str in enumerate(tickers_to_check):
                 self._update_progress(
                     task_id,
                     processed=i,
-                    total=len(missing),
+                    total=len(tickers_to_check),
                     current_ticker=ticker_str,
                     start_time=start_time,
                 )
@@ -486,7 +483,7 @@ class BackfillManager:
                 time.sleep(0.5)
 
                 # Batch pause every 50 tickers
-                if (i + 1) % 50 == 0 and i < len(missing) - 1:
+                if (i + 1) % 50 == 0 and i < len(tickers_to_check) - 1:
                     time.sleep(3.0)
 
             # Update universe (with blacklist + ETF deactivation)
@@ -532,8 +529,8 @@ class BackfillManager:
             # Final update
             self._update_progress(
                 task_id,
-                processed=len(missing),
-                total=len(missing),
+                processed=len(tickers_to_check),
+                total=len(tickers_to_check),
                 start_time=start_time,
             )
             task.progress_pct = 100.0
@@ -543,14 +540,15 @@ class BackfillManager:
 
             if deactivated_etfs:
                 logger.info(
-                    f"[Enrichment {task_id}] Deactivated "
+                    f"[Enrichment {task_id}] Blacklisted + deactivated "
                     f"{len(deactivated_etfs)} non-equity tickers: "
                     f"{deactivated_etfs}"
                 )
 
             logger.info(
                 f"[Enrichment {task_id}] Completed: "
-                f"{updated}/{len(missing)} tickers enriched in "
+                f"{updated}/{len(tickers_to_check)} tickers enriched, "
+                f"{len(deactivated_etfs)} blacklisted in "
                 f"{time.time() - start_time:.0f}s"
             )
 
