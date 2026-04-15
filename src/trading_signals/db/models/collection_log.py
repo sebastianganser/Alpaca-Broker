@@ -30,6 +30,7 @@ class CollectionLog(Base):
     gaps_extrapolated: Mapped[int] = mapped_column(Integer, default=0)
     errors: Mapped[dict | None] = mapped_column(JSONB)
     notes: Mapped[str | None] = mapped_column(Text)
+    log_lines: Mapped[list | None] = mapped_column(JSONB)
 
     def __repr__(self) -> str:
         return (

@@ -264,6 +264,7 @@ class CollectionLogItem(BaseModel):
     gaps_extrapolated: int = 0
     errors: dict | None = None
     notes: str | None = None
+    log_lines: list[dict] | None = None
     duration_seconds: float | None = None
 
 

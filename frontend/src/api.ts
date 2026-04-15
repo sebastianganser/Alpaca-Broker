@@ -313,6 +313,7 @@ export interface CollectionLogItem {
   gaps_extrapolated: number;
   errors: Record<string, unknown> | null;
   notes: string | null;
+  log_lines: Array<{ level: string; ts: string; msg: string }> | null;
   duration_seconds: number | null;
 }
 

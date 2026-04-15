@@ -2,12 +2,19 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchLogs, fetchCollectorNames } from '../api';
 import type { CollectionLogItem } from '../api';
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, X, AlertTriangle, AlertCircle, Info } from 'lucide-react';
 
 const STATUS_BADGE: Record<string, string> = {
   success: 'badge-success',
   partial: 'badge-warning',
   failed: 'badge-error',
+};
+
+const LOG_LEVEL_STYLE: Record<string, { color: string; icon: typeof AlertTriangle }> = {
+  WARNING: { color: 'var(--warning)', icon: AlertTriangle },
+  ERROR: { color: 'var(--error)', icon: AlertCircle },
+  CRITICAL: { color: 'var(--error)', icon: AlertCircle },
+  INFO: { color: 'var(--text-dim)', icon: Info },
 };
 
 function formatDuration(seconds: number | null): string {
@@ -43,6 +50,7 @@ export default function LogsPage() {
   const [collector, setCollector] = useState('');
   const [status, setStatus] = useState('');
   const [selectedLog, setSelectedLog] = useState<CollectionLogItem | null>(null);
+  const [logsExpanded, setLogsExpanded] = useState(false);
   const limit = 30;
 
   const { data: collectors } = useQuery({
@@ -63,6 +71,13 @@ export default function LogsPage() {
   });
 
   const totalPages = data ? Math.ceil(data.total / limit) : 0;
+
+  // Count warnings/errors in selected log
+  const warnErrorCount = selectedLog?.log_lines
+    ? selectedLog.log_lines.filter(
+        (l) => l.level === 'WARNING' || l.level === 'ERROR' || l.level === 'CRITICAL'
+      ).length
+    : 0;
 
   return (
     <div className="fade-in">
@@ -139,14 +154,21 @@ export default function LogsPage() {
                 <th className="text-right">Geschrieben</th>
                 <th className="text-right">Gaps</th>
                 <th className="text-right">Dauer</th>
-                <th>Fehler</th>
+                <th>Details</th>
               </tr>
             </thead>
             <tbody>
-              {data.logs.map((log) => (
+              {data.logs.map((log) => {
+                const hasLogLines = log.log_lines && log.log_lines.length > 0;
+                const logWarnCount = hasLogLines
+                  ? log.log_lines!.filter(
+                      (l) => l.level === 'WARNING' || l.level === 'ERROR' || l.level === 'CRITICAL'
+                    ).length
+                  : 0;
+                return (
                 <tr
                   key={log.id}
-                  onClick={() => setSelectedLog(log)}
+                  onClick={() => { setSelectedLog(log); setLogsExpanded(false); }}
                   style={{ cursor: 'pointer' }}
                 >
                   <td className="text-xs mono">
@@ -186,7 +208,15 @@ export default function LogsPage() {
                   </td>
                   <td>
                     {log.errors ? (
-                      <span className="text-error text-xs">⚠ Details</span>
+                      <span className="text-error text-xs">⚠ Fehler</span>
+                    ) : logWarnCount > 0 ? (
+                      <span className="text-warning text-xs" title={`${logWarnCount} Warnungen`}>
+                        ⚠ {logWarnCount}
+                      </span>
+                    ) : hasLogLines ? (
+                      <span className="text-dim text-xs" title="Log-Zeilen verfügbar">
+                        📋 {log.log_lines!.length}
+                      </span>
                     ) : log.notes ? (
                       <span className="text-dim text-xs" title={log.notes}>
                         📝
@@ -196,7 +226,8 @@ export default function LogsPage() {
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -345,6 +376,85 @@ export default function LogsPage() {
                 >
                   {JSON.stringify(selectedLog.errors, null, 2)}
                 </pre>
+              </div>
+            )}
+
+            {/* Expandable Log Lines */}
+            {selectedLog.log_lines && selectedLog.log_lines.length > 0 && (
+              <div className="mt-lg">
+                <button
+                  onClick={() => setLogsExpanded(!logsExpanded)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 'var(--space-sm)',
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-primary)',
+                    cursor: 'pointer',
+                    padding: 0,
+                    fontSize: '0.8rem',
+                    fontWeight: 500,
+                    width: '100%',
+                  }}
+                >
+                  {logsExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  <span>Log-Zeilen</span>
+                  <span
+                    style={{
+                      fontSize: '0.7rem',
+                      padding: '1px 8px',
+                      borderRadius: '10px',
+                      background: warnErrorCount > 0 ? 'rgba(255,180,50,0.15)' : 'rgba(255,255,255,0.08)',
+                      color: warnErrorCount > 0 ? 'var(--warning)' : 'var(--text-dim)',
+                    }}
+                  >
+                    {selectedLog.log_lines.length}
+                    {warnErrorCount > 0 && ` (${warnErrorCount} ⚠)`}
+                  </span>
+                </button>
+
+                {logsExpanded && (
+                  <div
+                    style={{
+                      marginTop: 'var(--space-sm)',
+                      background: 'var(--surface-lowest)',
+                      borderRadius: 'var(--radius)',
+                      padding: 'var(--space-sm)',
+                      maxHeight: 400,
+                      overflow: 'auto',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                    }}
+                  >
+                    {selectedLog.log_lines.map((line, i) => {
+                      const style = LOG_LEVEL_STYLE[line.level] || LOG_LEVEL_STYLE.INFO;
+                      const Icon = style.icon;
+                      return (
+                        <div
+                          key={i}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: 'var(--space-xs)',
+                            padding: '3px var(--space-xs)',
+                            fontSize: '0.72rem',
+                            fontFamily: 'var(--font-mono)',
+                            color: style.color,
+                            borderBottom: '1px solid rgba(255,255,255,0.03)',
+                          }}
+                        >
+                          <Icon size={12} style={{ marginTop: 2, flexShrink: 0 }} />
+                          <span style={{ opacity: 0.6, flexShrink: 0, minWidth: 58 }}>
+                            {line.level}
+                          </span>
+                          <span style={{ wordBreak: 'break-word' }}>
+                            {line.msg}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>

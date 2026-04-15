@@ -33,14 +33,17 @@ class BaseCollector(ABC):
 
         Template method that orchestrates:
           1. Create log entry (committed immediately)
-          2. Check and repair gaps (optional, override in subclass)
-          3. Fetch new data from source
-          4. Store data in database
-          5. Finalize log entry with results (separate commit)
+          2. Attach log capture handler (captures WARNING+ and related INFO)
+          3. Check and repair gaps (optional, override in subclass)
+          4. Fetch new data from source
+          5. Store data in database
+          6. Finalize log entry with results + captured log lines (separate commit)
 
         The log entry is managed in separate transactions from the
         data to ensure start/finish status is always persisted.
         """
+        from trading_signals.utils.logging import CollectorLogCapture
+
         logger.info(f"[{self.name}] Starting collector run...")
 
         # Step 0: Create and commit log entry immediately
@@ -54,31 +57,35 @@ class BaseCollector(ABC):
             session.flush()
             log_id = log.id
 
-        # Step 1-3: Run the actual data collection
+        # Step 1-3: Run the actual data collection with log capture
         records_fetched = 0
         records_written = 0
         gap_result = None
         status = "success"
         errors_dict = None
         notes = None
+        captured_lines: list[dict] = []
 
-        try:
-            with get_session() as session:
-                # Step 1: Gap detection & repair
-                gap_result = self.check_and_repair_gaps(session)
+        with CollectorLogCapture(self.name) as capture:
+            try:
+                with get_session() as session:
+                    # Step 1: Gap detection & repair
+                    gap_result = self.check_and_repair_gaps(session)
 
-                # Step 2: Fetch new data
-                raw_data = self.fetch(session)
-                notes = f"fetch returned {len(raw_data)} items"
+                    # Step 2: Fetch new data
+                    raw_data = self.fetch(session)
+                    notes = f"fetch returned {len(raw_data)} items"
 
-                # Step 3: Store fetched data
-                records_fetched, records_written = self.store(session, raw_data)
+                    # Step 3: Store fetched data
+                    records_fetched, records_written = self.store(session, raw_data)
 
-        except Exception as e:
-            status = "failed"
-            errors_dict = {"error": str(e), "type": type(e).__name__}
-            notes = f"exception: {type(e).__name__}: {str(e)[:200]}"
-            logger.error(f"[{self.name}] Failed: {e}")
+            except Exception as e:
+                status = "failed"
+                errors_dict = {"error": str(e), "type": type(e).__name__}
+                notes = f"exception: {type(e).__name__}: {str(e)[:200]}"
+                logger.error(f"[{self.name}] Failed: {e}")
+
+            captured_lines = capture.get_lines()
 
         # Step 4: Finalize log entry (always runs, separate transaction)
         # This ensures status/finished_at is persisted even on failure
@@ -93,6 +100,7 @@ class BaseCollector(ABC):
                 log.records_written = records_written
                 log.errors = errors_dict
                 log.notes = notes
+                log.log_lines = captured_lines if captured_lines else None
 
                 if gap_result:
                     log.gaps_detected = gap_result.gaps_detected
@@ -124,6 +132,13 @@ class BaseCollector(ABC):
             logger.info(
                 f"[{self.name}] Failed after {duration:.1f}s. "
                 f"Error: {errors_dict}"
+            )
+
+        if captured_lines:
+            warn_count = sum(1 for l in captured_lines if l["level"] in ("WARNING", "ERROR", "CRITICAL"))
+            logger.info(
+                f"[{self.name}] Captured {len(captured_lines)} log lines "
+                f"({warn_count} warnings/errors)"
             )
 
         return log

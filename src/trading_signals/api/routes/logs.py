@@ -63,6 +63,7 @@ def get_logs(
                 gaps_extrapolated=log.gaps_extrapolated,
                 errors=log.errors,
                 notes=log.notes,
+                log_lines=log.log_lines,
                 duration_seconds=duration,
             )
         )
