@@ -141,12 +141,6 @@ class NewTickerOnboarder:
                 )
                 continue
 
-            self.manager.add_ticker(
-                ticker=ticker,
-                company_name=asset.name or None,
-                added_by=source,
-                exchange=asset.exchange,
-            )
             added.append(ticker)
 
         if skipped_etfs:
@@ -159,24 +153,90 @@ class NewTickerOnboarder:
             logger.info("[onboarder] No new Alpaca-tradeable tickers to add.")
             return []
 
+        # Step 4: Quick yfinance quoteType check BEFORE backfill
+        # This catches ETFs that slipped past the name heuristic,
+        # BEFORE we waste resources on 4 years of price/indicator data.
+        verified = self._verify_equity_type(added)
+
+        if not verified:
+            logger.info("[onboarder] No verified equities to add.")
+            return []
+
+        # Step 5: Now add to universe + backfill (only verified equities)
+        for ticker in verified:
+            asset = alpaca_assets.get(ticker)
+            self.manager.add_ticker(
+                ticker=ticker,
+                company_name=asset.name if asset else None,
+                added_by=source,
+                exchange=asset.exchange if asset else None,
+            )
+
         # Commit universe additions so backfill can see them
         self.session.commit()
 
         logger.info(
-            f"[onboarder] Added {len(added)} tickers to universe: {added}. "
+            f"[onboarder] Added {len(verified)} tickers to universe: {verified}. "
             f"Starting auto-backfill..."
         )
 
-        # Step 3: Auto-backfill (prices, TA, fundamentals, sector)
-        self._backfill_prices(added)
-        self._backfill_indicators(added)
-        self._backfill_fundamentals(added)
-        self._enrich_sector(added)
+        # Step 6: Auto-backfill (prices, TA, fundamentals, sector)
+        self._backfill_prices(verified)
+        self._backfill_indicators(verified)
+        self._backfill_fundamentals(verified)
+        self._enrich_sector(verified)
 
         logger.info(
-            f"[onboarder] Onboarding complete for {len(added)} tickers: {added}"
+            f"[onboarder] Onboarding complete for {len(verified)} tickers: {verified}"
         )
-        return added
+        return verified
+
+    def _verify_equity_type(self, tickers: list[str]) -> list[str]:
+        """Quick yfinance quoteType check before committing to backfill.
+
+        Returns only tickers confirmed as EQUITY. Non-equities are
+        added to the blacklist and never enter the universe.
+        """
+        import yfinance as yf
+
+        from trading_signals.universe.blacklist import add_to_blacklist
+
+        verified: list[str] = []
+        blacklisted: list[str] = []
+
+        for ticker in tickers:
+            try:
+                info = yf.Ticker(ticker).info
+                qt = (info.get("quoteType", "UNKNOWN") if info else "UNKNOWN")
+
+                if qt.upper() == "EQUITY":
+                    verified.append(ticker)
+                else:
+                    add_to_blacklist(
+                        self.session, ticker,
+                        quote_type=qt,
+                        source="onboarder/quoteType_check",
+                    )
+                    blacklisted.append(ticker)
+                    logger.warning(
+                        f"[onboarder] Pre-backfill check: {ticker} is "
+                        f"{qt}, not EQUITY → blacklisted"
+                    )
+            except Exception as e:
+                # If yfinance fails, let the ticker through (benefit of the doubt)
+                verified.append(ticker)
+                logger.debug(
+                    f"[onboarder] quoteType check failed for {ticker}: {e}, "
+                    f"allowing through"
+                )
+
+        if blacklisted:
+            logger.info(
+                f"[onboarder] Pre-backfill filter: {len(blacklisted)} "
+                f"non-equities blocked, {len(verified)} equities verified"
+            )
+
+        return verified
 
     def _backfill_prices(self, tickers: list[str]) -> None:
         """Fetch historical prices from Alpaca for new tickers."""
