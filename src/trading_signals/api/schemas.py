@@ -93,11 +93,13 @@ class ARKDeltaItem(BaseModel):
     delta_date: date
     etf_ticker: str
     ticker: str
+    delta_type: str  # new_position, closed, increased, decreased
     shares_delta: float | None = None
-    weight_delta_bps: float | None = None
-    pct_change: float | None = None
-    is_new_position: bool = False
-    is_closed_position: bool = False
+    shares_prev: float | None = None
+    shares_curr: float | None = None
+    weight_delta: float | None = None
+    weight_prev: float | None = None
+    weight_curr: float | None = None
 
 
 class InsiderClusterItem(BaseModel):

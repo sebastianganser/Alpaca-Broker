@@ -73,11 +73,11 @@ function ArkTab({ navigate }: { navigate: (path: string) => void }) {
                 {d.ticker}
               </td>
               <td>
-                {d.is_new_position ? (
+                {d.delta_type === 'new_position' ? (
                   <span className="badge badge-success">NEU</span>
-                ) : d.is_closed_position ? (
+                ) : d.delta_type === 'closed' ? (
                   <span className="badge badge-error">CLOSED</span>
-                ) : d.pct_change && d.pct_change > 0 ? (
+                ) : d.delta_type === 'increased' ? (
                   <span className="badge badge-success">
                     <TrendingUp size={10} /> ERHÖHT
                   </span>
@@ -91,7 +91,7 @@ function ArkTab({ navigate }: { navigate: (path: string) => void }) {
                 {d.shares_delta?.toLocaleString() ?? '—'}
               </td>
               <td className="text-right mono text-sm">
-                {d.weight_delta_bps?.toFixed(1) ?? '—'}
+                {d.weight_delta != null ? (d.weight_delta * 100).toFixed(1) : '—'}
               </td>
             </tr>
           ))}

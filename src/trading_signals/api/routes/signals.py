@@ -40,7 +40,10 @@ def get_ark_deltas(
     cutoff = date.today() - timedelta(days=days)
     deltas = (
         db.query(ARKDelta)
-        .filter(ARKDelta.delta_date >= cutoff)
+        .filter(
+            ARKDelta.delta_date >= cutoff,
+            ARKDelta.delta_type != "unchanged",
+        )
         .order_by(desc(ARKDelta.delta_date), ARKDelta.ticker)
         .limit(limit)
         .all()
@@ -51,11 +54,13 @@ def get_ark_deltas(
             delta_date=d.delta_date,
             etf_ticker=d.etf_ticker,
             ticker=d.ticker,
+            delta_type=d.delta_type,
             shares_delta=float(d.shares_delta) if d.shares_delta else None,
-            weight_delta_bps=float(d.weight_delta_bps) if d.weight_delta_bps else None,
-            pct_change=float(d.pct_change) if d.pct_change else None,
-            is_new_position=d.is_new_position or False,
-            is_closed_position=d.is_closed_position or False,
+            shares_prev=float(d.shares_prev) if d.shares_prev else None,
+            shares_curr=float(d.shares_curr) if d.shares_curr else None,
+            weight_delta=float(d.weight_delta) if d.weight_delta else None,
+            weight_prev=float(d.weight_prev) if d.weight_prev else None,
+            weight_curr=float(d.weight_curr) if d.weight_curr else None,
         )
         for d in deltas
     ]

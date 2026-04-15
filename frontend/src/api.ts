@@ -110,11 +110,13 @@ export interface ARKDelta {
   delta_date: string;
   etf_ticker: string;
   ticker: string;
+  delta_type: string;  // new_position, closed, increased, decreased
   shares_delta: number | null;
-  weight_delta_bps: number | null;
-  pct_change: number | null;
-  is_new_position: boolean;
-  is_closed_position: boolean;
+  shares_prev: number | null;
+  shares_curr: number | null;
+  weight_delta: number | null;
+  weight_prev: number | null;
+  weight_curr: number | null;
 }
 
 export interface InsiderCluster {

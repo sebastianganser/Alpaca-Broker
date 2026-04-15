@@ -72,6 +72,10 @@ class ARKDeltaComputer:
 
             delta_type, shares_delta, weight_delta = self._classify(curr, prev)
 
+            # Skip unchanged positions – only track actual movements
+            if delta_type == "unchanged":
+                continue
+
             stmt = (
                 pg_insert(ARKDelta)
                 .values(
