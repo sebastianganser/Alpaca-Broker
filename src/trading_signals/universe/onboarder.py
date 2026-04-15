@@ -312,7 +312,11 @@ class NewTickerOnboarder:
             logger.error(f"[onboarder] Fundamentals backfill failed: {e}")
 
     def _enrich_sector(self, tickers: list[str]) -> None:
-        """Fetch sector/industry data for new tickers."""
+        """Fetch sector/industry data for new tickers.
+
+        Also acts as a secondary ETF filter: if yfinance reports
+        quoteType != 'EQUITY', the ticker is deactivated (learned filter).
+        """
         try:
             from sqlalchemy import update
 
@@ -326,19 +330,46 @@ class NewTickerOnboarder:
             )
             results = client.fetch_sector_info(tickers)
 
+            enriched = 0
+            deactivated_etfs: list[str] = []
+
             with get_session() as session:
                 for record in results:
+                    ticker = record["ticker"]
+                    quote_type = record.get("quote_type", "")
+
+                    # Secondary ETF filter: yfinance quoteType is authoritative
+                    if quote_type and quote_type.upper() != "EQUITY":
+                        session.execute(
+                            update(Universe)
+                            .where(Universe.ticker == ticker)
+                            .values(is_active=False)
+                        )
+                        deactivated_etfs.append(ticker)
+                        logger.warning(
+                            f"[onboarder] Deactivating {ticker}: "
+                            f"quoteType={quote_type} (not EQUITY)"
+                        )
+                        continue
+
                     session.execute(
                         update(Universe)
-                        .where(Universe.ticker == record["ticker"])
+                        .where(Universe.ticker == ticker)
                         .values(
                             sector=record.get("sector"),
                             industry=record.get("industry"),
                         )
                     )
+                    enriched += 1
+
+            if deactivated_etfs:
+                logger.info(
+                    f"[onboarder] Deactivated {len(deactivated_etfs)} non-equity "
+                    f"tickers (learned filter): {deactivated_etfs}"
+                )
 
             logger.info(
-                f"[onboarder] Sector enrichment: {len(results)}/{len(tickers)} "
+                f"[onboarder] Sector enrichment: {enriched}/{len(tickers)} "
                 f"tickers enriched"
             )
 

@@ -263,20 +263,47 @@ def run_index_sync() -> None:
         )
         results = client.fetch_sector_info(missing)
 
+        enriched = 0
+        deactivated_etfs: list[str] = []
+
         with get_session() as session:
             for record in results:
+                ticker = record["ticker"]
+                quote_type = record.get("quote_type", "")
+
+                # Learned ETF filter: deactivate non-equity tickers
+                if quote_type and quote_type.upper() != "EQUITY":
+                    session.execute(
+                        update(Universe)
+                        .where(Universe.ticker == ticker)
+                        .values(is_active=False)
+                    )
+                    deactivated_etfs.append(ticker)
+                    logger.warning(
+                        f"index_sync_job: deactivating {ticker}: "
+                        f"quoteType={quote_type} (not EQUITY)"
+                    )
+                    continue
+
                 session.execute(
                     update(Universe)
-                    .where(Universe.ticker == record["ticker"])
+                    .where(Universe.ticker == ticker)
                     .values(
                         sector=record.get("sector"),
                         industry=record.get("industry"),
                     )
                 )
+                enriched += 1
+
+        if deactivated_etfs:
+            logger.info(
+                f"index_sync_job: deactivated {len(deactivated_etfs)} "
+                f"non-equity tickers: {deactivated_etfs}"
+            )
 
         logger.info(
             f"index_sync_job sector enrichment: "
-            f"{len(results)}/{len(missing)} tickers enriched"
+            f"{enriched}/{len(missing)} tickers enriched"
         )
     else:
         logger.info("index_sync_job: all tickers have sector data")

@@ -468,13 +468,14 @@ class BackfillManager:
                     info = t.info
                     sector = info.get("sector") if info else None
                     industry = info.get("industry") if info else None
+                    quote_type = info.get("quoteType") if info else None
 
-                    if sector or industry:
-                        enriched.append({
-                            "ticker": ticker_str,
-                            "sector": sector,
-                            "industry": industry,
-                        })
+                    enriched.append({
+                        "ticker": ticker_str,
+                        "sector": sector,
+                        "industry": industry,
+                        "quote_type": quote_type,
+                    })
                 except Exception as e:
                     logger.debug(
                         f"[Enrichment {task_id}] Failed for {ticker_str}: "
@@ -488,19 +489,38 @@ class BackfillManager:
                 if (i + 1) % 50 == 0 and i < len(missing) - 1:
                     time.sleep(3.0)
 
-            # Update universe
+            # Update universe (with ETF deactivation)
             updated = 0
+            deactivated_etfs: list[str] = []
             with get_session() as session:
                 for record in enriched:
-                    session.execute(
-                        update(Universe)
-                        .where(Universe.ticker == record["ticker"])
-                        .values(
-                            sector=record.get("sector"),
-                            industry=record.get("industry"),
+                    ticker = record["ticker"]
+                    quote_type = record.get("quote_type", "")
+
+                    # Learned ETF filter: deactivate non-equity tickers
+                    if quote_type and quote_type.upper() != "EQUITY":
+                        session.execute(
+                            update(Universe)
+                            .where(Universe.ticker == ticker)
+                            .values(is_active=False)
                         )
-                    )
-                    updated += 1
+                        deactivated_etfs.append(ticker)
+                        logger.warning(
+                            f"[Enrichment {task_id}] Deactivating {ticker}: "
+                            f"quoteType={quote_type} (not EQUITY)"
+                        )
+                        continue
+
+                    if record.get("sector") or record.get("industry"):
+                        session.execute(
+                            update(Universe)
+                            .where(Universe.ticker == ticker)
+                            .values(
+                                sector=record.get("sector"),
+                                industry=record.get("industry"),
+                            )
+                        )
+                        updated += 1
 
             # Final update
             self._update_progress(
@@ -513,6 +533,13 @@ class BackfillManager:
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.now(UTC)
             task.current_ticker = None
+
+            if deactivated_etfs:
+                logger.info(
+                    f"[Enrichment {task_id}] Deactivated "
+                    f"{len(deactivated_etfs)} non-equity tickers: "
+                    f"{deactivated_etfs}"
+                )
 
             logger.info(
                 f"[Enrichment {task_id}] Completed: "

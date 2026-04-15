@@ -169,11 +169,12 @@ class YFinanceClient:
     def fetch_sector_info(self, tickers: list[str]) -> list[dict]:
         """Fetch sector and industry classification for each ticker.
 
-        Uses ticker.info to extract sector/industry. Much lighter than
-        full fundamentals since we only need two fields.
+        Uses ticker.info to extract sector/industry and quoteType.
+        quoteType is used downstream to detect ETFs that slipped
+        past the name-based heuristic.
 
         Returns:
-            List of dicts with 'ticker', 'sector', and 'industry'.
+            List of dicts with 'ticker', 'sector', 'industry', 'quote_type'.
         """
 
         def _fetch_single(ticker_str: str) -> dict | None:
@@ -185,14 +186,16 @@ class YFinanceClient:
 
             sector = info.get("sector")
             industry = info.get("industry")
+            quote_type = info.get("quoteType")  # 'EQUITY', 'ETF', 'MUTUALFUND', etc.
 
-            if not sector and not industry:
+            if not sector and not industry and not quote_type:
                 return None
 
             return {
                 "ticker": ticker_str,
                 "sector": sector,
                 "industry": industry,
+                "quote_type": quote_type,
             }
 
         return self._iterate_with_rate_limit(tickers, _fetch_single, "sector_info")
