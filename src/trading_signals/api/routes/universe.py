@@ -27,8 +27,10 @@ def list_tickers(
     """List all tickers in the universe with optional filters."""
     query = db.query(Universe)
 
-    # Apply filters
-    if active is not None:
+    # Default: show only active tickers
+    if active is None:
+        query = query.filter(Universe.is_active.is_(True))
+    elif active is not None:
         query = query.filter(Universe.is_active == active)
     if sector:
         query = query.filter(Universe.sector == sector)
@@ -90,6 +92,7 @@ def list_sectors(db: Session = Depends(get_db)):
     """Get all distinct sectors in the universe."""
     sectors = (
         db.query(Universe.sector)
+        .filter(Universe.is_active.is_(True))
         .filter(Universe.sector.isnot(None))
         .distinct()
         .order_by(Universe.sector)

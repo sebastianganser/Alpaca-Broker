@@ -100,7 +100,16 @@ def get_dashboard_summary(
     table_stats = []
     for table_name, model, date_col_name, date_range_col in _TABLE_MODELS:
         try:
-            row_count = db.query(func.count()).select_from(model).scalar() or 0
+            # Universe: count only active tickers
+            if model is Universe:
+                row_count = (
+                    db.query(func.count())
+                    .select_from(model)
+                    .filter(Universe.is_active.is_(True))
+                    .scalar() or 0
+                )
+            else:
+                row_count = db.query(func.count()).select_from(model).scalar() or 0
 
             min_date = None
             max_date = None
