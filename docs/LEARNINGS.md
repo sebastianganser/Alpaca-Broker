@@ -50,6 +50,20 @@ Wir tracken Erkenntnisse in mehreren Kategorien:
 
 ---
 
+### [2026-04-15] 📊 yfinance-Formatinkonsistenz: dividendYield in anderer Skala als andere Ratio-Felder
+
+**Beobachtung:** TSM zeigte 95% Dividendenrendite im Dashboard. Ursache: yfinance liefert `dividendYield` in Prozent-Form (0.92 = 0.92%), während `profitMargins`, `operatingMargins` etc. als Dezimal kommen (0.451 = 45.1%). Unser Code behandelte alle Felder gleich (*100 im Frontend).
+
+**Daten:** Systematisch über 6 Ticker verifiziert (AAPL=0.4, MSFT=0.93, TSM=0.92, JNJ=2.19, GOOG=0.25 – alle bereits Prozentwerte). Alle anderen Ratio-Felder konsistent als Dezimal.
+
+**Hypothese:** Yahoo Finance API liefert verschiedene Felder in unterschiedlichen Skalen. Da yfinance eine inoffizielle Wrapper-Bibliothek ist, kann sich das Format jederzeit ändern. → **Defensive Programmierung mit Plausibilitätsprüfung ist Pflicht.**
+
+**Nächste Schritte:** Monitoring: WARNING-Logs bei Plausibilitätsverletzungen regelmäßig prüfen.
+
+**Status:** 🟢 Bestätigt & behoben (Migration 013 + Plausibilitätsprüfung)
+
+---
+
 ## Geplante Untersuchungen
 
 Sobald genug Daten vorliegen, wollen wir diese Fragen systematisch untersuchen:

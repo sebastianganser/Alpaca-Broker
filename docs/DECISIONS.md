@@ -925,6 +925,47 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 
 ---
 
+### [2026-04-15] Dividend Yield: Normalisierung wegen yfinance-Formatinkonsistenz
+
+**Kontext:** yfinance liefert `dividendYield` in Prozent-Form (0.4 = 0.4%), während alle anderen Ratio-Felder (`profitMargins`, `operatingMargins`, `returnOnEquity`) als Dezimal kommen (0.451 = 45.1%). Unser Frontend multiplizierte alle Felder uniform mit 100 → TSM zeigte 95% statt 0.92%.
+
+**Optionen:**
+- A: Frontend-Fix: `dividend_yield` nicht *100 (inkonsistente Behandlung im Frontend)
+- B: Backend-Fix: `/100` bei Speicherung (einheitliches Dezimal-Format in DB)
+- C: Quellwechsel: `trailingAnnualDividendYield` statt `dividendYield` (eigene Probleme bei ADRs)
+
+**Entscheidung:** Option B – Backend-Normalisierung + Data-Migration.
+
+**Begründung:** Konsistente Datenhaltung. Alle Prozent-Felder liegen als Dezimal in der DB (0.0092 = 0.92%). Frontend-Code bleibt uniform (*100 für alle). Migration 013 korrigiert bestehende Daten rückwirkend.
+
+**Revisit-Trigger:** Falls yfinance das Format erneut ändert → Plausibilitätsprüfung fängt das ab.
+
+---
+
+### [2026-04-15] Plausibilitätsprüfung für alle Fundamentaldaten
+
+**Kontext:** Der Dividend-Yield-Bug zeigte, dass yfinance-Daten nicht blind vertrauenswürdig sind. Formate können sich ändern, Yahoo kann fehlerhafte Werte liefern (besonders bei ADRs).
+
+**Entscheidung:** `_validate_fundamentals()` prüft alle 17 Felder gegen definierte plausible Ranges. Werte außerhalb → `None` + WARNING-Log.
+
+**Begründung:**
+- Defensive Programmierung: yfinance ist eine inoffizielle API, Format-Änderungen jederzeit möglich
+- Lieber `None` als falsche Daten (z.B. 95% Dividendenrendite)
+- WARNING-Logs machen Datenqualitätsprobleme sofort sichtbar
+- Ranges bewusst großzügig (z.B. PE 0–2000, Div Yield 0–25%) um echte Extreme nicht fälschlich auszufiltern
+
+**Ranges (Auszug):**
+| Feld | Min | Max |
+|------|-----|-----|
+| dividend_yield | 0% | 25% |
+| profit_margin | -200% | 100% |
+| pe_ratio | 0 | 2000 |
+| beta | -3 | 5 |
+
+**Revisit-Trigger:** Falls regelmäßig valide Extremwerte in den Logs auftauchen → Range anpassen.
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.

@@ -552,3 +552,14 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
   - Echtzeit-Status: „● Geöffnet" (cyan) / „● Geschlossen" (dim)
 - **Design:** Precision Architect konform – `surface-high` Hintergrund, kein Border, Monospace-Font, Pfeil-Indikator, 150ms Fade-In Animation
 - Dokumentation aktualisiert: ROADMAP.md
+
+### Session 14 – 15. April 2026 – Fundamentaldaten-Qualität
+- **Bug: Dividend Yield 95% statt 0.92%** – yfinance liefert `dividendYield` in Prozent-Form (0.92 = 0.92%), alle anderen Ratio-Felder als Dezimal (0.451 = 45.1%). Frontend multiplizierte blindlings *100
+  - **Fix:** Normalisierung im Collector (`/100` bei Speicherung)
+  - **Migration 013:** Bestehende DB-Werte rückwirkend korrigiert (`UPDATE ... / 100 WHERE > 0.25`)
+- **Feature: Plausibilitätsprüfung für alle 17 Fundamental-Felder**
+  - Jedes Feld hat definierte plausible Ranges (z.B. Div Yield 0–25%, PE 0–2000, Beta -3 bis 5)
+  - Werte außerhalb der Range → `None` + WARNING im Log
+  - Schützt gegen yfinance-Format-Änderungen und Yahoo-Datenqualitätsprobleme
+  - `revenue_ttm` ausgenommen (ADRs melden in Lokalwährung, z.B. TSM in TWD)
+- Dokumentation aktualisiert: ROADMAP.md, DECISIONS.md, LEARNINGS.md
