@@ -553,7 +553,7 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
 - **Design:** Precision Architect konform – `surface-high` Hintergrund, kein Border, Monospace-Font, Pfeil-Indikator, 150ms Fade-In Animation
 - Dokumentation aktualisiert: ROADMAP.md
 
-### Session 14 – 15. April 2026 – Fundamentaldaten-Qualität
+### Session 14 – 15. April 2026 – Fundamentaldaten-Qualität & Auto-Onboarding
 - **Bug: Dividend Yield 95% statt 0.92%** – yfinance liefert `dividendYield` in Prozent-Form (0.92 = 0.92%), alle anderen Ratio-Felder als Dezimal (0.451 = 45.1%). Frontend multiplizierte blindlings *100
   - **Fix:** Normalisierung im Collector (`/100` bei Speicherung)
   - **Migration 013:** Bestehende DB-Werte rückwirkend korrigiert (`UPDATE ... / 100 WHERE > 0.25`)
@@ -562,4 +562,10 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
   - Werte außerhalb der Range → `None` + WARNING im Log
   - Schützt gegen yfinance-Format-Änderungen und Yahoo-Datenqualitätsprobleme
   - `revenue_ttm` ausgenommen (ADRs melden in Lokalwährung, z.B. TSM in TWD)
-- Dokumentation aktualisiert: ROADMAP.md, DECISIONS.md, LEARNINGS.md
+- **Feature: Auto-Universe-Expansion + Auto-Backfill** (neuer Service `NewTickerOnboarder`)
+  - Ticker aus Politiker-Trades und ARK-Holdings werden automatisch dem Universum hinzugefügt
+  - Nach Hinzufügen: Automatischer Backfill (Preise 4J, TA-Indikatoren, Fundamentals, Sektor)
+  - Behebt: SIRI und andere Ticker hatten keine Preise/Indikatoren/Fundamentals
+  - ARK-Collector: Alte `_expand_universe()` durch zentralen Onboarder ersetzt (+ Backfill)
+  - Form4: Keine Änderung nötig (universe-driven, entdeckt keine neuen Ticker)
+- Dokumentation aktualisiert: ROADMAP.md, DECISIONS.md, LEARNINGS.md, ARCHITECTURE.md

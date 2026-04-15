@@ -104,7 +104,8 @@ Alpaca-Broker/
 │   │   │   ├── __init__.py
 │   │   │   ├── manager.py         # ✅ implementiert
 │   │   │   ├── alpaca_validator.py # ✅ Alpaca-Validierung
-│   │   │   └── index_sync.py      # ✅ Sprint 1b (S&P/Nasdaq sync)
+│   │   │   ├── index_sync.py      # ✅ Sprint 1b (S&P/Nasdaq sync)
+│   │   │   └── onboarder.py       # ✅ Auto-Expansion + Backfill (Session 14)
 │   │   ├── api/                   # ✅ Sprint 7 (FastAPI Backend)
 │   │   │   ├── __init__.py
 │   │   │   ├── deps.py           # ✅ DB session + Scheduler dependency injection

@@ -966,6 +966,29 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 
 ---
 
+### [2026-04-15] Zentraler NewTickerOnboarder statt verstreuter Universe-Expansion
+
+**Kontext:** Ticker aus Politiker-Trades (z.B. SIRI) wurden in der `politician_trades`-Tabelle gespeichert, aber nicht dem Universum hinzugefügt. Folge: Keine Preise, Indikatoren, Fundamentals. ARK hatte Universe-Expansion, aber keinen Auto-Backfill.
+
+**Optionen:**
+- A: Jeder Collector implementiert eigene `_expand_universe()` + Backfill-Logik
+- B: Zentraler Service, den alle Collectors aufrufen
+- C: Separater Hintergrund-Job, der periodisch nach fehlenden Tickern sucht
+
+**Entscheidung:** Option B – Zentraler `NewTickerOnboarder` in `universe/onboarder.py`.
+
+**Begründung:**
+- DRY: Eine Stelle für Validierung + Backfill statt Duplikation in 3+ Collectors
+- Konsistenz: Alle neuen Ticker durchlaufen denselben Onboarding-Prozess
+- Synchron im Collector-Thread: Bei 1–5 neuen Tickern ~30–60s Overhead, akzeptabel für Nacht-Jobs
+- Backfill-Pipeline: Preise (Alpaca 4J) → TA → Fundamentals → Sektor
+
+**Form4 ausgenommen:** Der Form4-Collector ist universe-driven (sucht nur CIKs für bestehende Ticker). Neue Ticker können dort nicht entdeckt werden.
+
+**Revisit-Trigger:** Wenn mehr als 20 neue Ticker pro Lauf auftauchen → auf asynchronen Background-Task umstellen.
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.
