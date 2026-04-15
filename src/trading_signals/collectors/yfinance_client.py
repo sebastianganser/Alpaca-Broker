@@ -142,6 +142,12 @@ class YFinanceClient:
                 value = info.get(yf_key)
                 record[db_key] = _clean_numeric(value)
 
+            # yfinance returns dividendYield in percent form (0.4 = 0.4%)
+            # while all other ratio fields are in decimal form (0.451 = 45.1%).
+            # Normalize to decimal for consistent storage and display.
+            if record.get("dividend_yield") is not None:
+                record["dividend_yield"] = record["dividend_yield"] / 100
+
             # Attempt to get eps_growth_yoy from earnings estimate
             try:
                 est = t.get_earnings_estimate()
