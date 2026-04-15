@@ -11,14 +11,12 @@ from datetime import date, datetime
 from typing import Any
 
 import requests
-from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from trading_signals.collectors.base import BaseCollector
 from trading_signals.db.models.ark import ARKHolding
-from trading_signals.universe.alpaca_validator import AlpacaAssetValidator
-from trading_signals.universe.manager import UniverseManager
+
 from trading_signals.utils.logging import get_logger
 from trading_signals.utils.retry import retry
 
@@ -133,14 +131,23 @@ class ARKHoldingsCollector(BaseCollector):
 
         session.flush()
 
-        # Expand universe with new Alpaca-tradeable tickers
+        # Expand universe with new Alpaca-tradeable tickers + auto-backfill
         if ark_tickers:
-            new_tickers = self._expand_universe(session, ark_tickers, data)
-            if new_tickers:
-                logger.info(
-                    f"[{self.name}] Added {len(new_tickers)} new tickers to universe: "
-                    f"{sorted(new_tickers)}"
+            from trading_signals.universe.onboarder import NewTickerOnboarder
+            from trading_signals.db.session import get_session
+
+            # Use a fresh session for onboarding (current one may be flushed)
+            with get_session() as onboard_session:
+                onboarder = NewTickerOnboarder(onboard_session)
+                new_tickers = onboarder.onboard(
+                    tickers=ark_tickers,
+                    source="ark_etf",
                 )
+                if new_tickers:
+                    logger.info(
+                        f"[{self.name}] Auto-onboarded {len(new_tickers)} new "
+                        f"tickers: {sorted(new_tickers)}"
+                    )
 
         logger.info(
             f"[{self.name}] Stored {records_written}/{records_fetched} holdings "
@@ -148,73 +155,7 @@ class ARKHoldingsCollector(BaseCollector):
         )
         return records_fetched, records_written
 
-    def _expand_universe(
-        self,
-        session: Session,
-        ark_tickers: set[str],
-        data: dict[str, list[dict]],
-    ) -> list[str]:
-        """Add new Alpaca-tradeable tickers from ARK to the universe.
 
-        Only adds tickers that:
-          1. Don't already exist in our universe
-          2. Are tradeable on Alpaca (validates via API)
-        """
-        manager = UniverseManager(session)
-
-        # Get existing universe tickers
-        existing = {t.ticker for t in manager.get_active_tickers()}
-
-        # Also check inactive tickers (they might just need reactivation)
-        from trading_signals.db.models.universe import Universe
-        all_stmt = select(Universe.ticker)
-        all_existing = {row[0] for row in session.execute(all_stmt).all()}
-
-        new_tickers = ark_tickers - all_existing
-        if not new_tickers:
-            return []
-
-        logger.info(
-            f"[{self.name}] Found {len(new_tickers)} new tickers in ARK data. "
-            f"Validating against Alpaca..."
-        )
-
-        # Validate against Alpaca
-        try:
-            validator = AlpacaAssetValidator()
-            alpaca_assets = validator.fetch_all_assets()
-        except Exception as e:
-            logger.warning(f"[{self.name}] Alpaca validation failed: {e}. Skipping universe expansion.")
-            return []
-
-        added: list[str] = []
-        for ticker in sorted(new_tickers):
-            asset = alpaca_assets.get(ticker)
-            if asset and asset.tradable:
-                # Find company name from ARK data
-                company_name = None
-                for holdings in data.values():
-                    for h in holdings:
-                        if h.get("ticker") == ticker:
-                            company_name = h.get("company")
-                            break
-                    if company_name:
-                        break
-
-                manager.add_ticker(
-                    ticker=ticker,
-                    company_name=company_name,
-                    added_by="ark_etf",
-                    exchange=asset.exchange,
-                )
-                added.append(ticker)
-            else:
-                reason = "not found" if not asset else "not tradeable"
-                logger.debug(
-                    f"[{self.name}] Skipping {ticker}: {reason} on Alpaca"
-                )
-
-        return added
 
 
 @retry(max_attempts=3, base_delay=2.0)

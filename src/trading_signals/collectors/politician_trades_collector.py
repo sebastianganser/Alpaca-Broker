@@ -146,13 +146,23 @@ class PoliticianTradesCollector(BaseCollector):
     ) -> tuple[int, int]:
         """Store politician trades with dedup via unique constraint.
 
+        After storing, checks all traded tickers against the universe
+        and auto-onboards any new tickers (Alpaca validation + backfill).
+
         Returns:
             Tuple of (records_fetched, records_written).
         """
         records_fetched = len(data)
         records_written = 0
 
+        # Collect all unique tickers for universe expansion
+        all_tickers: set[str] = set()
+
         for trade in data:
+            ticker = trade.get("ticker", "")
+            if ticker:
+                all_tickers.add(ticker)
+
             stmt = (
                 pg_insert(PoliticianTrade)
                 .values(**trade)
@@ -170,6 +180,22 @@ class PoliticianTradesCollector(BaseCollector):
             f"[{self.name}] Stored {records_written}/{records_fetched} "
             f"trades ({records_fetched - records_written} already existed)"
         )
+
+        # Expand universe with new tickers + auto-backfill
+        if all_tickers:
+            from trading_signals.universe.onboarder import NewTickerOnboarder
+
+            onboarder = NewTickerOnboarder(session)
+            new_tickers = onboarder.onboard(
+                tickers=all_tickers,
+                source="politician_trades",
+            )
+            if new_tickers:
+                logger.info(
+                    f"[{self.name}] Auto-onboarded {len(new_tickers)} new "
+                    f"tickers: {new_tickers}"
+                )
+
         return records_fetched, records_written
 
     @staticmethod
