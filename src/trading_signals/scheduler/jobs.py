@@ -192,20 +192,63 @@ def run_technical_indicators_computer() -> None:
     between the latest computed indicator date and the latest price
     date. This handles missed runs, container restarts, and weekends.
     """
+    from datetime import datetime
+
+    from trading_signals.utils.logging import CollectorLogCapture
+    from trading_signals.db.models.collection_log import CollectionLog
     from trading_signals.db.session import get_session
     from trading_signals.derived.technical_indicators import (
         TechnicalIndicatorsComputer,
     )
 
-    logger.info("Scheduler triggered: technical_indicators_computer_job")
+    collector_name = "technical_indicators"
+    logger.info(f"Scheduler triggered: {collector_name}_job")
 
-    with get_session() as session:
-        computer = TechnicalIndicatorsComputer(session)
-        written = computer.compute_catchup()
-        logger.info(
-            f"technical_indicators_computer_job finished: "
-            f"{written} records computed"
-        )
+    started_at = datetime.now()
+
+    with CollectorLogCapture(collector_name) as log_capture:
+        try:
+            with get_session() as session:
+                computer = TechnicalIndicatorsComputer(session)
+                written = computer.compute_catchup()
+
+                # Write collection_log entry
+                log_entry = CollectionLog(
+                    collector_name=collector_name,
+                    started_at=started_at,
+                    finished_at=datetime.now(),
+                    status="success",
+                    records_fetched=written,
+                    records_written=written,
+                    gaps_detected=0,
+                    log_lines=log_capture.get_lines(),
+                )
+                session.add(log_entry)
+                session.commit()
+
+            logger.info(
+                f"{collector_name}_job finished: "
+                f"{written} records computed"
+            )
+        except Exception as e:
+            logger.error(f"{collector_name}_job FAILED: {e}")
+            try:
+                with get_session() as session:
+                    log_entry = CollectionLog(
+                        collector_name=collector_name,
+                        started_at=started_at,
+                        finished_at=datetime.now(),
+                        status="error",
+                        records_fetched=0,
+                        records_written=0,
+                        gaps_detected=0,
+                        notes=str(e)[:2000],
+                        log_lines=log_capture.get_lines(),
+                    )
+                    session.add(log_entry)
+                    session.commit()
+            except Exception:
+                logger.error(f"{collector_name}_job: Failed to write error log")
 
 
 def run_index_sync() -> None:
