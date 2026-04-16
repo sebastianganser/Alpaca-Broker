@@ -341,8 +341,8 @@ def _clean_numeric(value: Any) -> float | None:
 _PLAUSIBILITY_RULES: dict[str, tuple[float, float, str]] = {
     # Percentage fields (stored as decimal)
     # Negative margins are common for pre-revenue companies (ACHR -781%, AUR -238%)
-    "profit_margin":     (-50.0,  1.0,   "Gewinnmarge -5000% bis 100%"),
-    "operating_margin":  (-1000.0, 1.0,  "Operative Marge -100000% bis 100%"),
+    "profit_margin":     (-50.0,  5.0,   "Gewinnmarge -5000% bis 500%"),
+    "operating_margin":  (-1000.0, 5.0,  "Operative Marge -100000% bis 500%"),
     "return_on_equity":  (-100.0, 100.0, "ROE -10000% bis 10000%"),
     "revenue_growth_yoy": (-1.0, 1000.0, "Umsatzwachstum -100% bis 100000%"),
     "dividend_yield":    (0.0,   0.25,   "Dividendenrendite 0% bis 25% (Format-Guard)"),
