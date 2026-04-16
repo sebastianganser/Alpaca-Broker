@@ -53,6 +53,11 @@ class FundamentalsSnapshot(Base):
     current_ratio: Mapped[float | None] = mapped_column(Numeric(16, 4))
     dividend_yield: Mapped[float | None] = mapped_column(Numeric(10, 6))
     beta: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    # Analyst consensus price targets (from yfinance analyst_price_targets)
+    target_price_low: Mapped[float | None] = mapped_column(Numeric(16, 4))
+    target_price_mean: Mapped[float | None] = mapped_column(Numeric(16, 4))
+    target_price_median: Mapped[float | None] = mapped_column(Numeric(16, 4))
+    target_price_high: Mapped[float | None] = mapped_column(Numeric(16, 4))
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )

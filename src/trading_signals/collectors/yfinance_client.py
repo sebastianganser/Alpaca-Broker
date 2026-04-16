@@ -175,6 +175,17 @@ class YFinanceClient:
             except Exception:
                 pass  # eps_growth_yoy stays as extracted from info (None)
 
+            # Analyst consensus price targets
+            try:
+                targets = t.analyst_price_targets
+                if targets and isinstance(targets, dict):
+                    record["target_price_low"] = _clean_numeric(targets.get("low"))
+                    record["target_price_mean"] = _clean_numeric(targets.get("mean"))
+                    record["target_price_median"] = _clean_numeric(targets.get("median"))
+                    record["target_price_high"] = _clean_numeric(targets.get("high"))
+            except Exception:
+                pass  # Price targets stay None
+
             return record
 
         return self._iterate_with_rate_limit(tickers, _fetch_single, "fundamentals")

@@ -32,6 +32,8 @@ _UPSERT_COLUMNS = [
     "ev_ebitda", "profit_margin", "operating_margin", "return_on_equity",
     "revenue_ttm", "revenue_growth_yoy", "eps_ttm", "eps_growth_yoy",
     "debt_to_equity", "current_ratio", "dividend_yield", "beta",
+    "target_price_low", "target_price_mean", "target_price_median",
+    "target_price_high",
 ]
 
 
