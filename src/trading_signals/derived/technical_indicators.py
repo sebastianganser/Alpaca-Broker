@@ -236,16 +236,20 @@ class TechnicalIndicatorsComputer:
         if df is None or len(df) == 0:
             return False
 
+        # Convert to Timestamp for DatetimeIndex lookup
+        # (target_date from SQL is datetime.date, df.index is DatetimeIndex)
+        ts = pd.Timestamp(target_date)
+
         # Check if target_date has price data
-        if target_date not in df.index:
+        if ts not in df.index:
             return False
 
         # Calculate all indicators on full history
         indicators_df = self._calculate_indicators_dataframe(df)
-        if indicators_df is None or target_date not in indicators_df.index:
+        if indicators_df is None or ts not in indicators_df.index:
             return False
 
-        row = indicators_df.loc[target_date]
+        row = indicators_df.loc[ts]
         return self._store_indicators(ticker, row)
 
     def _load_price_history(
