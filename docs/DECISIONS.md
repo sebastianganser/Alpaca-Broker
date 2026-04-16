@@ -952,17 +952,13 @@ Die logische Trennung erfolgt über das Schema `signals` innerhalb der `broker_d
 - Defensive Programmierung: yfinance ist eine inoffizielle API, Format-Änderungen jederzeit möglich
 - Lieber `None` als falsche Daten (z.B. 95% Dividendenrendite)
 - WARNING-Logs machen Datenqualitätsprobleme sofort sichtbar
-- Ranges bewusst großzügig (z.B. PE 0–2000, Div Yield 0–25%) um echte Extreme nicht fälschlich auszufiltern
 
-**Ranges (Auszug):**
-| Feld | Min | Max |
-|------|-----|-----|
-| dividend_yield | 0% | 25% |
-| profit_margin | -200% | 100% |
-| pe_ratio | 0 | 2000 |
-| beta | -3 | 5 |
+**Update [2026-04-16]: Revisit – Ranges massiv geweitet.**
+Erster Produktionslauf zeigte 138 Warnings bei 670 Tickern. Analyse: Alle Werte waren **real** (negative KBV durch Buybacks bei MCD/SBUX/BKNG, negatives Forward-KGV bei MRNA/OKLO, extreme Margen bei Pre-Revenue-Firmen wie ACHR -781%). Die ursprünglichen Ranges waren für normale Large Caps designed, aber das Universe enthält jetzt viele ARK-Titel (Biotechs, Growth-Stage).
 
-**Revisit-Trigger:** Falls regelmäßig valide Extremwerte in den Logs auftauchen → Range anpassen.
+**Neue Philosophie:** Ranges fangen nur noch **Datenkorruption und Formatfehler** ab, nicht legitime Extremwerte. Einzige Ausnahme: `dividend_yield [0, 0.25]` bleibt eng als **Regression Guard** für die /100-Normalisierung (Migration 013).
+
+**Revisit-Trigger:** Falls yfinance das Format eines weiteren Feldes ändert (wie damals dividendYield) → neuen feld-spezifischen Guard einbauen.
 
 ---
 

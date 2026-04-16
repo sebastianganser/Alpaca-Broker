@@ -328,26 +328,39 @@ def _clean_numeric(value: Any) -> float | None:
 # Plausibility ranges for fundamental fields.
 # Format: field_name -> (min_value, max_value, description)
 # Values outside these ranges are suspicious and get nulled with a warning.
+#
+# IMPORTANT: These ranges are designed to catch DATA CORRUPTION and
+# yfinance FORMAT CHANGES (like the dividendYield scaling bug), NOT to
+# filter legitimate extreme values. Pre-revenue biotechs, aggressive
+# buyback companies, and high-growth SaaS firms regularly produce
+# extreme-but-real ratios.
+#
+# The dividend_yield range [0, 0.25] is intentionally tight – it's the
+# regression guard for the /100 normalization fix (Migration 013).
+# See DECISIONS.md [2026-04-15] and LEARNINGS.md for context.
 _PLAUSIBILITY_RULES: dict[str, tuple[float, float, str]] = {
-    # Percentage fields (stored as decimal, 0-1 range)
-    "profit_margin":     (-2.0,  1.0,  "Gewinnmarge -200% bis 100%"),
-    "operating_margin":  (-2.0,  1.0,  "Operative Marge -200% bis 100%"),
-    "return_on_equity":  (-5.0,  10.0, "ROE -500% bis 1000%"),
-    "revenue_growth_yoy": (-1.0, 10.0, "Umsatzwachstum -100% bis 1000%"),
-    "dividend_yield":    (0.0,   0.25, "Dividendenrendite 0% bis 25%"),
-    "eps_growth_yoy":    (-5.0,  20.0, "EPS-Wachstum -500% bis 2000%"),
-    # Ratio fields (no fixed percentage scale)
-    "pe_ratio":          (0.0,   2000.0, "KGV 0 bis 2000"),
-    "forward_pe":        (0.0,   500.0,  "Forward KGV 0 bis 500"),
-    "ps_ratio":          (0.0,   500.0,  "KUV 0 bis 500"),
-    "pb_ratio":          (0.0,   500.0,  "KBV 0 bis 500"),
-    "ev_ebitda":         (-50.0, 500.0,  "EV/EBITDA -50 bis 500"),
-    "debt_to_equity":    (0.0,   2000.0, "Debt/Equity 0 bis 2000"),
-    "current_ratio":     (0.0,   50.0,   "Current Ratio 0 bis 50"),
-    "beta":              (-3.0,  5.0,    "Beta -3 bis 5"),
+    # Percentage fields (stored as decimal)
+    # Negative margins are common for pre-revenue companies (ACHR -781%, AUR -238%)
+    "profit_margin":     (-50.0,  1.0,   "Gewinnmarge -5000% bis 100%"),
+    "operating_margin":  (-1000.0, 1.0,  "Operative Marge -100000% bis 100%"),
+    "return_on_equity":  (-100.0, 100.0, "ROE -10000% bis 10000%"),
+    "revenue_growth_yoy": (-1.0, 1000.0, "Umsatzwachstum -100% bis 100000%"),
+    "dividend_yield":    (0.0,   0.25,   "Dividendenrendite 0% bis 25% (Format-Guard)"),
+    "eps_growth_yoy":    (-50.0, 100.0,  "EPS-Wachstum -5000% bis 10000%"),
+    # Ratio fields – negative values are legitimate for many of these
+    # Negative P/B: companies with negative equity (buybacks: MCD, SBUX, BKNG)
+    # Negative Forward P/E: expected losses (MRNA, OKLO, RBLX)
+    "pe_ratio":          (0.0,    10000.0,  "KGV 0 bis 10000"),
+    "forward_pe":        (-10000.0, 10000.0, "Forward KGV -10000 bis 10000"),
+    "ps_ratio":          (0.0,    50000.0,  "KUV 0 bis 50000"),
+    "pb_ratio":          (-5000.0, 5000.0,  "KBV -5000 bis 5000"),
+    "ev_ebitda":         (-10000.0, 10000.0, "EV/EBITDA -10000 bis 10000"),
+    "debt_to_equity":    (0.0,    50000.0,  "Debt/Equity 0 bis 50000"),
+    "current_ratio":     (0.0,    500.0,    "Current Ratio 0 bis 500"),
+    "beta":              (-10.0,  10.0,     "Beta -10 bis 10"),
     # Absolute fields (revenue_ttm excluded: ADRs report in local currency)
-    "market_cap":        (0.0, 50e12,   "Market Cap 0 bis 50T$"),
-    "eps_ttm":           (-500.0, 5000.0, "EPS -500 bis 5000"),
+    "market_cap":        (0.0, 100e12,  "Market Cap 0 bis 100T$"),
+    "eps_ttm":           (-1000.0, 10000.0, "EPS -1000 bis 10000"),
 }
 
 
