@@ -73,6 +73,10 @@ class InsiderCluster(Base):
 
     __tablename__ = "insider_clusters"
     __table_args__ = (
+        UniqueConstraint(
+            "ticker", "cluster_start",
+            name="uq_insider_cluster_ticker_start",
+        ),
         Index("idx_insider_clusters_ticker", "ticker"),
         {"schema": "signals"},
     )

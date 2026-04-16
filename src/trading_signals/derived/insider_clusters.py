@@ -203,23 +203,33 @@ class InsiderClusterComputer:
         return clusters
 
     def _store_cluster(self, ticker: str, cluster: dict) -> bool:
-        """Store a single cluster, returns True if newly written."""
-        # Use upsert: if a cluster with the same ticker and start date
-        # already exists, update it (it might have grown)
+        """Store a single cluster via UPSERT on (ticker, cluster_start).
+
+        If a cluster with the same ticker and start date already exists,
+        update it (it might have grown with new transactions).
+        """
+        values = dict(
+            ticker=ticker,
+            cluster_start=cluster["cluster_start"],
+            cluster_end=cluster["cluster_end"],
+            n_insiders=cluster["n_insiders"],
+            n_buys=cluster["n_buys"],
+            n_sells=0,  # We only track purchase clusters
+            total_buy_value=cluster["total_buy_value"],
+            total_sell_value=0,
+            cluster_score=cluster["score"],
+        )
+        update_cols = {
+            k: v for k, v in values.items()
+            if k not in ("ticker", "cluster_start")
+        }
         stmt = (
             pg_insert(InsiderCluster)
-            .values(
-                ticker=ticker,
-                cluster_start=cluster["cluster_start"],
-                cluster_end=cluster["cluster_end"],
-                n_insiders=cluster["n_insiders"],
-                n_buys=cluster["n_buys"],
-                n_sells=0,  # We only track purchase clusters
-                total_buy_value=cluster["total_buy_value"],
-                total_sell_value=0,
-                cluster_score=cluster["score"],
+            .values(**values)
+            .on_conflict_do_update(
+                constraint="uq_insider_cluster_ticker_start",
+                set_=update_cols,
             )
-            .on_conflict_do_nothing()  # Simple dedup for now
         )
         result = self.session.execute(stmt)
         return result.rowcount > 0
