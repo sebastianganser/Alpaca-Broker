@@ -227,7 +227,7 @@ function RatingsTab({ navigate }: { navigate: (path: string) => void }) {
           <tr>
             <th>Datum</th>
             <th>Ticker</th>
-            <th>Firma</th>
+            <th>Analyst</th>
             <th>Aktion</th>
             <th>Alt → Neu</th>
             <th className="text-right">Kursziel</th>
