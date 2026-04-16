@@ -9,7 +9,7 @@ Key design decisions:
   - Batch pauses: longer delay between batches to avoid Yahoo rate-limits
   - Graceful errors: individual ticker failures are logged and skipped
 """
-
+import logging
 import math
 import time
 from typing import Any
@@ -19,6 +19,12 @@ import yfinance as yf
 from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Suppress yfinance's internal ERROR logging for expected cases like
+# "No earnings dates found, symbol may be delisted". These are not
+# real errors (just missing data for small-cap/special tickers) but
+# yfinance logs them at ERROR level, polluting our log capture.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 # yfinance info keys we extract for fundamentals
 FUNDAMENTALS_KEYS = {
@@ -79,6 +85,7 @@ class YFinanceClient:
         """
         results: list[dict] = []
         errors = 0
+        skipped = 0
         n_batches = math.ceil(len(tickers) / self.batch_size)
 
         for batch_idx in range(n_batches):
@@ -99,10 +106,15 @@ class YFinanceClient:
                             results.extend(result)
                         else:
                             results.append(result)
+                    else:
+                        skipped += 1
+                        logger.debug(
+                            f"[yfinance/{label}] {ticker_str}: no data returned"
+                        )
                 except Exception as e:
                     errors += 1
-                    logger.debug(
-                        f"[yfinance/{label}] Failed for {ticker_str}: "
+                    logger.warning(
+                        f"[yfinance/{label}] {ticker_str}: "
                         f"{type(e).__name__}: {e}"
                     )
 
@@ -116,7 +128,8 @@ class YFinanceClient:
 
         logger.info(
             f"[yfinance/{label}] Completed: {len(results)} records from "
-            f"{len(tickers)} tickers ({errors} errors)"
+            f"{len(tickers)} tickers "
+            f"({skipped} skipped, {errors} errors)"
         )
         return results
 
