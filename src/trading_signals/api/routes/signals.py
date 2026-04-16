@@ -7,7 +7,7 @@ politician trades, and analyst ratings.
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
 from trading_signals.api.deps import get_db
@@ -23,6 +23,7 @@ from trading_signals.db.models import (
     InsiderCluster,
     PoliticianTrade,
 )
+from trading_signals.db.models.fundamentals import FundamentalsSnapshot
 
 router = APIRouter(prefix="/signals")
 
@@ -139,7 +140,11 @@ def get_analyst_ratings(
     days: int = Query(7, ge=1, le=90, description="Lookback days"),
     limit: int = Query(100, ge=1, le=500),
 ):
-    """Get recent analyst rating changes (upgrades/downgrades)."""
+    """Get recent analyst rating changes (upgrades/downgrades).
+
+    Enriches each rating with the consensus median price target from
+    the latest fundamentals snapshot for that ticker.
+    """
     cutoff = date.today() - timedelta(days=days)
     ratings = (
         db.query(AnalystRating)
@@ -149,6 +154,31 @@ def get_analyst_ratings(
         .all()
     )
 
+    # Build a lookup of consensus price targets from the latest snapshot
+    # Subquery: max snapshot_date per ticker
+    latest_date_sq = (
+        db.query(
+            FundamentalsSnapshot.ticker,
+            func.max(FundamentalsSnapshot.snapshot_date).label("max_date"),
+        )
+        .group_by(FundamentalsSnapshot.ticker)
+        .subquery()
+    )
+    targets = (
+        db.query(
+            FundamentalsSnapshot.ticker,
+            FundamentalsSnapshot.target_price_median,
+        )
+        .join(
+            latest_date_sq,
+            (FundamentalsSnapshot.ticker == latest_date_sq.c.ticker)
+            & (FundamentalsSnapshot.snapshot_date == latest_date_sq.c.max_date),
+        )
+        .filter(FundamentalsSnapshot.target_price_median.isnot(None))
+        .all()
+    )
+    target_map = {t.ticker: float(t.target_price_median) for t in targets}
+
     return [
         AnalystRatingItem(
             ticker=r.ticker,
@@ -157,8 +187,8 @@ def get_analyst_ratings(
             rating_new=r.rating_new,
             rating_old=r.rating_old,
             action=r.action,
-            price_target_new=float(r.price_target_new) if r.price_target_new else None,
-            price_target_old=float(r.price_target_old) if r.price_target_old else None,
+            price_target_new=target_map.get(r.ticker),
+            price_target_old=None,
         )
         for r in ratings
     ]
