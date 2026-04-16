@@ -258,6 +258,12 @@ class SECClient:
 
         13F filings contain an 'infotable' XML with all holdings.
         This method fetches the filing index to find its filename.
+
+        Strategy (in order of priority):
+          1. Filename contains 'infotable' (e.g., infotable.xml)
+          2. Filename contains 'informationtable' (e.g., informationtable.xml)
+          3. Filename contains 'holding' (e.g., renaissance13Fq42025_holding.xml)
+          4. Largest XML file that is NOT primary_doc.xml (fallback)
         """
         padded_cik = self.pad_cik(cik)
         acc_no_dashes = accession_number.replace("-", "")
@@ -273,11 +279,49 @@ class SECClient:
             )
             return None
 
-        # Look for infotable file in the directory listing
+        # Collect all XML files from the directory listing
         items = index_data.get("directory", {}).get("item", [])
-        for item in items:
-            name = item.get("name", "").lower()
-            if "infotable" in name and name.endswith(".xml"):
+        xml_files = [
+            item for item in items
+            if item.get("name", "").lower().endswith(".xml")
+        ]
+
+        if not xml_files:
+            return None
+
+        # Priority 1: Filename contains 'infotable'
+        for item in xml_files:
+            if "infotable" in item["name"].lower():
                 return item["name"]
+
+        # Priority 2: Filename contains 'informationtable'
+        for item in xml_files:
+            if "informationtable" in item["name"].lower():
+                return item["name"]
+
+        # Priority 3: Filename contains 'holding'
+        for item in xml_files:
+            if "holding" in item["name"].lower():
+                return item["name"]
+
+        # Priority 4: Largest XML that is NOT primary_doc.xml
+        # In every 13F filing, the infotable is always much larger
+        # than the cover page (primary_doc.xml).
+        non_primary = [
+            item for item in xml_files
+            if item["name"].lower() != "primary_doc.xml"
+        ]
+
+        if non_primary:
+            # Sort by size descending, pick the largest
+            non_primary.sort(
+                key=lambda x: int(x.get("size", 0) or 0), reverse=True
+            )
+            chosen = non_primary[0]["name"]
+            logger.info(
+                f"[sec_client] Infotable fallback: using '{chosen}' "
+                f"(largest non-primary XML) for {accession_number}"
+            )
+            return chosen
 
         return None
