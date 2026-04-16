@@ -109,6 +109,53 @@ Wir tracken Erkenntnisse in mehreren Kategorien:
 
 ---
 
+### [2026-04-16] 🛠️ SEC 13F-Infotable: Kein einheitlicher Dateiname
+
+**Beobachtung:** 6 von 20 Top-Filern (Berkshire, Renaissance, Two Sigma, Millennium, Baupost, Duquesne) lieferten 0 Holdings. Ursache: Die `find_infotable_document()` suchte nur nach `"infotable"` im Dateinamen.
+
+**Daten:** Tatsächliche Dateinamen der Infotable-XMLs:
+- Citadel ✅: `infotable.xml`
+- Two Sigma ❌: `informationtable.xml` (kein Substring-Match!)
+- Renaissance ❌: `renaissance13Fq42025_holding.xml`
+- Berkshire ❌: `50240.xml` (nur eine Nummer!)
+- Millennium ❌: `MLP_Filing_20251231_v1.xml`
+
+**Hypothese bestätigt:** SEC erlaubt beliebige Dateinamen. Die einzige Invariante: Jedes 13F-Filing hat genau 2 XML-Dateien – `primary_doc.xml` (Cover, klein) und die Infotable (groß). Die Infotable ist immer deutlich größer.
+
+**Lösung:** 4-Stufen-Erkennung: `infotable` → `informationtable` → `holding` → größte Non-Primary-XML.
+
+**Status:** 🟢 Behoben (Session 17)
+
+---
+
+### [2026-04-16] 📊 Plausibilitäts-Ranges: Format-Guard ≠ Werte-Filter
+
+**Beobachtung:** Erster Produktionslauf des Fundamentals-Collectors zeigte 138 Warnings bei 670 Tickern. Analyse ergab: Alle Werte waren **real** – negative KBV bei MCD/SBUX/BKNG (Buyback-Programme), negatives Forward-KGV bei MRNA/OKLO (erwartete Verluste), extreme Margen bei Pre-Revenue-Firmen wie ACHR (-781%).
+
+**Daten:** 138/670 Ticker betroffen. Häufigste Felder: `pb_ratio` (35x), `forward_pe` (30x), `operating_margin` (15x), `ev_ebitda` (12x).
+
+**Hypothese:** Die ursprünglichen Ranges waren für Large-Cap-Normalwerte designed, aber das Universe enthält jetzt viele ARK-Titel (Biotechs, Growth-Stage). **Die Plausibilitätsprüfung löschte echte Signaldaten**, die für Sprint 8 (Feature Pipeline) wichtig sind.
+
+**Lesson Learned:** Plausibilitätsprüfungen sollten nur **Formatfehler und Datenkorruption** abfangen (wie den dividendYield-Bug), nicht legitime Extremwerte. Einzige Ausnahme: `dividend_yield [0, 0.25]` als Regression-Guard für die /100-Normalisierung.
+
+**Status:** 🟢 Behoben (Session 17)
+
+---
+
+### [2026-04-16] 🛠️ yfinance loggt intern auf ERROR-Level bei erwartbaren Fällen
+
+**Beobachtung:** Earnings Calendar Collector zeigte 5 ERROR-Meldungen im Log-Capture: `"No earnings dates found, symbol may be delisted"` für BRK.B, GENB, PAYP, SLMT, CNTN. Diese kamen nicht aus unserem Code, sondern wurden von yfinance selbst auf dem internen Logger geloggt.
+
+**Daten:** BRK.B (Berkshire) macht keine Earnings-Calls, die anderen sind Small-Caps mit fehlender Yahoo-Coverage. Alle 5 sind erwartbar und kein Fehler.
+
+**Hypothese bestätigt:** yfinance nutzt Python's `logging` module und loggt auf ERROR-Level, wo WARNING oder DEBUG angemessen wäre. Da unser `CollectorLogCapture` WARNING+ fängt, und yfinance ERROR > WARNING, erscheinen diese als Alarme.
+
+**Lösung:** `logging.getLogger("yfinance").setLevel(logging.CRITICAL)` – nur echte Crashes kommen durch. Unsere eigene Fehlerbehandlung loggt true-positive Fehler als WARNING.
+
+**Status:** 🟢 Behoben (Session 17)
+
+---
+
 ## Geplante Untersuchungen
 
 Sobald genug Daten vorliegen, wollen wir diese Fragen systematisch untersuchen:

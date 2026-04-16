@@ -962,6 +962,44 @@ Erster Produktionslauf zeigte 138 Warnings bei 670 Tickern. Analyse: Alle Werte 
 
 ---
 
+### [2026-04-16] Robuste 13F-Infotable-Erkennung: 4-Stufen-Strategie
+
+**Kontext:** 6 von 20 Top-Filern (Berkshire, Renaissance, Two Sigma, Millennium, Baupost, Duquesne) lieferten 0 Holdings. Die `find_infotable_document()` suchte nur nach `"infotable"` im Dateinamen – aber SEC erlaubt beliebige Dateinamen.
+
+**Optionen:**
+- A: Nur Dateiname "infotable" matchen (Status quo – fehlerhaft)
+- B: Mehrere Keyword-Matches + Fallback auf größte Non-Primary-XML (robust)
+- C: Filing-Index `type`-Feld auswerten (unzuverlässig – SEC liefert `text.gif` für alle Dateien)
+
+**Entscheidung:** Option B – 4-Stufen-Strategie: `infotable` → `informationtable` → `holding` → größte Non-Primary-XML.
+
+**Begründung:**
+- Invariante: Jedes 13F-Filing hat genau 2 XML-Dateien (primary_doc.xml + Infotable)
+- Die Infotable ist immer die größere der beiden (55KB–7.7MB vs. 2–6KB Cover)
+- Die ersten 3 Stufen sind schnell und treffsicher für bekannte Muster
+- Der Size-Fallback (Stufe 4) ist universell und deckt exotische Fälle ab
+
+**Ergebnis:** 20.763 → 34.133 Holdings (+64%). Berkshire Hathaway (Buffett) erstmals korrekt erfasst.
+
+**Revisit-Trigger:** Falls ein Filer mehr als 2 XML-Dateien hat oder die Infotable kleiner als die primary_doc ist.
+
+---
+
+### [2026-04-16] yfinance-Logger auf CRITICAL: Unterdrückung erwartbarer ERRORs
+
+**Kontext:** yfinance loggt intern `ERROR "No earnings dates found, symbol may be delisted"` bei erwartbaren Fällen (BRK.B, Small-Caps ohne Coverage). Unser `CollectorLogCapture` fängt WARNING+ → false-alarm ERRORs im Dashboard.
+
+**Entscheidung:** `logging.getLogger("yfinance").setLevel(logging.CRITICAL)` + eigene Fehlerbehandlung in `_iterate_with_rate_limit()` (Exception → WARNING, None → skipped-Counter → INFO-Zusammenfassung).
+
+**Begründung:**
+- yfinance's ERROR-Level ist zu aggressiv für unsere Log-Semantik
+- Unsere eigene Fehlerbehandlung ist differenzierter (skipped vs. errors)
+- Dashboard zeigt jetzt nur echte Probleme als Warnings
+
+**Revisit-Trigger:** Falls yfinance kritische Fehler loggt, die wir nicht sehen (unwahrscheinlich – unsere Exception-Handler fangen alles).
+
+---
+
 ### [2026-04-15] Zentraler NewTickerOnboarder statt verstreuter Universe-Expansion
 
 **Kontext:** Ticker aus Politiker-Trades (z.B. SIRI) wurden in der `politician_trades`-Tabelle gespeichert, aber nicht dem Universum hinzugefügt. Folge: Keine Preise, Indikatoren, Fundamentals. ARK hatte Universe-Expansion, aber keinen Auto-Backfill.

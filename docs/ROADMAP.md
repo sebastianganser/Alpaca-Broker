@@ -604,3 +604,19 @@ Ideen, die später interessant werden könnten, aber aktuell nicht priorisiert s
   - Deaktivierte Ticker per `?active=false` weiterhin einsehbar
 - **Cleanup-Script:** `scripts/cleanup_etfs.py` für initiales Blacklist-Seeding
 - Dokumentation aktualisiert: CLAUDE.md, ARCHITECTURE.md, DECISIONS.md, ROADMAP.md, README.md
+
+### Session 17 – 16. April 2026 – Collector-Bugfixes & Log-Qualität
+- **Form13F Collector: 6/20 Filer mit 0 Holdings gefixt**
+  - **Root Cause:** `find_infotable_document()` suchte nur nach `"infotable"` im Dateinamen → 6 Filer mit anderen Namenskonventionen (Berkshire: `50240.xml`, Renaissance: `*_holding.xml`, Two Sigma: `informationtable.xml`, Millennium: `MLP_Filing_*.xml`) lieferten 0 Holdings
+  - **Fix:** 4-Stufen-Erkennung: `infotable` → `informationtable` → `holding` → größte Non-Primary-XML
+  - **Ergebnis:** 20.763 → 34.133 Holdings (+64%), Berkshire Hathaway (Buffett) mit 110 Holdings jetzt erfasst
+- **Earnings Calendar: yfinance-Logger unterdrückt**
+  - yfinance loggte intern `ERROR "No earnings dates found"` für BRK.B, GENB, etc. → false-alarm ERRORs in Log-Capture
+  - Fix: `logging.getLogger("yfinance").setLevel(logging.CRITICAL)`
+  - Eigene Fehlerbehandlung: Exception → WARNING (statt DEBUG), None → `skipped`-Counter in Zusammenfassung
+- **Fundamentals: Plausibilitäts-Ranges massiv geweitet**
+  - 138 Warnings bei 670 Tickern – alle Werte waren **real** (negative KBV, negatives Forward-KGV, extreme Margen bei Pre-Revenue)
+  - Neue Philosophie: Ranges = Format-Guard (Datenkorruption), nicht Werte-Filter
+  - `dividend_yield [0, 0.25]` bleibt eng als Regression-Guard für /100-Fix (Migration 013)
+  - Ergebnis: 138 → 0 Warnings, alle Signaldaten für Feature Pipeline bewahrt
+- Dokumentation aktualisiert: ARCHITECTURE.md, DECISIONS.md, LEARNINGS.md, ROADMAP.md
