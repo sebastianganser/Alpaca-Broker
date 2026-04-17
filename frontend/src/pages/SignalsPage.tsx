@@ -250,10 +250,12 @@ function RatingsTab({ navigate }: { navigate: (path: string) => void }) {
                   {r.action ?? '—'}
                 </span>
               </td>
-              <td className="text-sm flex items-center gap-xs">
-                <span className="text-dim">{r.rating_old ?? '—'}</span>
-                <ArrowRight size={12} style={{ color: 'var(--on-surface-dim)' }} />
-                <span>{r.rating_new ?? '—'}</span>
+              <td className="text-sm">
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
+                  <span className="text-dim">{r.rating_old ?? '—'}</span>
+                  <ArrowRight size={12} style={{ color: 'var(--on-surface-dim)' }} />
+                  <span>{r.rating_new ?? '—'}</span>
+                </span>
               </td>
               <td className="text-right mono text-sm">
                 {r.price_target_new ? `$${r.price_target_new.toFixed(0)}` : '—'}
