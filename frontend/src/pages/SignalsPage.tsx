@@ -3,13 +3,15 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   fetchArkDeltas,
+  fetchArkSummary,
   fetchInsiderClusters,
   fetchPoliticianTrades,
   fetchAnalystRatings,
 } from '../api';
-import { TrendingUp, TrendingDown, ArrowRight } from 'lucide-react';
+import { TrendingUp, TrendingDown, ArrowRight, Layers } from 'lucide-react';
 
 type Tab = 'ark' | 'insider' | 'politicians' | 'ratings';
+type ArkView = 'summary' | 'daily';
 
 export default function SignalsPage() {
   const [activeTab, setActiveTab] = useState<Tab>('ark');
@@ -44,6 +46,158 @@ export default function SignalsPage() {
 }
 
 function ArkTab({ navigate }: { navigate: (path: string) => void }) {
+  const [view, setView] = useState<ArkView>('summary');
+  const [summaryDays, setSummaryDays] = useState(5);
+
+  return (
+    <div>
+      <div className="flex items-center gap-md mb-lg" style={{ flexWrap: 'wrap' }}>
+        <div className="flex gap-xs" style={{
+          background: 'var(--surface-high)',
+          borderRadius: 'var(--radius)',
+          padding: '2px',
+        }}>
+          <button
+            className={`btn btn-sm ${view === 'summary' ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => setView('summary')}
+            style={{ fontSize: '0.72rem' }}
+          >
+            <Layers size={12} />
+            Zusammenfassung
+          </button>
+          <button
+            className={`btn btn-sm ${view === 'daily' ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => setView('daily')}
+            style={{ fontSize: '0.72rem' }}
+          >
+            Täglich
+          </button>
+        </div>
+
+        {view === 'summary' && (
+          <div className="flex gap-xs items-center">
+            {[5, 10, 20].map((d) => (
+              <button
+                key={d}
+                className={`btn btn-sm ${summaryDays === d ? 'btn-secondary' : 'btn-ghost'}`}
+                onClick={() => setSummaryDays(d)}
+                style={{ fontSize: '0.7rem', minWidth: 42 }}
+              >
+                {d}T
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {view === 'summary'
+        ? <ArkSummaryView days={summaryDays} navigate={navigate} />
+        : <ArkDailyView navigate={navigate} />}
+    </div>
+  );
+}
+
+function ArkSummaryView({ days, navigate }: { days: number; navigate: (path: string) => void }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['signals-ark-summary', days],
+    queryFn: () => fetchArkSummary(days),
+  });
+
+  if (isLoading) return <Loading />;
+
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Ticker</th>
+            <th>Richtung</th>
+            <th>ETFs</th>
+            <th className="text-right">Shares Δ (gesamt)</th>
+            <th className="text-right">Weight Δ (bps)</th>
+            <th className="text-right">Tage</th>
+            <th className="text-xs text-dim">Zeitraum</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data?.map((s, i) => (
+            <tr key={i} onClick={() => navigate(`/ticker/${s.ticker}`)} style={{ cursor: 'pointer' }}>
+              <td className="mono" style={{ fontWeight: 600, color: 'var(--primary)' }}>
+                {s.ticker}
+              </td>
+              <td>
+                {s.direction === 'increased' ? (
+                  <span className="badge badge-success">
+                    <TrendingUp size={10} /> AUFGESTOCKT
+                  </span>
+                ) : s.direction === 'decreased' ? (
+                  <span className="badge badge-warning">
+                    <TrendingDown size={10} /> REDUZIERT
+                  </span>
+                ) : (
+                  <span className="badge badge-neutral">GEMISCHT</span>
+                )}
+              </td>
+              <td>
+                <div className="flex gap-xs items-center" style={{ flexWrap: 'wrap' }}>
+                  {s.etfs.map((etf) => (
+                    <span
+                      key={etf}
+                      className="mono"
+                      style={{
+                        fontSize: '0.65rem',
+                        padding: '1px 5px',
+                        borderRadius: '4px',
+                        background: 'rgba(255,255,255,0.06)',
+                        color: 'var(--text-dim)',
+                      }}
+                    >
+                      {etf}
+                    </span>
+                  ))}
+                  {s.n_etfs >= 2 && (
+                    <span
+                      style={{
+                        fontSize: '0.6rem',
+                        padding: '1px 6px',
+                        borderRadius: '10px',
+                        background: 'rgba(56,189,248,0.15)',
+                        color: 'var(--primary)',
+                        fontWeight: 600,
+                      }}
+                    >
+                      Cross-ETF
+                    </span>
+                  )}
+                </div>
+              </td>
+              <td className="text-right mono text-sm">
+                {s.total_shares_delta?.toLocaleString(undefined, { maximumFractionDigits: 0 }) ?? '—'}
+              </td>
+              <td className="text-right mono text-sm" style={{
+                color: s.total_weight_delta_bps > 0 ? 'var(--success)' : s.total_weight_delta_bps < 0 ? 'var(--warning)' : 'var(--text-dim)',
+                fontWeight: 600,
+              }}>
+                {s.total_weight_delta_bps > 0 ? '+' : ''}{s.total_weight_delta_bps.toFixed(1)}
+              </td>
+              <td className="text-right mono text-sm text-dim">
+                {s.n_days}
+              </td>
+              <td className="text-xs text-dim">
+                {s.first_date === s.last_date ? s.first_date : `${s.first_date} → ${s.last_date}`}
+              </td>
+            </tr>
+          ))}
+          {data?.length === 0 && (
+            <tr><td colSpan={7} className="text-dim" style={{ textAlign: 'center' }}>Keine Daten im Zeitraum</td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ArkDailyView({ navigate }: { navigate: (path: string) => void }) {
   const { data, isLoading } = useQuery({
     queryKey: ['signals-ark'],
     queryFn: () => fetchArkDeltas(14),

@@ -154,6 +154,21 @@ export interface AnalystRating {
 export const fetchArkDeltas = (days = 7) =>
   request<ARKDelta[]>(`/signals/ark?days=${days}`);
 
+export interface ARKSummary {
+  ticker: string;
+  total_shares_delta: number;
+  total_weight_delta_bps: number;
+  n_etfs: number;
+  n_days: number;
+  etfs: string[];
+  direction: string;  // 'increased', 'decreased', 'mixed'
+  first_date: string;
+  last_date: string;
+}
+
+export const fetchArkSummary = (days = 5) =>
+  request<ARKSummary[]>(`/signals/ark/summary?days=${days}`);
+
 export const fetchInsiderClusters = (days = 30) =>
   request<InsiderCluster[]>(`/signals/insider?days=${days}`);
 

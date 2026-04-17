@@ -14,6 +14,7 @@ from trading_signals.api.deps import get_db
 from trading_signals.api.schemas import (
     AnalystRatingItem,
     ARKDeltaItem,
+    ARKSummaryItem,
     InsiderClusterItem,
     PoliticianTradeItem,
 )
@@ -65,6 +66,65 @@ def get_ark_deltas(
         )
         for d in deltas
     ]
+
+
+@router.get("/ark/summary", response_model=list[ARKSummaryItem])
+def get_ark_summary(
+    db: Session = Depends(get_db),
+    days: int = Query(5, ge=1, le=90, description="Lookback window in days"),
+):
+    """Get aggregated ARK moves per ticker across all ETFs.
+
+    Groups ARK delta entries by ticker over the given time window,
+    summing shares and weight changes across all ETFs and days.
+    Sorted by absolute weight impact (strongest moves first).
+    """
+    cutoff = date.today() - timedelta(days=days)
+    deltas = (
+        db.query(ARKDelta)
+        .filter(
+            ARKDelta.delta_date >= cutoff,
+            ARKDelta.delta_type != "unchanged",
+        )
+        .all()
+    )
+
+    # Group by ticker
+    ticker_data: dict[str, list] = {}
+    for d in deltas:
+        ticker_data.setdefault(d.ticker, []).append(d)
+
+    results = []
+    for ticker, entries in ticker_data.items():
+        total_shares = sum(float(e.shares_delta or 0) for e in entries)
+        total_weight = sum(float(e.weight_delta or 0) for e in entries)
+        etfs = sorted(set(e.etf_ticker for e in entries))
+        dates = sorted(set(e.delta_date for e in entries))
+
+        if total_shares > 0:
+            direction = "increased"
+        elif total_shares < 0:
+            direction = "decreased"
+        else:
+            direction = "mixed"
+
+        results.append(
+            ARKSummaryItem(
+                ticker=ticker,
+                total_shares_delta=total_shares,
+                total_weight_delta_bps=total_weight * 100,  # Convert to bps
+                n_etfs=len(etfs),
+                n_days=len(dates),
+                etfs=etfs,
+                direction=direction,
+                first_date=dates[0],
+                last_date=dates[-1],
+            )
+        )
+
+    # Sort by absolute weight impact (strongest moves first)
+    results.sort(key=lambda x: abs(x.total_weight_delta_bps), reverse=True)
+    return results
 
 
 @router.get("/insider", response_model=list[InsiderClusterItem])

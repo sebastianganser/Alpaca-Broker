@@ -102,6 +102,19 @@ class ARKDeltaItem(BaseModel):
     weight_curr: float | None = None
 
 
+class ARKSummaryItem(BaseModel):
+    """Aggregated ARK delta per ticker across all ETFs over a time window."""
+    ticker: str
+    total_shares_delta: float
+    total_weight_delta_bps: float  # Sum of weight deltas in basis points
+    n_etfs: int                    # Number of ETFs with activity
+    n_days: int                    # Number of days with activity
+    etfs: list[str]                # Which ETFs were involved
+    direction: str                 # 'increased', 'decreased', 'mixed'
+    first_date: date
+    last_date: date
+
+
 class InsiderClusterItem(BaseModel):
     """Active insider cluster."""
     ticker: str
