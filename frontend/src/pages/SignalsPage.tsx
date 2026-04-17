@@ -140,7 +140,7 @@ function InsiderTab({ navigate }: { navigate: (path: string) => void }) {
             </div>
             <div>
               <div className="label-dim">Verkäufe</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--error)' }}>{c.n_sells}</div>
+              <div className="stat-value" style={{ fontSize: '1.25rem', color: 'var(--error)' }}>{c.n_sells}</div>
             </div>
           </div>
           <div className="text-xs text-dim">
