@@ -109,6 +109,29 @@ Wir tracken Erkenntnisse in mehreren Kategorien:
 
 ---
 
+### [2026-04-19] 📊 ARK Trade-Emails ≠ Holdings-Deltas: Netto-Exposition vs. Portfolio-Manager-Trades
+
+**Beobachtung:** ARK sendet am 17.04. eine Email: "ARKW: Buy NFLX 26.161 Shares". Unser Dashboard zeigt für denselben Tag: ARKW NFLX **REDUZIERT** (Shares Δ = -3.464). Widerspruch?
+
+**Daten:** Die ARK-Email enthält einen expliziten Disclaimer: *"This email only reflects portfolio adjustments made by the ARK investment team. Files of trades are not comprehensive lists of a day's trades for the ARK ETFs and exclude ETF Creation/Redemption Unit activity."*
+
+Analyse der NFLX-Position:
+- 16.04.: ~214.823 Shares (Snapshot aus arkfunds.io)
+- 17.04.: 211.359 Shares (Snapshot aus arkfunds.io)
+- Netto-Delta: **-3.464 Shares** ← was unser System zeigt
+- ARK-Kauf: **+26.161 Shares** ← was die Email zeigt
+- Implizite Redemptions: **-29.625 Shares** (Anleger verkaufen ARKW-Anteile → proportionale Reduktion aller Holdings)
+
+**Hypothese:** Unsere Snapshot-basierte Delta-Berechnung zeigt die **tatsächliche Netto-Exposition** – was für Signale relevanter ist als die Trade-Intention. Wenn ARK trotz aktiver Käufe netto weniger hält, dominieren ETF-Abflüsse das Signal. Die ARK-Email zeigt nur die "Conviction" des Portfolio-Managers, nicht die tatsächliche Positionsänderung.
+
+**Implikation für Signale:** Ein positiver Shares-Delta (Netto-Aufstockung) ist ein stärkeres Bullish-Signal als ein ARK-Kauf allein, weil es bedeutet, dass die Käufe die Redemption-Abflüsse überwiegen. Entsprechend: Ein negativer Delta trotz ARK-Kauf (wie bei NFLX) ist neutral bis leicht bearish für das Signal.
+
+**Nächste Schritte:** Die arkfunds.io API unterstützt **keinen historischen** `date`-Parameter (gibt immer den neuesten Snapshot zurück). Unsere täglichen Collector-Runs sind daher essentiell – jeder Tag muss gesammelt werden, da Lücken nicht nachträglich gefüllt werden können.
+
+**Status:** 🟢 Kein Bug – Design ist korrekt. Dokumentiert für Signalinterpretation.
+
+---
+
 ### [2026-04-16] 🛠️ SEC 13F-Infotable: Kein einheitlicher Dateiname
 
 **Beobachtung:** 6 von 20 Top-Filern (Berkshire, Renaissance, Two Sigma, Millennium, Baupost, Duquesne) lieferten 0 Holdings. Ursache: Die `find_infotable_document()` suchte nur nach `"infotable"` im Dateinamen.
