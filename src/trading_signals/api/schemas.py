@@ -136,6 +136,7 @@ class PoliticianTradeItem(BaseModel):
     disclosure_date: date | None = None
     transaction_type: str | None = None
     amount_range: str | None = None
+    delay_days: int | None = None  # Days between trade and disclosure
 
 
 class AnalystRatingItem(BaseModel):

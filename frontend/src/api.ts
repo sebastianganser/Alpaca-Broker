@@ -138,6 +138,7 @@ export interface PoliticianTrade {
   disclosure_date: string | null;
   transaction_type: string | null;
   amount_range: string | null;
+  delay_days: number | null;
 }
 
 export interface AnalystRating {

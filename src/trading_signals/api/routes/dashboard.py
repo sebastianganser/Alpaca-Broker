@@ -48,7 +48,7 @@ _TABLE_MODELS = [
     ("insider_trades", InsiderTrade, "transaction_date", "transaction_date"),
     ("insider_clusters", InsiderCluster, "cluster_start", "cluster_start"),
     ("form13f_holdings", Form13FHolding, "report_period", "report_period"),
-    ("politician_trades", PoliticianTrade, "transaction_date", "transaction_date"),
+    ("politician_trades", PoliticianTrade, "disclosure_date", "disclosure_date"),
     ("fundamentals_snapshot", FundamentalsSnapshot, "snapshot_date", "snapshot_date"),
     ("analyst_ratings", AnalystRating, "rating_date", "rating_date"),
     ("earnings_calendar", EarningsCalendar, "earnings_date", "earnings_date"),

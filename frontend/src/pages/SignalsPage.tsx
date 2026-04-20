@@ -328,6 +328,8 @@ function PoliticianTab({ navigate }: { navigate: (path: string) => void }) {
         <thead>
           <tr>
             <th>Offenlegung</th>
+            <th>Trade-Datum</th>
+            <th className="text-right">Verzög.</th>
             <th>Politiker</th>
             <th>Partei</th>
             <th>Ticker</th>
@@ -339,6 +341,23 @@ function PoliticianTab({ navigate }: { navigate: (path: string) => void }) {
           {data?.map((t, i) => (
             <tr key={i} onClick={() => t.ticker && navigate(`/ticker/${t.ticker}`)}>
               <td className="text-xs text-dim">{t.disclosure_date ?? '—'}</td>
+              <td className="text-xs text-dim">{t.transaction_date ?? '—'}</td>
+              <td className="text-right">
+                {t.delay_days != null ? (
+                  <span
+                    className="mono"
+                    style={{
+                      fontSize: '0.7rem',
+                      fontWeight: 600,
+                      color: t.delay_days <= 7 ? 'var(--success)'
+                        : t.delay_days <= 30 ? 'var(--warning)'
+                        : 'var(--error)',
+                    }}
+                  >
+                    {t.delay_days}d
+                  </span>
+                ) : '—'}
+              </td>
               <td style={{ fontWeight: 500 }}>{t.politician_name}</td>
               <td>
                 <span className={`badge ${t.party === 'Democrat' ? 'badge-neutral' : 'badge-neutral'}`}
@@ -358,7 +377,7 @@ function PoliticianTab({ navigate }: { navigate: (path: string) => void }) {
             </tr>
           ))}
           {data?.length === 0 && (
-            <tr><td colSpan={6} className="text-dim" style={{ textAlign: 'center' }}>Keine Daten</td></tr>
+            <tr><td colSpan={8} className="text-dim" style={{ textAlign: 'center' }}>Keine Daten</td></tr>
           )}
         </tbody>
       </table>
