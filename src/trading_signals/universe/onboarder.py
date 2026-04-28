@@ -386,22 +386,24 @@ class NewTickerOnboarder:
                     quote_type = record.get("quote_type", "")
 
                     # Learned ETF filter: add to blacklist + deactivate
+                    # (benchmark tickers like SPY are protected by add_to_blacklist)
                     if quote_type and quote_type.upper() != "EQUITY":
-                        add_to_blacklist(
+                        was_blacklisted = add_to_blacklist(
                             session, ticker,
                             quote_type=quote_type,
                             source="sector_enrichment",
                         )
-                        session.execute(
-                            update(Universe)
-                            .where(Universe.ticker == ticker)
-                            .values(is_active=False)
-                        )
-                        deactivated_etfs.append(ticker)
-                        logger.warning(
-                            f"[onboarder] Blacklisted + deactivated {ticker}: "
-                            f"quoteType={quote_type}"
-                        )
+                        if was_blacklisted:
+                            session.execute(
+                                update(Universe)
+                                .where(Universe.ticker == ticker)
+                                .values(is_active=False)
+                            )
+                            deactivated_etfs.append(ticker)
+                            logger.warning(
+                                f"[onboarder] Blacklisted + deactivated {ticker}: "
+                                f"quoteType={quote_type}"
+                            )
                         continue
 
                     session.execute(

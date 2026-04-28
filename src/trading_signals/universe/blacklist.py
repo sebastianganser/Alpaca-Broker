@@ -24,9 +24,16 @@ from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Benchmark tickers that must NEVER be blacklisted.
+# These are needed as reference instruments (e.g. relative strength vs SPY)
+# even though they are ETFs and not equities.
+BENCHMARK_TICKERS = {"SPY", "QQQ"}
+
 
 def is_blacklisted(session: Session, ticker: str) -> bool:
     """Check if a ticker is on the blacklist."""
+    if ticker in BENCHMARK_TICKERS:
+        return False
     stmt = select(TickerBlacklist.ticker).where(TickerBlacklist.ticker == ticker)
     return session.execute(stmt).first() is not None
 
@@ -34,7 +41,7 @@ def is_blacklisted(session: Session, ticker: str) -> bool:
 def get_blacklisted_tickers(session: Session) -> set[str]:
     """Return all blacklisted ticker symbols as a set."""
     stmt = select(TickerBlacklist.ticker)
-    return {row[0] for row in session.execute(stmt).all()}
+    return {row[0] for row in session.execute(stmt).all()} - BENCHMARK_TICKERS
 
 
 def add_to_blacklist(
@@ -49,7 +56,14 @@ def add_to_blacklist(
 
     Uses INSERT ... ON CONFLICT DO NOTHING so it's safe to call
     multiple times for the same ticker.
+    Benchmark tickers (SPY, QQQ) are protected and cannot be blacklisted.
     """
+    if ticker in BENCHMARK_TICKERS:
+        logger.debug(
+            f"[blacklist] Skipping {ticker}: protected benchmark ticker"
+        )
+        return False
+
     if reason is None:
         reason = f"quoteType={quote_type}" if quote_type else "non-equity"
 
