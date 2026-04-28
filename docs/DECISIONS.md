@@ -1120,6 +1120,52 @@ Die API-Route (`signals.py`, `ticker.py`) und das Pydantic-Schema (`ARKDeltaItem
 
 ---
 
+### [2026-04-28] Benchmark-Ticker-Schutz (SPY, QQQ)
+
+**Kontext:** Der automatische ETF-Filter (`quoteType != EQUITY`) hat SPY am 15.04.2026 deaktiviert und auf die Blacklist gesetzt. Da SPY als Benchmark für die `relative_strength_spy`-Berechnung im TA-Computer benötigt wird, führte das zu täglichen Warnungen und NULL-Werten für alle 672 Ticker.
+
+**Optionen:**
+- A: SPY manuell nach jedem Index-Sync wieder aktivieren – fehleranfällig, nicht nachhaltig
+- B: `BENCHMARK_TICKERS`-Set als Schutzliste in der Blacklist-Logik – automatischer Schutz
+- C: SPY aus dem Universe entfernen und Preise separat laden – verkompliziert den Code
+
+**Entscheidung:** Option B – `BENCHMARK_TICKERS = {"SPY", "QQQ"}` in `universe/blacklist.py`.
+
+**Begründung:**
+- Zentraler, deklarativer Schutz: `add_to_blacklist()` lehnt geschützte Ticker ab, `is_blacklisted()` gibt immer False
+- Onboarder deaktiviert nur wenn `add_to_blacklist()` True liefert → kein separater Check nötig
+- Erweiterbar: Neue Benchmarks (z.B. IWM, DIA) können einfach ins Set aufgenommen werden
+- SPY/QQQ-Preise werden normal vom Price Collector geladen, TA-Computer findet sie automatisch
+
+**Betroffene Dateien:** `universe/blacklist.py` (BENCHMARK_TICKERS, 3 Funktionen), `universe/onboarder.py` (_enrich_sector)
+
+**Revisit-Trigger:** Falls weitere Asset-Typen (Commodities, Crypto-ETPs) als Benchmarks benötigt werden.
+
+---
+
+### [2026-04-28] Politiker-Trades: disclosure_date als primäres Signal-Datum
+
+**Kontext:** Politiker-Trades haben zwei Daten: `transaction_date` (wann der Handel stattfand) und `disclosure_date` (wann er öffentlich wurde). Das Dashboard sortierte nach `transaction_date`, was zu veralteten Trades auf der Startseite führte.
+
+**Optionen:**
+- A: Weiter nach `transaction_date` sortieren – bildet den Handlungszeitpunkt ab, aber nicht die Signalverfügbarkeit
+- B: Nach `disclosure_date` sortieren – zeigt an, wann die Information erstmals „actionable" war
+- C: Beide Spalten anzeigen, Sortierung konfigurierbar
+
+**Entscheidung:** Option B+C – `disclosure_date` als primäres Sortierkriterium + beide Daten im UI + `delay_days`-Berechnung.
+
+**Begründung:**
+- Für den Anleger ist nur das Offenlegungsdatum relevant – vorher war der Trade nicht bekannt
+- `delay_days` (Offenlegung − Transaktion) dient als Signalqualitäts-Filter (kurze Verzögerung = höhere Relevanz)
+- Farbcodierung: ≤7 Tage grün, ≤30 gelb, >30 rot
+- Dashboard BIS-Spalte zeigt jetzt aktuelle Daten statt veralteter Trades
+
+**Betroffene Dateien:** `api/routes/signals.py`, `api/routes/dashboard.py`, `api/schemas.py`, `frontend/src/pages/SignalsPage.tsx`
+
+**Revisit-Trigger:** Wenn wir „Politician Following"-Strategien implementieren und die Latenz minimieren wollen.
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.

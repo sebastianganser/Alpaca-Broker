@@ -265,3 +265,7 @@ Die Senate eFD Seite rendert keine HTML-Tabellen mehr Server-seitig. Stattdessen
 ### [2026-04-15] 🛠️ SEC archiviert unter Subject-CIK, nicht Filer-CIK
 
 Die Accession Number eines SEC Filing enthält den CIK des **Filers** (oft eine Anwaltskanzlei oder Filing-Agent), aber die Dateien liegen im Archiv unter dem CIK des **Subject Company** (also des Unternehmens). Lesson: Bei SEC-Downloads immer den Company-CIK aus `company_tickers.json` verwenden, nicht den CIK aus der Accession Number.
+
+### [2026-04-28] 🛠️ Automatische ETF-Filter können Benchmarks deaktivieren
+
+Der lernende ETF-Filter (`quoteType != EQUITY → blacklist + deactivate`) hat SPY korrekt als ETF identifiziert und deaktiviert. Allerdings wird SPY als Benchmark für `relative_strength_spy` im TA-Computer benötigt. Folge: 13 Tage lang tägliche Warnungen und NULL-Werte für alle 672 Ticker. **Fix:** `BENCHMARK_TICKERS`-Set als Schutzliste in der Blacklist-Logik. **Lesson:** Automatische Filter brauchen immer eine Allowlist für Sonderfälle. Bei jedem neuen Filter explizit überlegen: „Gibt es legitime Ausnahmen?"
