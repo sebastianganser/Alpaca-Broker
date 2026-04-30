@@ -134,14 +134,15 @@ class TechnicalIndicatorsComputer:
         return total_written
 
     def compute_catchup(self) -> int:
-        """Compute indicators for all missing dates since last computation.
+        """Compute indicators for all missing or incomplete dates.
 
-        Compares MAX(trade_date) in technical_indicators with
-        MAX(trade_date) in prices_daily and computes indicators
-        for every trading day in between.
-
-        This prevents gaps when the daily job misses a run
-        (container restart, scheduler issue, etc.).
+        Two-phase detection:
+        1. NEW dates: dates in prices_daily that are entirely absent from
+           technical_indicators (standard catchup via MAX comparison).
+        2. INCOMPLETE dates: dates where the number of TA records is
+           significantly lower than the number of price records,
+           indicating a partial write (e.g., job crashed mid-run,
+           or ran before all prices were available).
 
         Returns:
             Total number of indicator records written.
@@ -169,37 +170,76 @@ class TechnicalIndicatorsComputer:
             )
             return self.compute_all(target_date=last_price)
 
-        if last_ta >= last_price:
+        dates_to_compute: list[date] = []
+
+        # Phase 1: Find completely new dates (after last_ta)
+        if last_ta < last_price:
+            new_dates_stmt = (
+                select(PriceDaily.trade_date)
+                .where(PriceDaily.trade_date > last_ta)
+                .where(PriceDaily.trade_date <= last_price)
+                .distinct()
+                .order_by(PriceDaily.trade_date)
+            )
+            new_dates = [
+                row[0] for row in self.session.execute(new_dates_stmt).all()
+            ]
+            dates_to_compute.extend(new_dates)
+
+        # Phase 2: Find incomplete dates (last 5 trading days)
+        # Compare TA record count vs price record count per date
+        incomplete_stmt = select(
+            PriceDaily.trade_date,
+            func.count(PriceDaily.ticker.distinct()).label("price_count"),
+        ).where(
+            PriceDaily.trade_date > last_price - 7  # Check last ~5 trading days
+        ).group_by(
+            PriceDaily.trade_date
+        ).order_by(
+            PriceDaily.trade_date
+        )
+
+        ta_count_stmt = select(
+            TechnicalIndicator.trade_date,
+            func.count(TechnicalIndicator.ticker.distinct()).label("ta_count"),
+        ).where(
+            TechnicalIndicator.trade_date > last_price - 7
+        ).group_by(
+            TechnicalIndicator.trade_date
+        )
+        ta_counts = {
+            row[0]: row[1]
+            for row in self.session.execute(ta_count_stmt).all()
+        }
+
+        for row in self.session.execute(incomplete_stmt).all():
+            trade_date, price_count = row[0], row[1]
+            ta_count = ta_counts.get(trade_date, 0)
+            # If TA coverage is below 90% of price coverage → recompute
+            if ta_count < price_count * 0.9:
+                if trade_date not in dates_to_compute:
+                    dates_to_compute.append(trade_date)
+                    logger.info(
+                        f"[technical_indicators] Incomplete date {trade_date}: "
+                        f"{ta_count} TA vs {price_count} prices"
+                    )
+
+        dates_to_compute.sort()
+
+        if not dates_to_compute:
             logger.info(
                 f"[technical_indicators] Already up-to-date "
                 f"(TA: {last_ta}, Prices: {last_price})"
             )
             return 0
 
-        # Find all trading dates in prices_daily that are missing from
-        # technical_indicators
-        missing_dates_stmt = (
-            select(PriceDaily.trade_date)
-            .where(PriceDaily.trade_date > last_ta)
-            .where(PriceDaily.trade_date <= last_price)
-            .distinct()
-            .order_by(PriceDaily.trade_date)
-        )
-        missing_dates = [
-            row[0] for row in self.session.execute(missing_dates_stmt).all()
-        ]
-
-        if not missing_dates:
-            logger.info("[technical_indicators] No missing dates to compute")
-            return 0
-
         logger.info(
-            f"[technical_indicators] Catch-up: computing {len(missing_dates)} "
-            f"missing dates ({missing_dates[0]} → {missing_dates[-1]})"
+            f"[technical_indicators] Catch-up: computing {len(dates_to_compute)} "
+            f"dates ({dates_to_compute[0]} → {dates_to_compute[-1]})"
         )
 
         total_written = 0
-        for target_date in missing_dates:
+        for target_date in dates_to_compute:
             written = self.compute_all(target_date=target_date)
             total_written += written
             logger.info(
