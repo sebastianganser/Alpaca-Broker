@@ -438,7 +438,7 @@ export default function LogsPage() {
                             gap: 'var(--space-xs)',
                             padding: '3px var(--space-xs)',
                             fontSize: '0.72rem',
-                            fontFamily: 'var(--font-mono)',
+                            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                             color: style.color,
                             borderBottom: '1px solid rgba(255,255,255,0.03)',
                           }}
