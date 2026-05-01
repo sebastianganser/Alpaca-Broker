@@ -1,69 +1,45 @@
-# Alpaca-Broker
+# Alpaca-Broker – Signal Warehouse
 
-> Privates Research- und Lernprojekt: Aufbau eines Signal Warehouse für quantitative Trading-Signale mit anschließender Strategie-Entwicklung auf Alpaca Paper Trading.
+> A private, experimental **Signal Warehouse** that systematically collects "smart money" signals and market data to develop data-driven trading strategies.
 
-## ⚠️ Disclaimer
+## Mission
 
-Dies ist **keine Finanzberatung** und **kein produktives Trading-System**. Alle Strategien laufen ausschließlich im Paper-Trading-Modus ohne echtes Geld. Das Projekt dient dem Lernen, Forschen und Experimentieren mit quantitativen Methoden und AI-gestützter Datenanalyse.
+Build a data-driven research platform that aggregates signals from multiple sources (ARK Invest, SEC Form 4/13F, US politician trades, technical indicators, analyst ratings) into a unified feature store, enabling informed trading strategy development on Alpaca Paper Trading.
 
-## Projektziel
+## Key Features
 
-Statt blind populäre Trading-Strategien zu kopieren (Copy Trading, Wheel-Strategie, Trailing Stops), bauen wir zuerst ein robustes **Datenfundament** auf. Über mehrere Monate sammeln wir möglichst viele Signale aus öffentlichen Quellen und entwickeln dann **datenbasiert** eigene Strategien.
+- **📊 6 Data Sources:** Alpaca (prices), ARK (smart money), SEC EDGAR (insiders + institutions), Senate eFD (politicians), yfinance (fundamentals + ratings + earnings)
+- **🖥️ Dashboard:** FastAPI + React SPA for real-time monitoring, data exploration, and system management
+- **📈 671+ Active Tickers:** S&P 500 + Nasdaq 100 + ARK expansions
+- **🗄️ PostgreSQL 18:** Append-only raw data layer + recomputable derived features
+- **🤖 Automated:** APScheduler with 10 scheduled jobs (daily, weekly, monthly)
+- **🔒 Paper Only:** Hardcoded safety check – **never** live trading
 
-## Architektur (Kurzfassung)
+## Technology Stack
 
-```
-Datenquellen → Collectors → PostgreSQL (Raw) → Derived Layer → Feature Store
-                                                                    ↓
-                                                             Analyse/Scoring
-                                                                    ↓
-                                                          Paper Trading (später)
-```
+| Component | Technology |
+|---|---|
+| Language | Python 3.12+ |
+| Backend | FastAPI |
+| Frontend | Vite + React (SPA) |
+| Database | PostgreSQL 18 (SQLAlchemy 2.0 + Alembic) |
+| Scheduler | APScheduler |
+| Package Management | uv (Python), npm (Frontend) |
+| Deployment | Docker on Unraid |
 
-## Datenquellen
+## Current Status
 
-- **Marktdaten:** Alpaca Market Data API (OHLCV, IEX feed) – *yfinance als Fallback* ✅
-- **Smart Money:** ARK Invest ETF Holdings via arkfunds.io API (täglich) ✅
-- **Universe:** S&P 500 + Nasdaq 100 + ARK-Ergänzungen + Benchmarks (~673 aktive Ticker, ETFs via Blacklist gefiltert, Benchmarks geschützt) ✅
-- **Insider-Trades:** SEC EDGAR Form 4 ✅
-- **Institutionelle:** SEC EDGAR Form 13F ✅
-- **Politiker:** Senate eFD (efdsearch.senate.gov, kostenlos) ✅
-- **Fundamentals:** yfinance (P/E, Margins, Revenue Growth, EPS, Beta, etc.) ✅
-- **Analyst-Ratings:** yfinance (Upgrades/Downgrades) ✅
-- **Earnings-Kalender:** yfinance (EPS-Estimates, Surprises) ✅
-- **Technische Indikatoren:** pandas-ta (SMA, EMA, RSI, MACD, Bollinger, ATR, Volume SMA, RS vs. SPY) ✅
-- **Sektor/Branche:** yfinance `ticker.info` (Enrichment für Universe-Tabelle) ✅
+- **Sprint 7 completed** – Dashboard & Operations UI live
+- **System running** on Unraid (192.168.1.93:8090)
+- **Next:** Sprint 8 (Feature Pipeline)
 
-## Technologie-Stack
+## Documentation
 
-- Python 3.12+
-- uv (Paketmanager)
-- PostgreSQL 18
-- SQLAlchemy 2.0 + Alembic
-- Pydantic Settings
-- APScheduler
-- Alpaca API (Market Data + Paper Trading)
-- FastAPI (Backend-API + SPA Host)
-- Vite + React (Dashboard UI)
-- curl_cffi (TLS-Fingerprinting für Senate eFD)
-- Docker Compose (Unraid)
+All project documentation lives in the [`docs/`](docs/) folder. Start with:
 
-## Dokumentation
+- **[docs/INDEX.md](docs/INDEX.md)** – Documentation navigator (find the right doc for your question)
+- **[CLAUDE.md](CLAUDE.md)** – AI session entry point
 
-Die vollständige Dokumentation liegt im Projekt selbst:
+---
 
-- [`CLAUDE.md`](CLAUDE.md) – Projekt-Einstiegspunkt
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) – Technische Architektur
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) – Sprint-Planung
-- [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) – Datenquellen-Katalog
-- [`docs/DECISIONS.md`](docs/DECISIONS.md) – Decision Log
-- [`docs/LEARNINGS.md`](docs/LEARNINGS.md) – Erkenntnisse aus den Daten
-
-## Status
-
-🟢 **Produktionsbetrieb** – Deployed auf Unraid (192.168.1.93:8090). Dashboard & Operations UI (Sprint 7) live. 10 Scheduler-Jobs aktiv (5 täglich, 4 wöchentlich, 1 monatlich inkl. Sektor-Enrichment + ETF-Blacklist). ~673 aktive Ticker (ETFs via Blacklist deaktiviert, Benchmarks SPY/QQQ geschützt), ~863k Preisdatensätze, ~862k TA-Indikatoren. 303 Tests.
-Nächster Schritt: Sprint 8 (Feature Pipeline).
-
-## Lizenz
-
-Privates Projekt, keine öffentliche Lizenz.
+*This is a private research project. Not financial advice. No warranty.*

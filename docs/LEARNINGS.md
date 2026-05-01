@@ -1,311 +1,170 @@
-# LEARNINGS.md – Erkenntnisse aus den Daten
+# LEARNINGS.md – Observed Findings & Data Quality
 
-> Lebendes Dokument. Wächst mit, während wir Daten sammeln und auswerten.
-> Hier landen alle Beobachtungen, Aha-Momente, gescheiterte Hypothesen und bestätigte Muster.
+> Living document. Grows as we collect and analyze data.
+> For hypotheses and planned investigations, see [LEARNINGS_HYPOTHESES.md](LEARNINGS_HYPOTHESES.md).
+>
+> See also: [INDEX.md](INDEX.md)
+
+**Last updated:** May 2026
 
 ---
 
-## Wie dieses Dokument genutzt wird
-
-Jeder Eintrag folgt einem einfachen Schema:
+## Entry Format
 
 ```markdown
-### [YYYY-MM-DD] Titel der Erkenntnis
+### [YYYY-MM-DD] Title
 
-**Beobachtung:** Was haben wir gesehen?
-**Daten:** Auf welcher Datenbasis?
-**Hypothese:** Was könnte dahinter stecken?
-**Nächste Schritte:** Wie verifizieren oder widerlegen wir das?
-**Status:** 🟡 Offen / 🟢 Bestätigt / 🔴 Widerlegt
+**Observation:** What did we see?
+**Data:** What data basis?
+**Hypothesis:** What could be behind it?
+**Next steps:** How to verify or refute?
+**Status:** 🟡 Open / 🟢 Confirmed / 🔴 Refuted
 ```
 
----
-
-## Kategorien von Erkenntnissen
-
-Wir tracken Erkenntnisse in mehreren Kategorien:
-
-- **📊 Datenqualität** – Welche Quellen sind wie zuverlässig?
-- **🎯 Signalstärke** – Welche Features korrelieren mit zukünftiger Performance?
-- **🔬 Muster** – Wiederkehrende Phänomene in den Daten
-- **⚠️ Fallen** – Dinge, die irreführend aussehen, aber kein echtes Signal sind
-- **💡 Hypothesen** – Neue Ideen, die wir testen könnten
-- **🛠️ Technisches** – Lessons Learned bei Implementierung und Betrieb
+**Categories:** 📊 Data Quality · 🎯 Signal Strength · 🔬 Patterns · ⚠️ Pitfalls · 🛠️ Technical
 
 ---
 
-## Erkenntnisse
+## Findings
 
-### [2026-04-15] 📊 Erste Politiker-Trade-Daten: Auffällige Aktivität einzelner Senatoren
+### [2026-04-15] 📊 First Politician Trade Data: High-Frequency Senators
 
-**Beobachtung:** Beim ersten erfolgreichen Senate eFD Import (161 PTR-Filings, 636 Transaktionen) fällt auf, dass einige wenige Senatoren extrem aktiv handeln. John Boozman hat allein am 14.04.2026 mindestens 10 Transaktionen gemeldet (diverse Purchases + Sales: VLA, SPYN, NVDA, MSFT, ARES, FIGC, TPVP, TNC, BREU). John Fetterman zeigt ähnliches Muster mit 8+ Trades am 03.04.2026 (MSFT, ERIE, AMZN, GOOG, FRTF, NU).
+**Observation:** In the first successful Senate eFD import (161 PTR filings, 636 transactions), a few senators trade extremely actively. John Boozman had at least 10 transactions on 14 April alone. John Fetterman shows a similar pattern with 8+ trades on 3 April.
 
-**Daten:** 636 Politiker-Trades aus 161 PTR-Filings (12 Monate Lookback).
+**Data:** 636 politician trades from 161 PTR filings (12-month lookback).
 
-**Hypothese:** Diese Senatoren diversifizieren aktiv ihre Portfolios. Die hohe Transaktionsfrequenz bei kleinen Beträgen ($1,001-$15,000) deutet auf regelmäßiges Rebalancing hin – wahrscheinlich **kein starkes Alpha-Signal** für Einzeltrades. Interessanter wären große Einzeltrades (>$50,000), wie Tina Smiths MMM-Sale ($50,001-$100,000) und BRK.B-Sale ($100,001-$250,000).
+**Hypothesis:** These senators actively diversify their portfolios. The high transaction frequency with small amounts ($1,001–$15,000) suggests regular rebalancing – probably **not a strong alpha signal** for individual trades. More interesting would be large single trades (>$50,000).
 
-**Nächste Schritte:** Nach 1 Monat: Kategorisierung nach Betragshöhe, Frequenz-Analyse pro Senator.
+**Next steps:** After 1 month: categorize by amount, frequency analysis per senator.
 
-**Status:** 🟡 Offen
-
----
-
-### [2026-04-15] 📊 yfinance-Formatinkonsistenz: dividendYield in anderer Skala als andere Ratio-Felder
-
-**Beobachtung:** TSM zeigte 95% Dividendenrendite im Dashboard. Ursache: yfinance liefert `dividendYield` in Prozent-Form (0.92 = 0.92%), während `profitMargins`, `operatingMargins` etc. als Dezimal kommen (0.451 = 45.1%). Unser Code behandelte alle Felder gleich (*100 im Frontend).
-
-**Daten:** Systematisch über 6 Ticker verifiziert (AAPL=0.4, MSFT=0.93, TSM=0.92, JNJ=2.19, GOOG=0.25 – alle bereits Prozentwerte). Alle anderen Ratio-Felder konsistent als Dezimal.
-
-**Hypothese:** Yahoo Finance API liefert verschiedene Felder in unterschiedlichen Skalen. Da yfinance eine inoffizielle Wrapper-Bibliothek ist, kann sich das Format jederzeit ändern. → **Defensive Programmierung mit Plausibilitätsprüfung ist Pflicht.**
-
-**Nächste Schritte:** Monitoring: WARNING-Logs bei Plausibilitätsverletzungen regelmäßig prüfen.
-
-**Status:** 🟢 Bestätigt & behoben (Migration 013 + Plausibilitätsprüfung)
+**Status:** 🟡 Open
 
 ---
 
-### [2026-04-15] 📊 Architektur-Lücke: Ticker ohne Universe-Eintrag haben keine Daten
+### [2026-04-15] 📊 yfinance Format Inconsistency: dividendYield on Different Scale
 
-**Beobachtung:** SIRI (über Politiker-Trade von Hickenlooper) war in der `politician_trades`-Tabelle gespeichert, aber im Dashboard fehlten Preise, Indikatoren und Fundamentals komplett. Grund: Der `politician_trades_collector` fügte Trades nur in seine eigene Tabelle ein, aber **nicht** ins Universum. Alle anderen Collectors (Preise, TA, Fundamentals) lesen nur Ticker aus der `universe`-Tabelle (`WHERE is_active = true`).
+**Observation:** TSM showed 95% dividend yield in the dashboard. Root cause: yfinance delivers `dividendYield` in percent form (0.92 = 0.92%), while `profitMargins`, `operatingMargins` etc. come as decimal (0.451 = 45.1%).
 
-**Root Cause:** Inkonsistente Architektur – der ARK-Collector hatte `_expand_universe()`, der Politiker-Collector nicht. Form4 war korrekt (universe-driven).
+**Data:** Systematically verified across 6 tickers (AAPL=0.4, MSFT=0.93, TSM=0.92, JNJ=2.19, GOOG=0.25 – all already percent values).
 
-**Hypothese:** Jeder Collector, der Ticker aus externen Quellen discovert (nicht nur bestehende Ticker abfragt), muss die neuen Ticker dem Universum hinzufügen. → Zentraler Service statt verstreuter Logik.
+**Lesson:** Yahoo Finance API delivers different fields at different scales. Since yfinance is an unofficial wrapper, formats can change any time. → **Defensive programming with plausibility checks is mandatory.**
 
-**Lösung:** `NewTickerOnboarder` (`universe/onboarder.py`) – Alpaca-Validierung + automatischer Backfill-Pipeline (Preise → TA → Fundamentals → Sektor). Wird jetzt von Politiker- und ARK-Collector aufgerufen.
-
-**Status:** 🟢 Behoben (Session 14)
+**Status:** 🟢 Confirmed & fixed (migration 013 + plausibility validation)
 
 ---
 
-### [2026-04-15] 🛠️ Doku-Schema ≠ ORM-Modell ≠ API-Schema: Triple-Mismatch bei ARK Deltas
+### [2026-04-15] 📊 Architecture Gap: Tickers Without Universe Entry Have No Data
 
-**Beobachtung:** Die `ark_deltas`-Tabelle hatte drei verschiedene "Wahrheiten":
-1. **ARCHITECTURE.md** definierte Spalten `shares_new`, `weight_delta_bps`, `is_new_position`, `is_closed_position`, `pct_change`
-2. **ORM-Modell** (`db/models/ark.py`) implementierte `delta_type` (String), `shares_curr`, `weight_delta` (Numeric)
-3. **API-Schema** (`schemas.py`) und **API-Route** (`signals.py`) erwarteten die Doku-Version, nicht das ORM-Modell
+**Observation:** SIRI (via politician trade by Hickenlooper) was stored in `politician_trades` but had no prices, indicators, or fundamentals in the dashboard. Root cause: politician trades collector didn't add tickers to the universe.
 
-**Daten:** Erster ARK-Doppel-Snapshot (14.04. + 15.04.2026) → 322 Deltas (alle `unchanged`), Signals-Seite komplett leer wegen `AttributeError`.
+**Solution:** `NewTickerOnboarder` (`universe/onboarder.py`) – Alpaca validation + automatic backfill pipeline (Prices → TA → Fundamentals → Sector).
 
-**Hypothese:** Bei Sprint 2 war die Dokumentation der Entwurf, das ORM wurde anders implementiert, und die API in Sprint 7 wurde gegen die Doku statt gegen den echten Code geschrieben. Ohne einen End-to-End-Test mit echten Daten (erst nach Produktionsbetrieb verfügbar) fiel der Mismatch nicht auf.
-
-**Nächste Schritte:** Bei jedem neuen API-Endpoint: ORM-Modell als Single Source of Truth behandeln, Schema/Route dagegen abgleichen. Integration-Tests mit echten DB-Queries erwägen.
-
-**Status:** 🟢 Behoben (Session 15)
+**Status:** 🟢 Fixed (Session 14)
 
 ---
 
-### [2026-04-15] 📊 ARK-Deltas: `unchanged` ist kein Signal – nur echte Bewegungen zählen
+### [2026-04-15] 🛠️ Doc Schema ≠ ORM Model ≠ API Schema: Triple Mismatch (ARK Deltas)
 
-**Beobachtung:** Bei 322 ARK-Holdings und 2 aufeinanderfolgenden Snapshots wurden 322 Deltas berechnet. Davon waren ~251 `unchanged` (Shares identisch). Das Delta-Feature soll Portfoliobewegungen identifizieren – neue Positionen, geschlossene Positionen, Aufstockungen, Reduzierungen. `unchanged` ist per Definition kein Signal.
+**Observation:** The `ark_deltas` table had three different "truths": ARCHITECTURE.md defined different columns than the ORM model, and the API schema expected the doc version.
 
-**Daten:** 322 Deltas → ~71 echte Bewegungen (increased/decreased/new/closed), 251 `unchanged`.
+**Lesson:** For every new API endpoint: treat the ORM model as single source of truth, align schema/route against it. Consider integration tests with real DB queries.
 
-**Hypothese:** Die meisten ARK-Positionen ändern sich an einem normalen Handelstag nicht. Nur ~22% der Positionen haben täglich echte Shares-Bewegungen. Das bedeutet: Weight-Deltas (durch ETF-NAV-Änderungen) sind häufiger als Share-Deltas (durch aktive Trades).
-
-**Nächste Schritte:** Nach 1 Monat: Analyse der `increased`/`decreased`-Verteilung. Sind es hauptsächlich weight-getriebene Rebalances oder echte Conviction-Trades?
-
-**Status:** 🟡 Offen
+**Status:** 🟢 Fixed (Session 15)
 
 ---
 
-### [2026-04-19] 📊 ARK Trade-Emails ≠ Holdings-Deltas: Netto-Exposition vs. Portfolio-Manager-Trades
+### [2026-04-15] 📊 ARK Deltas: `unchanged` Is Not a Signal
 
-**Beobachtung:** ARK sendet am 17.04. eine Email: "ARKW: Buy NFLX 26.161 Shares". Unser Dashboard zeigt für denselben Tag: ARKW NFLX **REDUZIERT** (Shares Δ = -3.464). Widerspruch?
+**Observation:** With 322 holdings and 2 consecutive snapshots, 322 deltas were computed. ~251 were `unchanged`. Only ~22% of positions have real daily share movements.
 
-**Daten:** Die ARK-Email enthält einen expliziten Disclaimer: *"This email only reflects portfolio adjustments made by the ARK investment team. Files of trades are not comprehensive lists of a day's trades for the ARK ETFs and exclude ETF Creation/Redemption Unit activity."*
+**Hypothesis:** Most ARK positions don't change on a normal trading day. Weight deltas (from ETF NAV changes) are more frequent than share deltas (from active trades).
 
-Analyse der NFLX-Position:
-- 16.04.: ~214.823 Shares (Snapshot aus arkfunds.io)
-- 17.04.: 211.359 Shares (Snapshot aus arkfunds.io)
-- Netto-Delta: **-3.464 Shares** ← was unser System zeigt
-- ARK-Kauf: **+26.161 Shares** ← was die Email zeigt
-- Implizite Redemptions: **-29.625 Shares** (Anleger verkaufen ARKW-Anteile → proportionale Reduktion aller Holdings)
-
-**Hypothese:** Unsere Snapshot-basierte Delta-Berechnung zeigt die **tatsächliche Netto-Exposition** – was für Signale relevanter ist als die Trade-Intention. Wenn ARK trotz aktiver Käufe netto weniger hält, dominieren ETF-Abflüsse das Signal. Die ARK-Email zeigt nur die "Conviction" des Portfolio-Managers, nicht die tatsächliche Positionsänderung.
-
-**Implikation für Signale:** Ein positiver Shares-Delta (Netto-Aufstockung) ist ein stärkeres Bullish-Signal als ein ARK-Kauf allein, weil es bedeutet, dass die Käufe die Redemption-Abflüsse überwiegen. Entsprechend: Ein negativer Delta trotz ARK-Kauf (wie bei NFLX) ist neutral bis leicht bearish für das Signal.
-
-**Nächste Schritte:** Die arkfunds.io API unterstützt **keinen historischen** `date`-Parameter (gibt immer den neuesten Snapshot zurück). Unsere täglichen Collector-Runs sind daher essentiell – jeder Tag muss gesammelt werden, da Lücken nicht nachträglich gefüllt werden können.
-
-**Status:** 🟢 Kein Bug – Design ist korrekt. Dokumentiert für Signalinterpretation.
+**Status:** 🟡 Open
 
 ---
 
-### [2026-04-16] 🛠️ SEC 13F-Infotable: Kein einheitlicher Dateiname
+### [2026-04-19] 📊 ARK Trade Emails ≠ Holdings Deltas: Net Exposure vs. Portfolio Manager Trades
 
-**Beobachtung:** 6 von 20 Top-Filern (Berkshire, Renaissance, Two Sigma, Millennium, Baupost, Duquesne) lieferten 0 Holdings. Ursache: Die `find_infotable_document()` suchte nur nach `"infotable"` im Dateinamen.
+**Observation:** ARK sends an email: "ARKW: Buy NFLX 26,161 Shares". Our dashboard shows: ARKW NFLX **REDUCED** (Shares Δ = -3,464). Contradiction?
 
-**Daten:** Tatsächliche Dateinamen der Infotable-XMLs:
-- Citadel ✅: `infotable.xml`
-- Two Sigma ❌: `informationtable.xml` (kein Substring-Match!)
-- Renaissance ❌: `renaissance13Fq42025_holding.xml`
-- Berkshire ❌: `50240.xml` (nur eine Nummer!)
-- Millennium ❌: `MLP_Filing_20251231_v1.xml`
+**Analysis:** ARK's email disclaimer states trades exclude ETF creation/redemption activity. Net position was -3,464 shares (ARK bought +26,161 but redemptions caused -29,625).
 
-**Hypothese bestätigt:** SEC erlaubt beliebige Dateinamen. Die einzige Invariante: Jedes 13F-Filing hat genau 2 XML-Dateien – `primary_doc.xml` (Cover, klein) und die Infotable (groß). Die Infotable ist immer deutlich größer.
+**Implication:** Our snapshot-based delta shows the **actual net exposure** – more relevant for signals than trade intention. A positive shares delta (net increase) is a stronger bullish signal than an ARK buy alone.
 
-**Lösung:** 4-Stufen-Erkennung: `infotable` → `informationtable` → `holding` → größte Non-Primary-XML.
-
-**Status:** 🟢 Behoben (Session 17)
+**Status:** 🟢 Not a bug – design is correct. Documented for signal interpretation.
 
 ---
 
-### [2026-04-16] 📊 Plausibilitäts-Ranges: Format-Guard ≠ Werte-Filter
+### [2026-04-16] 🛠️ SEC 13F Infotable: No Standardized Filename
 
-**Beobachtung:** Erster Produktionslauf des Fundamentals-Collectors zeigte 138 Warnings bei 670 Tickern. Analyse ergab: Alle Werte waren **real** – negative KBV bei MCD/SBUX/BKNG (Buyback-Programme), negatives Forward-KGV bei MRNA/OKLO (erwartete Verluste), extreme Margen bei Pre-Revenue-Firmen wie ACHR (-781%).
+**Observation:** 6 of 20 top filers delivered 0 holdings. Examples: Citadel ✅ `infotable.xml`, Two Sigma ❌ `informationtable.xml`, Berkshire ❌ `50240.xml`, Millennium ❌ `MLP_Filing_*.xml`.
 
-**Daten:** 138/670 Ticker betroffen. Häufigste Felder: `pb_ratio` (35x), `forward_pe` (30x), `operating_margin` (15x), `ev_ebitda` (12x).
+**Solution:** 4-stage detection: `infotable` → `informationtable` → `holding` → largest non-primary XML.
 
-**Hypothese:** Die ursprünglichen Ranges waren für Large-Cap-Normalwerte designed, aber das Universe enthält jetzt viele ARK-Titel (Biotechs, Growth-Stage). **Die Plausibilitätsprüfung löschte echte Signaldaten**, die für Sprint 8 (Feature Pipeline) wichtig sind.
-
-**Lesson Learned:** Plausibilitätsprüfungen sollten nur **Formatfehler und Datenkorruption** abfangen (wie den dividendYield-Bug), nicht legitime Extremwerte. Einzige Ausnahme: `dividend_yield [0, 0.25]` als Regression-Guard für die /100-Normalisierung.
-
-**Status:** 🟢 Behoben (Session 17)
+**Status:** 🟢 Fixed (Session 17)
 
 ---
 
-### [2026-04-16] 🛠️ yfinance loggt intern auf ERROR-Level bei erwartbaren Fällen
+### [2026-04-16] 📊 Plausibility Ranges: Format Guard ≠ Value Filter
 
-**Beobachtung:** Earnings Calendar Collector zeigte 5 ERROR-Meldungen im Log-Capture: `"No earnings dates found, symbol may be delisted"` für BRK.B, GENB, PAYP, SLMT, CNTN. Diese kamen nicht aus unserem Code, sondern wurden von yfinance selbst auf dem internen Logger geloggt.
+**Observation:** First production run showed 138 warnings at 670 tickers. All values were **real** – negative P/B at MCD/SBUX/BKNG (buyback programs), negative forward P/E at MRNA/OKLO (expected losses), extreme margins at pre-revenue firms like ACHR (-781%).
 
-**Daten:** BRK.B (Berkshire) macht keine Earnings-Calls, die anderen sind Small-Caps mit fehlender Yahoo-Coverage. Alle 5 sind erwartbar und kein Fehler.
+**Lesson:** Plausibility checks should only catch **format errors and data corruption**, not legitimate extreme values. Only exception: `dividend_yield [0, 0.25]` as regression guard.
 
-**Hypothese bestätigt:** yfinance nutzt Python's `logging` module und loggt auf ERROR-Level, wo WARNING oder DEBUG angemessen wäre. Da unser `CollectorLogCapture` WARNING+ fängt, und yfinance ERROR > WARNING, erscheinen diese als Alarme.
-
-**Lösung:** `logging.getLogger("yfinance").setLevel(logging.CRITICAL)` – nur echte Crashes kommen durch. Unsere eigene Fehlerbehandlung loggt true-positive Fehler als WARNING.
-
-**Status:** 🟢 Behoben (Session 17)
+**Status:** 🟢 Fixed (Session 17)
 
 ---
 
-### [2026-04-16] 🛠️ datetime.date vs pd.Timestamp: Stille Index-Lookup-Fehler
+### [2026-04-16] 🛠️ yfinance Logs ERRORs for Expected Cases
 
-**Beobachtung:** Der TA-Computer schrieb täglich 0 Records ("Complete: 0 records written across 670 tickers"), obwohl Backfills korrekt funktionieren. Kein Error, keine Warning – nur 0 Results.
+**Observation:** Earnings calendar collector showed 5 ERROR messages from yfinance's internal logger: "No earnings dates found" for BRK.B, GENB etc.
 
-**Daten:** `_compute_for_date()` vergleicht `target_date` (aus SQL: `datetime.date`) gegen den DataFrame-Index (enthält `pd.Timestamp`). Python behandelt `date(2026,4,16) == Timestamp('2026-04-16')` als `False` – der Lookup schlägt stillschweigend fehl. Backfills nutzen `iterrows()` mit einem anderen Code-Pfad und waren nicht betroffen.
+**Solution:** `logging.getLogger("yfinance").setLevel(logging.CRITICAL)` – only real crashes come through. Own error handling logs true positives as WARNING.
 
-**Hypothese bestätigt:** Typ-Mismatches zwischen SQL-Ergebnissen und pandas-Strukturen sind eine häufige Fehlerquelle, die keine Exceptions wirft – der Vergleich gibt einfach `False` zurück.
-
-**Lesson Learned:** Bei Index-Lookups in DataFrames immer explizit `pd.Timestamp(target_date)` verwenden. Generell: SQL-Rückgabetypen (`datetime.date`, `Decimal`) nie direkt mit pandas-Typen vergleichen, ohne vorher zu konvertieren.
-
-**Status:** 🟢 Behoben (explizite `pd.Timestamp()`-Konvertierung)
+**Status:** 🟢 Fixed (Session 17)
 
 ---
 
-### [2026-04-16] 🛠️ Jobs ohne CollectionLog sind unsichtbar
+### [2026-04-16] 🛠️ datetime.date vs pd.Timestamp: Silent Index Lookup Failures
 
-**Beobachtung:** Der TA-Job lief 2+ Wochen lang fehlerhaft (0 Records), ohne dass dies im Dashboard sichtbar war. Alle anderen Jobs (Prices, ARK, Form4 etc.) hatten Einträge in der `collection_log`-Tabelle und waren im Logs-Dashboard sichtbar – nur der TA-Job nicht.
+**Observation:** TA computer wrote 0 records daily despite backfills working. Root cause: `date(2026,4,16) == Timestamp('2026-04-16')` evaluates to `False` in Python.
 
-**Daten:** Der TA-Job war der einzige Job ohne `CollectorLogCapture`-Wrapper und ohne `CollectionLog`-Persistenz.
+**Lesson:** Always use `pd.Timestamp(target_date)` for DataFrame index lookups. Never compare SQL return types (`datetime.date`, `Decimal`) directly with pandas types.
 
-**Lesson Learned:** Jeder neue Job muss ab Tag 1 das CollectorLogCapture-Pattern verwenden. Eine Checkliste für neue Jobs: (1) CollectorLogCapture, (2) CollectionLog-Entry (success + error), (3) started_at/finished_at, (4) records_read/records_written. Stille Failures sind schlimmer als laute Fehler.
-
-**Status:** 🟢 Behoben (TA-Job nutzt jetzt CollectorLogCapture)
+**Status:** 🟢 Fixed (explicit `pd.Timestamp()` conversion)
 
 ---
 
-### [2026-04-30] 🛠️ MAX(trade_date) als Vollständigkeitscheck ist unzureichend
+### [2026-04-16] 🛠️ Jobs Without CollectionLog Are Invisible
 
-**Beobachtung:** Am 28.04. zeigte der TA-Catchup "Already up-to-date (TA: 2026-04-28)", obwohl für den 28.04. keine der ~670 Ticker TA-Daten hatten. Der 29.04. wurde korrekt berechnet, aber die Lücke vom 28.04. blieb bestehen.
+**Observation:** TA job ran 2+ weeks with errors (0 records), completely invisible in dashboard. Only job without `CollectorLogCapture`.
 
-**Daten:** `MAX(trade_date)` in `technical_indicators` war `2026-04-28` (vermutlich durch einen partiellen/frühen Lauf), während `MAX(trade_date)` in `prices_daily` ebenfalls `2026-04-28` war → Catchup übersprang den Tag.
+**Lesson:** Every new job must use the CollectorLogCapture pattern from day 1. Silent failures are worse than loud errors.
 
-**Hypothese bestätigt:** `MAX()` prüft nur das Vorhandensein mindestens eines Records, nicht die Vollständigkeit. Ein einzelner Record für einen Tag genügt, um den gesamten Tag als "erledigt" zu markieren.
-
-**Lesson Learned:** Bei Derived-Data-Jobs, die viele Records pro Datum erzeugen (670 Ticker/Tag), reicht MAX() nicht. Stattdessen Coverage-Vergleich (`COUNT(DISTINCT ticker)` pro Datum vs. Erwartungswert) im 7-Tage-Fenster. Kostet 2 zusätzliche Queries, verhindert aber mehrtägige unsichtbare Lücken.
-
-**Status:** 🟢 Behoben (Zwei-Phasen-Catchup mit Coverage-Check)
+**Status:** 🟢 Fixed (TA job now uses CollectorLogCapture)
 
 ---
 
-## Geplante Untersuchungen
+### [2026-04-30] 🛠️ MAX(trade_date) Is Insufficient as Completeness Check
 
-Sobald genug Daten vorliegen, wollen wir diese Fragen systematisch untersuchen:
+**Observation:** TA catchup reported "Already up-to-date" despite 0 records for 670 tickers on that date. A single partial record was enough to mark the entire day as "done".
 
-### Phase 1 – Nach 1 Monat Datensammlung
+**Lesson:** For derived-data jobs producing many records per date, use coverage comparison (`COUNT(DISTINCT ticker)` per date vs. expectation) instead of MAX(). Costs 2 extra queries, prevents multi-day invisible gaps.
 
-- [ ] **Datenqualität:** Wie viele Handelstage haben wir lückenlos? Wie oft sind Quellen ausgefallen?
-- [ ] **Universum-Wachstum:** Wie schnell wächst das Titel-Universum? Welche Quellen fügen am meisten Titel hinzu?
-- [ ] **ARK-Aktivität:** Wie oft ändern sich ARK-Holdings? Sind die meisten Deltas Rebalances oder echte Conviction?
-- [ ] **Insider-Frequenz:** Wie viele Form-4-Filings pro Tag? Welche Unternehmen haben die meisten Insider-Trades?
-
-### Phase 2 – Nach 3 Monaten Datensammlung
-
-- [ ] **Korrelationen Feature ↔ Returns:** Welche Features korrelieren mit 1/5/20-Tages-Returns?
-- [ ] **Cluster-Analyse:** Wie oft gibt es Insider-Cluster? Wie korrelieren sie mit Kursbewegungen?
-- [ ] **ARK-Predictive-Power:** Wenn ARK nachkauft, wie entwickelt sich der Titel in den nächsten 20 Tagen?
-- [ ] **Politiker-Delay:** Ist das Signal wirklich so verzögert wie befürchtet?
-- [ ] **Multi-Signal-Überlappungen:** Wie oft stimmen zwei oder drei Signalquellen bei demselben Titel überein?
-
-### Phase 3 – Nach 6 Monaten Datensammlung
-
-- [ ] **Feature-Importance:** Welche Features sind laut Random Forest am wichtigsten?
-- [ ] **Optimales Scoring:** Welche Gewichtungen liefern die besten Backtests?
-- [ ] **Sektor-Unterschiede:** Funktionieren Signale in allen Sektoren gleich gut?
-- [ ] **Zeitliche Stabilität:** Sind Signale über Marktphasen (Bullen/Bären) stabil?
-- [ ] **False-Positive-Rate:** Wie viele "gute Scores" führten zu Verlusten?
+**Status:** 🟢 Fixed (two-phase catchup with coverage check)
 
 ---
 
-## Hypothesen (zu testen)
+## Meta-Learnings
 
-Liste von Hypothesen, die wir in den Daten verifizieren wollen:
+### [2026-04-15] 🛠️ TLS Fingerprinting is Becoming Standard on Government Sites
+Senate eFD blocks Python `requests` via JA3 hash detection, not header analysis. Solution: `curl_cffi` with Chrome impersonation. Expect more government and finance sites to use similar bot detection.
 
-### H1: ARK-Käufe in mehreren ETFs parallel sind starkes Signal
-Wenn Cathie Woods' Team denselben Titel in mehreren ARK-ETFs aufstockt, ist das eher Conviction als Rebalancing.
+### [2026-04-15] 🛠️ DataTables Server-Side Processing Requires Session Context
+Senate eFD renders no server-side HTML tables – empty template + JavaScript/AJAX. The AJAX endpoint requires a prior search form POST to set parameters in the server session.
 
-### H2: Insider-Cluster schlagen einzelne Insider-Käufe
-Wenn mehrere Insider eines Unternehmens innerhalb weniger Tage kaufen, ist das prädiktiver als ein einzelner großer Kauf.
+### [2026-04-15] 🛠️ SEC Archives Under Subject-CIK, Not Filer-CIK
+The accession number contains the filer CIK (often a law firm), but files are stored under the subject company CIK.
 
-### H3: Form 4 in Kombination mit ARK ist stärker als jedes einzeln
-Signale aus verschiedenen Quellen sollten unabhängig sein und sich gegenseitig verstärken.
-
-### H4: Gewichtungsänderungen in ARK sind aussagekräftiger als absolute Shares
-Weil Share-Änderungen auch von In-/Outflows getrieben sein können, sind Weight-Änderungen das reinere Signal.
-
-### H5: ARK-Verkäufe sind schlechter prädiktiv als ARK-Käufe
-Verkäufe können viele Gründe haben (Rebalancing, Outflows), Käufe sind gezielter.
-
-### H6: Kleine Titel reagieren stärker auf ARK-Trades als große
-Market-Impact-Effekt: ARK bewegt bei Small Caps den Preis mit.
-
-### H7: Politiker-Trades sind zu verzögert für Alpha
-Aber vielleicht als Feature in einer Kombination trotzdem hilfreich.
-
-### H8: Technische Indikatoren alleine erzeugen keine Alpha-Signale
-Aber in Kombination mit Fundamentaldaten könnten sie einen Beitrag leisten.
-
-### H9: Analyst-Downgrades sind stärkere Signale als Upgrades
-Weil Banken selten negativ über ihre Kunden schreiben – wenn sie es tun, ist es ernst.
-
-### H10: Cluster-Käufe von Insidern nach einem Earnings-Drop sind ein Konstruktionsdach-Signal
-Insider kaufen, wenn der Markt überreagiert hat.
-
----
-
-## Gescheiterte Ansätze (für später)
-
-Hier landen Strategien, die wir ausprobiert haben und die sich als nicht funktionsfähig erwiesen. Genauso wichtig wie bestätigte Signale, um Wiederholungen zu vermeiden.
-
-*(Noch leer)*
-
----
-
-## Meta-Learnings zum Projekt selbst
-
-### [2026-04-15] 🛠️ TLS-Fingerprinting wird zum Standard bei Government-Seiten
-
-Die Senate eFD Seite blockiert Python `requests` nicht über User-Agent oder Header-Analyse, sondern über **TLS-Fingerprinting (JA3-Hash)**. Das bedeutet: egal welche Headers wir senden, die TLS-Handshake-Signatur verrät, dass kein echter Browser verbindet. Lösung: `curl_cffi` mit Chrome-Impersonation. Erwartung: Weitere Government- und Finanz-Seiten werden ähnliche Bot-Detection nutzen.
-
-### [2026-04-15] 🛠️ DataTables Server-Side Processing erfordert Session-Kontext
-
-Die Senate eFD Seite rendert keine HTML-Tabellen mehr Server-seitig. Stattdessen: leeres HTML-Template + JavaScript/AJAX-Datenabruf (`/search/report/data/`). Der AJAX-Endpoint braucht aber einen vorherigen Search-Form POST, um die Suchparameter in der Server-Session zu speichern (sonst 503). Lesson: Bei Scraping immer erst den vollständigen Browser-Flow nachbilden.
-
-### [2026-04-15] 🛠️ SEC archiviert unter Subject-CIK, nicht Filer-CIK
-
-Die Accession Number eines SEC Filing enthält den CIK des **Filers** (oft eine Anwaltskanzlei oder Filing-Agent), aber die Dateien liegen im Archiv unter dem CIK des **Subject Company** (also des Unternehmens). Lesson: Bei SEC-Downloads immer den Company-CIK aus `company_tickers.json` verwenden, nicht den CIK aus der Accession Number.
-
-### [2026-04-28] 🛠️ Automatische ETF-Filter können Benchmarks deaktivieren
-
-Der lernende ETF-Filter (`quoteType != EQUITY → blacklist + deactivate`) hat SPY korrekt als ETF identifiziert und deaktiviert. Allerdings wird SPY als Benchmark für `relative_strength_spy` im TA-Computer benötigt. Folge: 13 Tage lang tägliche Warnungen und NULL-Werte für alle 672 Ticker. **Fix:** `BENCHMARK_TICKERS`-Set als Schutzliste in der Blacklist-Logik. **Lesson:** Automatische Filter brauchen immer eine Allowlist für Sonderfälle. Bei jedem neuen Filter explizit überlegen: „Gibt es legitime Ausnahmen?"
+### [2026-04-28] 🛠️ Automatic ETF Filters Can Deactivate Benchmarks
+The ETF filter correctly identified SPY as ETF and deactivated it. But SPY is needed as benchmark for `relative_strength_spy`. Fix: `BENCHMARK_TICKERS` protection set. **Lesson:** Automatic filters always need an allowlist for exceptions.

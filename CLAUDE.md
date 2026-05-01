@@ -1,148 +1,158 @@
 # CLAUDE.md – Alpaca-Broker Project
 
-> **Einstiegspunkt für jede Claude-Session zu diesem Projekt.**
-> Lies dieses Dokument zuerst, dann bei Bedarf die verlinkten Detail-Dokumente.
+> **Entry point for every Claude session on this project.**
+> Read this document first, then consult the linked detail documents as needed.
+> For a complete document index, see [docs/INDEX.md](docs/INDEX.md).
 
 ---
 
-## Projekt-Identität
+## Project Identity
 
-**Projektname:** `Alpaca-Broker` (Python-Paket: `trading-signals`)
+**Project name:** `Alpaca-Broker` (Python package: `trading-signals`)
 **Owner:** Sebastian
-**Gestartet:** April 2026
-**Repository:** [github.com/sebastianganser/Alpaca-Broker](https://github.com/sebastianganser/Alpaca-Broker) (privat)
-**Projekt-Root lokal:** `D:\Sebastian\Dokumente\Privat\Rudi\Coding\Workspaces\Alpaca-Broker`
-**Deployment-Ziel:** Unraid-Server (Docker), separate PostgreSQL 18 (`postgresql18-alpaca`, Port 5435)
+**Started:** April 2026
+**Repository:** [github.com/sebastianganser/Alpaca-Broker](https://github.com/sebastianganser/Alpaca-Broker) (private)
+**Local project root:** `D:\Sebastian\Dokumente\Privat\Rudi\Coding\Workspaces\Alpaca-Broker`
+**Deployment target:** Unraid server (Docker), separate PostgreSQL 18 (`postgresql18-alpaca`, port 5435)
 
 ---
 
-## Projekt-Mission in einem Satz
+## Project Mission (One Sentence)
 
-> Aufbau eines eigenen **Signal Warehouse**, das täglich so viele relevante Marktdaten und "Smart Money"-Signale wie möglich sammelt, um später datenbasiert robuste Trading-Strategien im Alpaca Paper Trading zu entwickeln.
+> Build a **Signal Warehouse** that collects as many relevant market data points and "smart money" signals as possible daily, to later develop data-driven, robust trading strategies in Alpaca Paper Trading.
 
-## Was dieses Projekt NICHT ist (wichtig!)
+## What This Project Is NOT (Important!)
 
-- ❌ **Kein Live-Trading-System** – alles läuft ausschließlich im Alpaca **Paper-Trading-Konto**
-- ❌ **Keine Finanzberatung, keine Alpha-Garantie** – dies ist ein Lern- und Forschungsprojekt
-- ❌ **Kein "Claude handelt autonom"-System** – LLMs werden nur dort eingesetzt, wo natürliche Sprache echten Mehrwert bringt
-- ❌ **Kein Crypto-Trading** (zumindest nicht in Phase 1)
-- ❌ **Keine Options-Strategien am Anfang** – Wheel-Strategie wurde bewusst nach hinten geschoben zugunsten solider Datenbasis
-
----
-
-## Die drei Grundprinzipien
-
-### 1. Daten sammeln vor Daten nutzen
-Wir starten **nicht** mit einer Trading-Strategie. Wir starten mit einem Datensammler, der mindestens 2–3 Monate lang **ohne zu handeln** nur Daten in die Datenbank schreibt. Erst wenn wir genug Material haben, fangen wir an, daraus Signale zu destillieren.
-
-### 2. Trennung von Rohdaten und Bewertung
-Rohdaten sind heilig und werden nie verändert (append-only). Bewertungen, Scores und Signale werden aus den Rohdaten **berechnet** und sind jederzeit neu berechenbar, wenn sich der Algorithmus ändert.
-
-### 3. Deterministischer Kern, LLM nur am Rand
-Die kritischen Pfade (Daten-Fetching, Berechnungen, später Order-Ausführung) sind reiner Python-Code mit Unit-Tests. LLMs kommen nur bei unstrukturierten Aufgaben zum Einsatz (News parsen, Reports generieren, Ad-hoc-Analysen).
+- ❌ **Not a live trading system** – everything runs exclusively in the Alpaca **paper trading** account
+- ❌ **Not financial advice, no alpha guarantee** – this is a learning and research project
+- ❌ **Not a "Claude trades autonomously" system** – LLMs are only used where natural language adds real value
+- ❌ **Not crypto trading** (at least not in phase 1)
+- ❌ **No options strategies initially** – wheel strategy deliberately deferred in favor of solid data foundation
 
 ---
 
-## Aktueller Status
+## Three Core Principles
 
-**Phase:** 🟢 Sprint 7 abgeschlossen + Produktionsbetrieb
-**Aktueller Sprint:** Operational – System läuft auf Unraid, Datensammlung aktiv
-**Nächster Schritt:** Sprint 8 (Feature Pipeline)
-**Letzte Aktualisierung:** 28. April 2026
+### 1. Collect Data Before Using Data
+We do **not** start with a trading strategy. We start with a data collector that spends at least 2–3 months **without trading**, only writing data to the database. Only when we have enough material do we start distilling signals.
+
+### 2. Separation of Raw Data and Evaluation
+Raw data is sacred and never modified (append-only). Evaluations, scores, and signals are **computed** from raw data and can be recomputed any time if the algorithm changes.
+
+### 3. Deterministic Core, LLM Only at the Edges
+Critical paths (data fetching, computations, later order execution) are pure Python code with unit tests. LLMs are only used for unstructured tasks (news parsing, report generation, ad-hoc analyses).
+
+---
+
+## Current Status
+
+**Phase:** 🟢 Sprint 7 completed + production operation
+**Current sprint:** Operational – system running on Unraid, data collection active
+**Next step:** Sprint 8 (Feature Pipeline)
+**Last updated:** May 2026
 **Deployment:** ✅ Unraid Docker (192.168.1.93:8090)
 
-Siehe [ROADMAP.md](docs/ROADMAP.md) für den detaillierten Fortschritt.
+See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 
 ---
 
-## Quick Facts für jede Session
+## Quick Facts
 
-| Eigenschaft | Wert |
+| Property | Value |
 |---|---|
-| **Sprache** | Python 3.12+ |
-| **Backend-API** | FastAPI (im gleichen Prozess wie APScheduler) |
+| **Language** | Python 3.12+ |
+| **Backend API** | FastAPI (same process as APScheduler) |
 | **Frontend** | Vite + React SPA (Stitch "Precision Architect" Design) |
 | **ORM** | SQLAlchemy 2.0 |
 | **Migrations** | Alembic |
-| **Datenbank** | PostgreSQL 18 (`postgresql18-alpaca`, 192.168.1.93:5435, DB: `broker_data`, Schema: `signals`) |
-| **Paketmanager** | uv (Python), npm (Frontend) |
-| **Scheduler** | APScheduler (im Python-Prozess) |
-| **Preisdaten** | Alpaca Market Data API (IEX feed, Multi-Symbol-Batch) |
-| **Universe** | ~671 aktive Ticker (S&P 500 + Nasdaq 100 + ARK + Benchmarks, bereinigt um ETFs via Blacklist) |
-| **Deployment** | Docker Compose auf Unraid (1 Container: Collector + API + UI, Port 8090) |
-| **Scheduler** | APScheduler (10 Jobs: 5 täglich, 4 wöchentlich, 1 monatlich inkl. Sektor-Enrichment + ETF-Blacklist) |
-| **Broker (später)** | Alpaca Paper Trading (NIEMALS Live!) |
-| **Versionskontrolle** | Git, [GitHub (sebastianganser/Alpaca-Broker)](https://github.com/sebastianganser/Alpaca-Broker) |
+| **Database** | PostgreSQL 18 (`postgresql18-alpaca`, 192.168.1.93:5435, DB: `broker_data`, schema: `signals`) |
+| **Package managers** | uv (Python), npm (frontend) |
+| **Scheduler** | APScheduler (10 jobs: 5 daily, 4 weekly, 1 monthly) |
+| **Price data** | Alpaca Market Data API (IEX feed, multi-symbol batch) |
+| **Universe** | ~671 active tickers (S&P 500 + Nasdaq 100 + ARK + benchmarks, ETFs filtered via blacklist) |
+| **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090) |
+| **Broker (later)** | Alpaca Paper Trading (NEVER live!) |
+| **Version control** | Git, [GitHub](https://github.com/sebastianganser/Alpaca-Broker) |
 
 ---
 
-## Modell-Routing (für LLM-Aufgaben)
+## Model Routing (for LLM Tasks)
 
-| Aufgabe | Modell | Wo |
+| Task | Model | Where |
 |---|---|---|
-| Architektur-Design, Edge-Case-Analyse | Opus 4.6 | Claude Desktop (sparsam!) |
-| Standard-Implementierung, Debugging | Sonnet 4.6 | Claude Desktop (Default) |
-| News-Parsing, Daily Reports | Haiku 4.5 | API (Scheduler-Jobs) |
-| Routine-Scheduler (Preis-Checks etc.) | **KEIN LLM** | Python-Code |
+| Architecture design, edge case analysis | Opus 4.6 | Claude Desktop (sparingly!) |
+| Standard implementation, debugging | Sonnet 4.6 | Claude Desktop (default) |
+| News parsing, daily reports | Haiku 4.5 | API (scheduler jobs) |
+| Routine scheduler (price checks etc.) | **No LLM** | Python code |
 
-**Kostenerwartung im Vollbetrieb:** ~20 €/Monat Claude Pro + ~10–15 $/Monat API-Kosten
+**Expected cost in full operation:** ~€20/month Claude Pro + ~$10–15/month API costs
 
 ---
 
-## Wichtige Dokumente im Projekt
+## Project Documents
 
-| Dokument | Zweck | Änderungsfrequenz |
+| Document | Purpose | Update Frequency |
 |---|---|---|
-| **CLAUDE.md** (dieses Dokument) | Einstiegspunkt, Projekt-Identität | Selten |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technische Architektur, DB-Schema, Datenflüsse | Bei Strukturänderungen |
-| [ROADMAP.md](docs/ROADMAP.md) | Sprint-Planung, Status, nächste Schritte | **Nach jedem Sprint** |
-| [DATA_SOURCES.md](docs/DATA_SOURCES.md) | Katalog aller Datenquellen mit Details | Wenn neue Quellen dazukommen |
-| [DECISIONS.md](docs/DECISIONS.md) | Decision Log – Warum haben wir X so entschieden? | **Bei jeder wichtigen Entscheidung** |
-| [LEARNINGS.md](docs/LEARNINGS.md) | Erkenntnisse aus den gesammelten Daten | Kontinuierlich, sobald Daten da sind |
+| **CLAUDE.md** (this document) | Entry point, project identity | Rarely |
+| [docs/INDEX.md](docs/INDEX.md) | **Documentation navigator** – find the right doc | Rarely |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Deployment, project structure, data flow | On structural changes |
+| [docs/DATABASE.md](docs/DATABASE.md) | Complete DB schema (all tables + DDL) | On schema changes |
+| [docs/SCHEDULER.md](docs/SCHEDULER.md) | Execution schedule (all jobs) | When jobs change |
+| [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) | Data source catalog | When new sources added |
+| [docs/DECISIONS_ARCHITECTURE.md](docs/DECISIONS_ARCHITECTURE.md) | Decisions: infrastructure & architecture | On arch decisions |
+| [docs/DECISIONS_DATA.md](docs/DECISIONS_DATA.md) | Decisions: data sources & collectors | On data decisions |
+| [docs/DECISIONS_FEATURES.md](docs/DECISIONS_FEATURES.md) | Decisions: features, scoring, trading | On strategy decisions |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Sprint planning, status | **After every sprint** |
+| [docs/SESSION_LOG.md](docs/SESSION_LOG.md) | Chronological session history | **After every session** |
+| [docs/LEARNINGS.md](docs/LEARNINGS.md) | Observed findings, debugging stories | Continuously |
+| [docs/LEARNINGS_HYPOTHESES.md](docs/LEARNINGS_HYPOTHESES.md) | Hypotheses to test, planned investigations | As research evolves |
 
 ---
 
-## Session-Startchecklist für Claude
+## Session Start Checklist for Claude
 
-Wenn du (Claude) eine neue Session zu diesem Projekt startest, arbeite diese Checkliste ab:
+When starting a new session on this project:
 
-1. ✅ **Lies CLAUDE.md komplett** (dieses Dokument)
-2. ✅ **Lies ROADMAP.md** – wo stehen wir gerade? Welcher Sprint ist aktiv?
-3. ✅ **Scanne DECISIONS.md** – gibt es kürzliche Entscheidungen, die für den aktuellen Kontext relevant sind?
-4. ✅ **Lies das für den aktuellen Sprint relevante Kapitel** in ARCHITECTURE.md
-5. ✅ **Frage Sebastian**, was das Ziel der aktuellen Session ist, bevor du loslegst
+1. ✅ **Read CLAUDE.md completely** (this document)
+2. ✅ **Read ROADMAP.md** – where are we? Which sprint is active?
+3. ✅ **Scan DECISIONS_*.md** – any recent decisions relevant to the current context?
+4. ✅ **Read the relevant chapter** in ARCHITECTURE.md / DATABASE.md for the current sprint
+5. ✅ **Ask Sebastian** what the goal of this session is before starting
 
-## Session-Endechecklist für Claude
+## Session End Checklist for Claude
 
-Am Ende jeder produktiven Session:
+At the end of every productive session:
 
-1. ✅ **Update ROADMAP.md** – was wurde gemacht, was ist der nächste Schritt?
-2. ✅ **Neue Entscheidungen in DECISIONS.md** dokumentieren
-3. ✅ **Neue Erkenntnisse in LEARNINGS.md** festhalten (falls zutreffend)
-4. ✅ **ARCHITECTURE.md aktualisieren**, wenn sich Struktur geändert hat
-
----
-
-## Wichtige Grenzen & Sicherheitsregeln
-
-### 🚨 Niemals ohne explizite Bestätigung
-
-- **Niemals** Live-Trading aktivieren (Hardcoded Check auf `paper-api.alpaca.markets`)
-- **Niemals** echte Orders platzieren ohne manuelle Freigabe
-- **Niemals** Credentials in Git committen (`.env`-Dateien in `.gitignore`)
-- **Niemals** die GynOrg-Datenbank berühren (strikte Trennung)
-
-### Verantwortungsbereich
-
-Dieses Projekt ist **privat und experimentell**. Alle Entscheidungen trifft Sebastian. Claude assistiert, implementiert und berät – aber die finale Verantwortung für jeden Trade und jede Konfiguration liegt beim Menschen.
+1. ✅ **Update ROADMAP.md** – what was done, what's the next step?
+2. ✅ **Update SESSION_LOG.md** – document what happened
+3. ✅ **New decisions in DECISIONS_*.md** (in the appropriate file)
+4. ✅ **New findings in LEARNINGS.md** (if applicable)
+5. ✅ **Update DATABASE.md** if schema changed
+6. ✅ **Update SCHEDULER.md** if jobs changed
+7. ✅ **Update ARCHITECTURE.md** if structure changed
 
 ---
 
-## Kontakt zur übergeordneten Projektlandschaft
+## Important Boundaries & Safety Rules
 
-Sebastian arbeitet parallel an anderen Projekten. Dieses Projekt ist **strikt getrennt** von:
-- **GynOrg** (gynäkologische Klinikverwaltung, eigene PostgreSQL)
-- **WoSZ** (Wardens of Sector Zero, Strategiespiel-Konzept)
-- **Sonstige Coding-Experimente**
+### 🚨 Never Without Explicit Confirmation
 
-Trading-Signals hat seinen eigenen Ordner, seine eigene DB, sein eigenes Docker-Compose.
+- **Never** activate live trading (hardcoded check on `paper-api.alpaca.markets`)
+- **Never** place real orders without manual approval
+- **Never** commit credentials to Git (`.env` files in `.gitignore`)
+- **Never** touch the GynOrg database (strict separation)
+
+### Responsibility
+
+This project is **private and experimental**. All decisions are made by Sebastian. Claude assists, implements, and advises – but final responsibility for every trade and configuration lies with the human.
+
+---
+
+## Relationship to Other Projects
+
+Sebastian works on other projects in parallel. This project is **strictly separated** from:
+- **GynOrg** (gynecological clinic management, own PostgreSQL)
+- **WoSZ** (Wardens of Sector Zero, strategy game concept)
+- **Other coding experiments**
+
+Trading Signals has its own folder, its own DB, its own Docker Compose.
