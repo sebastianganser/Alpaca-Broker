@@ -125,7 +125,7 @@ Alpaca-Broker/
 │   │       ├── __init__.py
 │   │       ├── logging.py         # ✅ implementiert
 │   │       └── retry.py           # ✅ implementiert
-│   └── alembic/                   # Datenbank-Migrationen (001-015)
+│   └── alembic/                   # Datenbank-Migrationen (001-017)
 │       ├── env.py
 │       ├── script.py.mako
 │       └── versions/
@@ -461,7 +461,8 @@ CREATE TABLE signals.insider_clusters (
   total_buy_value NUMERIC(20,2),
   total_sell_value NUMERIC(20,2),
   cluster_score   NUMERIC(10,4),          -- Unser berechneter Score
-  computed_at     TIMESTAMP DEFAULT NOW()
+  computed_at     TIMESTAMP DEFAULT NOW(),
+  UNIQUE (ticker, cluster_start)           -- Migration 017: UPSERT-Dedup
 );
 ```
 
@@ -687,3 +688,6 @@ Siehe [DECISIONS.md](DECISIONS.md) für Begründungen.
 - **Robuste 13F-Infotable-Erkennung**: SEC-Filer verwenden beliebige Dateinamen für die Infotable-XML (z.B. `50240.xml`, `MLP_Filing_20251231_v1.xml`). 4-Stufen-Strategie: `infotable` → `informationtable` → `holding` → größte Non-Primary-XML. Behebt 6/20 fehlende Filer (Berkshire, Renaissance, Two Sigma, Millennium, Baupost, Duquesne).
 - **yfinance-Logger auf CRITICAL**: yfinance loggt intern auf ERROR-Level bei erwartbaren Fällen (z.B. "No earnings dates found"). Diese werden unterdrückt, um die Log-Capture nicht mit False-Alarm-Errors zu verschmutzen. Echte Fehler werden in unserem Code als WARNING geloggt.
 - **Plausibilitäts-Ranges als Format-Guard, nicht Werte-Filter**: Ranges fangen nur Datenkorruption/Formatfehler ab, nicht legitime Extremwerte (negative KBV durch Buybacks, negatives Forward-KGV bei Verlustunternehmen). Einzige enge Range: `dividend_yield [0, 0.25]` als Regression-Guard für die /100-Normalisierung.
+- **TA-Catchup mit Vollständigkeitsprüfung**: `compute_catchup()` prüft nicht nur `MAX(trade_date)`, sondern vergleicht pro Datum `COUNT(DISTINCT ticker)` zwischen `prices_daily` und `technical_indicators`. Abdeckung <90% → automatische Neuberechnung. Verhindert Lücken durch partielle Writes (Crash, Race Condition, früher Trigger).
+- **Insider-Cluster UPSERT statt do_nothing**: `UniqueConstraint(ticker, cluster_start)` + `ON CONFLICT DO UPDATE` statt `ON CONFLICT DO NOTHING`. Ohne UC erkannte PostgreSQL keine Konflikte → jeder Scheduler-Lauf erzeugte Duplikate. Migration 017 bereinigt bestehende Duplikate und fügt die Constraint hinzu.
+- **TA-Job mit CollectorLogCapture**: Der `technical_indicators_computer`-Job nutzt jetzt dasselbe Observability-Pattern wie alle Collectors (CollectorLogCapture + CollectionLog-Persistenz), statt stillschweigend ohne Log-Eintrag zu laufen.

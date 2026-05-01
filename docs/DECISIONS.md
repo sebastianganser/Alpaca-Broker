@@ -1166,6 +1166,73 @@ Die API-Route (`signals.py`, `ticker.py`) und das Pydantic-Schema (`ARKDeltaItem
 
 ---
 
+### [2026-04-30] TA-Catchup: Vollständigkeitsprüfung statt nur MAX(trade_date)
+
+**Kontext:** Der TA-Job am 28.04. schrieb 0 Records und meldete "Already up-to-date (TA: 2026-04-28, Prices: 2026-04-28)". Trotzdem fehlten TA-Daten für den 28.04. bei allen ~670 Tickern. Ursache: `compute_catchup()` prüfte nur `MAX(trade_date)` – ein einzelner partieller Record genügte, um den gesamten Tag als "erledigt" zu markieren.
+
+**Optionen:**
+- A: Nur MAX-Vergleich (Status quo) – einfach, aber anfällig für partielle Writes
+- B: Vollständigkeitscheck: `COUNT(DISTINCT ticker)` pro Datum zwischen TA und Prices vergleichen
+- C: Hash-basierter Vergleich (pro Datum prüfen, ob alle Ticker berechnet sind)
+
+**Entscheidung:** Option B – Zwei-Phasen-Erkennung: Phase 1 findet komplett neue Tage (nach MAX), Phase 2 scannt die letzten 5 Handelstage auf unvollständige Coverage (<90% → Neuberechnung).
+
+**Begründung:**
+- Deckt sowohl fehlende als auch unvollständige Tage ab
+- 90%-Schwelle toleriert erwartbare Unterschiede (delistete Ticker, neue Ticker ohne History)
+- 7-Tage-Lookback ist günstig (nur 2 zusätzliche COUNT-Queries pro Lauf)
+- Repariert sich selbst – kein manueller Eingriff nötig
+
+**Betroffene Dateien:** `derived/technical_indicators.py` (compute_catchup)
+
+**Revisit-Trigger:** Falls die 90%-Schwelle zu aggressiv ist und unnötige Neuberechnungen triggert.
+
+---
+
+### [2026-04-16] Insider-Cluster: UniqueConstraint + UPSERT statt do_nothing
+
+**Kontext:** `InsiderCluster` wurde bei jedem Scheduler-Lauf dupliziert. Der Code verwendete `on_conflict_do_nothing()`, aber das Model hatte keinen `UniqueConstraint` – PostgreSQL erkannte daher nie einen Conflict und fügte jedes Mal identische Rows ein.
+
+**Optionen:**
+- A: Vor jeder Berechnung DELETE WHERE ticker = ... – funktioniert, aber verliert computed_at History
+- B: UniqueConstraint auf (ticker, cluster_start) + ON CONFLICT DO UPDATE – idempotent, aktualisiert bestehende Cluster
+- C: Duplicate-Detection im Python-Code (SELECT vor INSERT) – langsam, Race-Condition-anfällig
+
+**Entscheidung:** Option B – `UniqueConstraint('ticker', 'cluster_start')` + `on_conflict_do_update`.
+
+**Begründung:**
+- Idempotent: beliebig oft ausführbar ohne Seiteneffekte
+- Cluster können sich weiterentwickeln (neue Trades kommen rein) → UPDATE statt SKIP ist korrekt
+- Datenbereinigung in Migration 017: `DELETE WHERE id NOT IN (SELECT MAX(id) ... GROUP BY ticker, cluster_start)`
+
+**Betroffene Dateien:** `db/models/insider.py`, `derived/insider_clusters.py`, `alembic/versions/017_add_insider_cluster_unique_constraint.py`
+
+**Revisit-Trigger:** Falls Cluster sich über mehrere Start-Daten erstrecken und die UC zu restriktiv wird.
+
+---
+
+### [2026-04-16] TA-Job: Observability via CollectorLogCapture + CollectionLog
+
+**Kontext:** Der `technical_indicators_computer`-Job lief täglich, hatte aber keinen Eintrag in der `collection_log`-Tabelle und keine Log-Zeilen im Dashboard. Bei Fehlern (z.B. date/Timestamp-Mismatch → 0 Records) war das Problem unsichtbar.
+
+**Optionen:**
+- A: Nur Console-Logs (Status quo) – erfordert Docker-Log-Zugriff
+- B: CollectorLogCapture + CollectionLog wie alle anderen Jobs
+- C: Separates Monitoring-System (Prometheus/Grafana)
+
+**Entscheidung:** Option B – Integration in das bestehende CollectorLogCapture-Pattern.
+
+**Begründung:**
+- Konsistenz: Alle Jobs nutzen dasselbe Observability-Pattern
+- Dashboard: Sofort sichtbar unter Logs → Filter "Technical Indicators"
+- Keine zusätzliche Infrastruktur nötig
+
+**Betroffene Dateien:** `scheduler/jobs.py` (run_technical_indicators_computer)
+
+**Revisit-Trigger:** Wenn wir ein dediziertes Monitoring-System einführen (Prometheus, Datadog).
+
+---
+
 ## Noch zu treffende Entscheidungen
 
 Alle zu Projektstart offenen Entscheidungen wurden am 2026-04-12 getroffen. Neue Entscheidungen werden hier gesammelt, sobald sie auftauchen.

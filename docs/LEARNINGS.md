@@ -179,6 +179,46 @@ Analyse der NFLX-Position:
 
 ---
 
+### [2026-04-16] 🛠️ datetime.date vs pd.Timestamp: Stille Index-Lookup-Fehler
+
+**Beobachtung:** Der TA-Computer schrieb täglich 0 Records ("Complete: 0 records written across 670 tickers"), obwohl Backfills korrekt funktionieren. Kein Error, keine Warning – nur 0 Results.
+
+**Daten:** `_compute_for_date()` vergleicht `target_date` (aus SQL: `datetime.date`) gegen den DataFrame-Index (enthält `pd.Timestamp`). Python behandelt `date(2026,4,16) == Timestamp('2026-04-16')` als `False` – der Lookup schlägt stillschweigend fehl. Backfills nutzen `iterrows()` mit einem anderen Code-Pfad und waren nicht betroffen.
+
+**Hypothese bestätigt:** Typ-Mismatches zwischen SQL-Ergebnissen und pandas-Strukturen sind eine häufige Fehlerquelle, die keine Exceptions wirft – der Vergleich gibt einfach `False` zurück.
+
+**Lesson Learned:** Bei Index-Lookups in DataFrames immer explizit `pd.Timestamp(target_date)` verwenden. Generell: SQL-Rückgabetypen (`datetime.date`, `Decimal`) nie direkt mit pandas-Typen vergleichen, ohne vorher zu konvertieren.
+
+**Status:** 🟢 Behoben (explizite `pd.Timestamp()`-Konvertierung)
+
+---
+
+### [2026-04-16] 🛠️ Jobs ohne CollectionLog sind unsichtbar
+
+**Beobachtung:** Der TA-Job lief 2+ Wochen lang fehlerhaft (0 Records), ohne dass dies im Dashboard sichtbar war. Alle anderen Jobs (Prices, ARK, Form4 etc.) hatten Einträge in der `collection_log`-Tabelle und waren im Logs-Dashboard sichtbar – nur der TA-Job nicht.
+
+**Daten:** Der TA-Job war der einzige Job ohne `CollectorLogCapture`-Wrapper und ohne `CollectionLog`-Persistenz.
+
+**Lesson Learned:** Jeder neue Job muss ab Tag 1 das CollectorLogCapture-Pattern verwenden. Eine Checkliste für neue Jobs: (1) CollectorLogCapture, (2) CollectionLog-Entry (success + error), (3) started_at/finished_at, (4) records_read/records_written. Stille Failures sind schlimmer als laute Fehler.
+
+**Status:** 🟢 Behoben (TA-Job nutzt jetzt CollectorLogCapture)
+
+---
+
+### [2026-04-30] 🛠️ MAX(trade_date) als Vollständigkeitscheck ist unzureichend
+
+**Beobachtung:** Am 28.04. zeigte der TA-Catchup "Already up-to-date (TA: 2026-04-28)", obwohl für den 28.04. keine der ~670 Ticker TA-Daten hatten. Der 29.04. wurde korrekt berechnet, aber die Lücke vom 28.04. blieb bestehen.
+
+**Daten:** `MAX(trade_date)` in `technical_indicators` war `2026-04-28` (vermutlich durch einen partiellen/frühen Lauf), während `MAX(trade_date)` in `prices_daily` ebenfalls `2026-04-28` war → Catchup übersprang den Tag.
+
+**Hypothese bestätigt:** `MAX()` prüft nur das Vorhandensein mindestens eines Records, nicht die Vollständigkeit. Ein einzelner Record für einen Tag genügt, um den gesamten Tag als "erledigt" zu markieren.
+
+**Lesson Learned:** Bei Derived-Data-Jobs, die viele Records pro Datum erzeugen (670 Ticker/Tag), reicht MAX() nicht. Stattdessen Coverage-Vergleich (`COUNT(DISTINCT ticker)` pro Datum vs. Erwartungswert) im 7-Tage-Fenster. Kostet 2 zusätzliche Queries, verhindert aber mehrtägige unsichtbare Lücken.
+
+**Status:** 🟢 Behoben (Zwei-Phasen-Catchup mit Coverage-Check)
+
+---
+
 ## Geplante Untersuchungen
 
 Sobald genug Daten vorliegen, wollen wir diese Fragen systematisch untersuchen:
