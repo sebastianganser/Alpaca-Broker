@@ -23,7 +23,7 @@ Design:
   - Idempotent: UPSERT pattern (ON CONFLICT DO UPDATE)
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import pandas_ta as ta
@@ -192,7 +192,7 @@ class TechnicalIndicatorsComputer:
             PriceDaily.trade_date,
             func.count(PriceDaily.ticker.distinct()).label("price_count"),
         ).where(
-            PriceDaily.trade_date > last_price - 7  # Check last ~5 trading days
+            PriceDaily.trade_date > last_price - timedelta(days=7)  # Check last ~5 trading days
         ).group_by(
             PriceDaily.trade_date
         ).order_by(
@@ -203,7 +203,7 @@ class TechnicalIndicatorsComputer:
             TechnicalIndicator.trade_date,
             func.count(TechnicalIndicator.ticker.distinct()).label("ta_count"),
         ).where(
-            TechnicalIndicator.trade_date > last_price - 7
+            TechnicalIndicator.trade_date > last_price - timedelta(days=7)
         ).group_by(
             TechnicalIndicator.trade_date
         )
