@@ -157,6 +157,70 @@ def main():
                 chunk = ", ".join(no_data[i:i+10])
                 print(f"    {chunk}")
 
+        # ── 7. Backfill depth analysis ───────────────────────────
+        #    Classifies tickers by how far back their data reaches.
+        #    Helps decide if skipped tickers need a deeper backfill.
+        print(f"\n{'─'*70}")
+        print(f"  BACKFILL DEPTH ANALYSIS")
+        print(f"  (Do skipped tickers have deep history or only recent data?)")
+        print(f"{'─'*70}\n")
+
+        depth = s.execute(text("""
+            SELECT
+                u.ticker,
+                COUNT(it.id)                AS n_trades,
+                MIN(it.filing_date)         AS earliest_filing,
+                MAX(it.filing_date)         AS latest_filing,
+                MIN(it.transaction_date)    AS earliest_txn,
+                MAX(it.transaction_date)    AS latest_txn
+            FROM signals.universe u
+            LEFT JOIN signals.insider_trades it ON it.ticker = u.ticker
+            WHERE u.is_active = true
+            GROUP BY u.ticker
+            ORDER BY u.ticker
+        """)).fetchall()
+
+        # Classify: "deep" = earliest filing <= 2023-12-31 (has old data)
+        #           "shallow" = earliest filing > 2023-12-31 (only recent)
+        #           "none" = no data at all
+        from datetime import date
+        cutoff = date(2023, 12, 31)
+
+        deep = []
+        shallow = []
+        none_list = []
+
+        for r in depth:
+            ticker, n_trades, earliest_f, latest_f, earliest_t, latest_t = r
+            if n_trades == 0 or earliest_f is None:
+                none_list.append(ticker)
+            elif earliest_f <= cutoff:
+                deep.append((ticker, n_trades, earliest_f, latest_f))
+            else:
+                shallow.append((ticker, n_trades, earliest_f, latest_f))
+
+        total = len(depth)
+        print(f"  Deep backfill (earliest filing ≤ {cutoff}):  "
+              f"{len(deep):>4} tickers  ({100*len(deep)/total:.1f}%)")
+        print(f"  Shallow / recent only (> {cutoff}):          "
+              f"{len(shallow):>4} tickers  ({100*len(shallow)/total:.1f}%)")
+        print(f"  No data at all:                              "
+              f"{len(none_list):>4} tickers  ({100*len(none_list)/total:.1f}%)")
+
+        if shallow:
+            print(f"\n  ⚠️  SHALLOW TICKERS — may need deeper backfill:")
+            print(f"  {'Ticker':8} {'Trades':>7} {'Earliest Filing':>16} "
+                  f"{'Latest Filing':>14}")
+            print(f"  {'─'*8} {'─'*7} {'─'*16} {'─'*14}")
+            for t, n, ef, lf in sorted(shallow, key=lambda x: x[2]):
+                print(f"  {t:8} {n:>7,} {str(ef):>16} {str(lf):>14}")
+
+        if none_list:
+            print(f"\n  ℹ️  Tickers with NO insider trades at all ({len(none_list)}):")
+            for i in range(0, len(none_list), 10):
+                chunk = ", ".join(none_list[i:i+10])
+                print(f"    {chunk}")
+
         print(f"\n{'='*70}")
         print(f"  VERIFICATION COMPLETE")
         print(f"{'='*70}\n")
