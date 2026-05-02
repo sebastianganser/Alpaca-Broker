@@ -46,13 +46,14 @@ class InsiderClusterComputer:
 
         Args:
             since_date: Only look at transactions on or after this date.
-                       Defaults to 90 days ago.
+                       Defaults to 365 days ago to capture a full year
+                       of cluster history (13F quarterly context).
 
         Returns:
             Number of cluster records written.
         """
         if since_date is None:
-            since_date = date.today() - timedelta(days=90)
+            since_date = date.today() - timedelta(days=365)
 
         # Get all tickers with purchase transactions since since_date
         stmt = (
