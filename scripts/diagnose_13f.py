@@ -1,6 +1,9 @@
 """Diagnostic script for the 13F collector silence problem.
 
-Run inside the Docker container or locally with DB + SEC access:
+Run inside the Docker container:
+    docker exec -it alpaca-broker uv run python scripts/diagnose_13f.py
+
+Run locally (with venv activated):
     python scripts/diagnose_13f.py
 
 Checks:
@@ -10,12 +13,6 @@ Checks:
   4. Can we download + parse the infotable XML?
   5. Would the dedup constraint block new data?
 """
-
-import sys
-import os
-
-# Add project root to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from datetime import date, timedelta
 from trading_signals.collectors.sec_client import SECClient
@@ -280,7 +277,7 @@ def check_lookback_window() -> None:
     """Verify the lookback window covers the right range."""
     section("6. LOOKBACK WINDOW ANALYSIS")
 
-    lookback_days = 90
+    lookback_days = 120
     since_date = date.today() - timedelta(days=lookback_days)
 
     print(f"  Today:          {date.today()}")
