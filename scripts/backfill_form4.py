@@ -5,24 +5,29 @@ Run inside the Docker container:
 
 This script fetches Form 4 filings going back ~3 years for all active
 universe tickers. It uses the existing Form4Collector infrastructure
-with a large lookback window. SEC rate limiting is handled automatically
-by SECClient (10 req/s).
+with a large lookback window.
 
-Expected runtime: 30-60 minutes (depends on universe size and SEC load).
+SEC rate limiting strategy:
+  - SECClient enforces 0.11s between requests (10 req/s)
+  - Additional 0.2s delay between filing downloads within a ticker
+  - 1s pause between tickers to let the rate limit window reset
+  - 5 retry attempts with exponential backoff for 429 errors
+
+Expected runtime: 60-90 minutes (depends on universe size and SEC load).
 Safe to re-run: uses ON CONFLICT DO NOTHING dedup.
 
 After completion, re-run the insider cluster backfill:
     docker exec -it alpaca-broker uv run python scripts/backfill_insider_clusters.py
 """
 
-import sys
 import time
 from datetime import date, timedelta
 
 from sqlalchemy import select, func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from trading_signals.collectors.sec_client import SECClient
-from trading_signals.collectors.form4_collector import Form4Collector, parse_form4_xml
+from trading_signals.collectors.form4_collector import parse_form4_xml
 from trading_signals.db.models.insider import InsiderTrade
 from trading_signals.db.models.universe import Universe
 from trading_signals.db.session import get_session
@@ -32,6 +37,12 @@ logger = get_logger(__name__)
 
 # How far back to look (in days) — ~3 years
 LOOKBACK_DAYS = 1100
+
+# Delay between individual filing downloads (seconds)
+FILING_DELAY = 0.2
+
+# Delay between tickers to let SEC rate limit window reset (seconds)
+TICKER_DELAY = 1.0
 
 # Progress reporting interval
 REPORT_EVERY = 25
@@ -43,6 +54,7 @@ def main():
     print(f"\n{'='*60}")
     print(f"  Form 4 Historical Backfill")
     print(f"  Lookback: {LOOKBACK_DAYS} days (since {since_date})")
+    print(f"  Filing delay: {FILING_DELAY}s | Ticker delay: {TICKER_DELAY}s")
     print(f"{'='*60}\n")
 
     # Get count before
@@ -62,7 +74,7 @@ def main():
             ).all()
         ]
     print(f"  Active tickers to process: {len(tickers)}")
-    print(f"  Estimated time: {len(tickers) * 0.15:.0f}-{len(tickers) * 0.3:.0f} seconds")
+    print(f"  Estimated time: ~{len(tickers) * 3 // 60}-{len(tickers) * 6 // 60} min")
     print()
 
     # Initialize SEC client and load CIK mapping
@@ -93,10 +105,12 @@ def main():
         if not filings:
             if (i + 1) % REPORT_EVERY == 0:
                 elapsed = time.time() - start_time
+                rate = (i + 1) / elapsed if elapsed > 0 else 0
+                eta = (len(tickers) - i - 1) / rate if rate > 0 else 0
                 print(
                     f"  [{i+1}/{len(tickers)}] {ticker:6} — "
                     f"no filings | total: {total_written:,} written, "
-                    f"{errors} errors ({elapsed:.0f}s)"
+                    f"{errors} errors ({elapsed:.0f}s, ETA ~{eta:.0f}s)"
                 )
             continue
 
@@ -113,6 +127,9 @@ def main():
             # Strip XSLT prefix (same as Form4Collector)
             if "/" in doc_name:
                 doc_name = doc_name.rsplit("/", 1)[-1]
+
+            # Throttle between filing downloads
+            time.sleep(FILING_DELAY)
 
             try:
                 xml_content = sec_client.download_filing_document(
@@ -159,8 +176,6 @@ def main():
 
         # Store in batches per ticker
         if ticker_transactions:
-            from sqlalchemy.dialects.postgresql import insert as pg_insert
-
             with get_session() as session:
                 written = 0
                 for txn in ticker_transactions:
@@ -179,14 +194,18 @@ def main():
 
         if (i + 1) % REPORT_EVERY == 0 or len(filings) > 10:
             elapsed = time.time() - start_time
-            eta = (elapsed / (i + 1)) * (len(tickers) - i - 1)
+            rate = (i + 1) / elapsed if elapsed > 0 else 0
+            eta = (len(tickers) - i - 1) / rate if rate > 0 else 0
             print(
                 f"  [{i+1}/{len(tickers)}] {ticker:6} — "
                 f"{len(filings):3} filings, "
                 f"{len(ticker_transactions):4} txns | "
                 f"total: {total_written:,} written ({elapsed:.0f}s, "
-                f"ETA {eta:.0f}s)"
+                f"ETA ~{eta/60:.0f} min)"
             )
+
+        # Throttle between tickers
+        time.sleep(TICKER_DELAY)
 
     elapsed = time.time() - start_time
 

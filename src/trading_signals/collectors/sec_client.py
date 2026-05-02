@@ -56,7 +56,7 @@ class SECClient:
 
     # ── HTTP Helpers ──────────────────────────────────────────────
 
-    @retry(max_attempts=3, base_delay=2.0)
+    @retry(max_attempts=5, base_delay=3.0)
     def _get_json(self, url: str) -> dict:
         """GET request returning JSON, with rate limiting and retry."""
         self._rate_limit()
@@ -64,7 +64,7 @@ class SECClient:
         response.raise_for_status()
         return response.json()
 
-    @retry(max_attempts=3, base_delay=2.0)
+    @retry(max_attempts=5, base_delay=3.0)
     def _get_text(self, url: str) -> str:
         """GET request returning text content, with rate limiting."""
         self._rate_limit()
