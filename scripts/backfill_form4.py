@@ -39,13 +39,14 @@ logger = get_logger(__name__)
 LOOKBACK_DAYS = 1100
 
 # Delay between individual filing downloads (seconds)
-FILING_DELAY = 0.2
+# Conservative: ~2s per filing keeps us well under SEC's limit
+FILING_DELAY = 2.0
 
 # Delay between tickers to let SEC rate limit window reset (seconds)
-TICKER_DELAY = 1.0
+TICKER_DELAY = 10.0
 
 # Progress reporting interval
-REPORT_EVERY = 25
+REPORT_EVERY = 10
 
 
 def main():
@@ -55,6 +56,7 @@ def main():
     print(f"  Form 4 Historical Backfill")
     print(f"  Lookback: {LOOKBACK_DAYS} days (since {since_date})")
     print(f"  Filing delay: {FILING_DELAY}s | Ticker delay: {TICKER_DELAY}s")
+    print(f"  Target duration: ~8-12 hours (conservative)")
     print(f"{'='*60}\n")
 
     # Get count before
@@ -74,7 +76,7 @@ def main():
             ).all()
         ]
     print(f"  Active tickers to process: {len(tickers)}")
-    print(f"  Estimated time: ~{len(tickers) * 3 // 60}-{len(tickers) * 6 // 60} min")
+    print(f"  Safe to abort and re-run (dedup via ON CONFLICT DO NOTHING)")
     print()
 
     # Initialize SEC client and load CIK mapping
