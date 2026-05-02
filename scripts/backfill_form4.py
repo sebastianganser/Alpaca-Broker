@@ -1,20 +1,35 @@
 """Backfill historical Form 4 insider trades from SEC EDGAR.
 
-Run inside the Docker container:
-    docker exec -it alpaca-broker uv run python scripts/backfill_form4.py
+Run inside the Docker container (use tmux/screen so it survives SSH disconnect!):
+
+    # Option 1: tmux (recommended — you can reattach later)
+    docker exec -it alpaca-broker bash
+    tmux new -s backfill
+    uv run python scripts/backfill_form4.py
+    # Detach: Ctrl+B, then D
+    # Reattach: docker exec -it alpaca-broker tmux attach -t backfill
+
+    # Option 2: nohup (fire and forget, output in logfile)
+    docker exec alpaca-broker bash -c \
+        'nohup uv run python scripts/backfill_form4.py > /tmp/backfill_form4.log 2>&1 &'
+    # Check progress:
+    docker exec alpaca-broker tail -f /tmp/backfill_form4.log
 
 This script fetches Form 4 filings going back ~3 years for all active
 universe tickers. It uses the existing Form4Collector infrastructure
 with a large lookback window.
 
+Resume-safe: On startup, queries the DB for tickers that already have
+insider_trades within the lookback window and skips them entirely.
+Additionally uses ON CONFLICT DO NOTHING for row-level dedup.
+
 SEC rate limiting strategy:
   - SECClient enforces 0.11s between requests (10 req/s)
-  - Additional 0.2s delay between filing downloads within a ticker
-  - 1s pause between tickers to let the rate limit window reset
+  - Additional 2s delay between filing downloads within a ticker
+  - 10s pause between tickers to let the rate limit window reset
   - 5 retry attempts with exponential backoff for 429 errors
 
-Expected runtime: 60-90 minutes (depends on universe size and SEC load).
-Safe to re-run: uses ON CONFLICT DO NOTHING dedup.
+Expected runtime: 8-12 hours full / much less on resume.
 
 After completion, re-run the insider cluster backfill:
     docker exec -it alpaca-broker uv run python scripts/backfill_insider_clusters.py
@@ -23,7 +38,7 @@ After completion, re-run the insider cluster backfill:
 import time
 from datetime import date, timedelta
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from trading_signals.collectors.sec_client import SECClient
@@ -49,6 +64,27 @@ TICKER_DELAY = 10.0
 REPORT_EVERY = 10
 
 
+def get_already_backfilled_tickers(since_date: date) -> set[str]:
+    """Query the DB for tickers that already have insider_trades data.
+
+    A ticker is considered "backfilled" if it has at least one
+    insider_trade row with a filing_date within the lookback window.
+    This means the SEC submissions were already fetched and parsed
+    for this ticker in a previous run.
+
+    Returns:
+        Set of ticker symbols that can be skipped.
+    """
+    with get_session() as session:
+        result = session.execute(text("""
+            SELECT DISTINCT ticker
+            FROM signals.insider_trades
+            WHERE filing_date >= :since_date
+              AND ticker IS NOT NULL
+        """), {"since_date": since_date})
+        return {row[0] for row in result}
+
+
 def main():
     since_date = date.today() - timedelta(days=LOOKBACK_DAYS)
 
@@ -56,7 +92,6 @@ def main():
     print(f"  Form 4 Historical Backfill")
     print(f"  Lookback: {LOOKBACK_DAYS} days (since {since_date})")
     print(f"  Filing delay: {FILING_DELAY}s | Ticker delay: {TICKER_DELAY}s")
-    print(f"  Target duration: ~8-12 hours (conservative)")
     print(f"{'='*60}\n")
 
     # Get count before
@@ -75,8 +110,20 @@ def main():
                 .order_by(Universe.ticker)
             ).all()
         ]
-    print(f"  Active tickers to process: {len(tickers)}")
-    print(f"  Safe to abort and re-run (dedup via ON CONFLICT DO NOTHING)")
+    print(f"  Active tickers in universe: {len(tickers)}")
+
+    # ── Resume logic: skip tickers already backfilled ────────────
+    already_done = get_already_backfilled_tickers(since_date)
+    tickers_to_process = [t for t in tickers if t not in already_done]
+    skipped_count = len(tickers) - len(tickers_to_process)
+
+    if skipped_count > 0:
+        print(f"  ✅ Already backfilled (skipping): {skipped_count} tickers")
+        print(f"  🔄 Remaining to process: {len(tickers_to_process)} tickers")
+    else:
+        print(f"  Fresh start — no previously backfilled tickers found")
+
+    print(f"  Safe to abort and re-run (resume + dedup via ON CONFLICT)")
     print()
 
     # Initialize SEC client and load CIK mapping
@@ -87,12 +134,14 @@ def main():
     total_written = 0
     total_filings = 0
     tickers_with_filings = 0
+    no_cik_count = 0
     errors = 0
     start_time = time.time()
 
-    for i, ticker in enumerate(tickers):
+    for i, ticker in enumerate(tickers_to_process):
         cik = sec_client.get_cik(ticker)
         if not cik:
+            no_cik_count += 1
             continue
 
         try:
@@ -108,11 +157,11 @@ def main():
             if (i + 1) % REPORT_EVERY == 0:
                 elapsed = time.time() - start_time
                 rate = (i + 1) / elapsed if elapsed > 0 else 0
-                eta = (len(tickers) - i - 1) / rate if rate > 0 else 0
+                eta = (len(tickers_to_process) - i - 1) / rate if rate > 0 else 0
                 print(
-                    f"  [{i+1}/{len(tickers)}] {ticker:6} — "
+                    f"  [{i+1}/{len(tickers_to_process)}] {ticker:6} — "
                     f"no filings | total: {total_written:,} written, "
-                    f"{errors} errors ({elapsed:.0f}s, ETA ~{eta:.0f}s)"
+                    f"{errors} errors ({elapsed:.0f}s, ETA ~{eta/60:.0f} min)"
                 )
             continue
 
@@ -197,9 +246,9 @@ def main():
         if (i + 1) % REPORT_EVERY == 0 or len(filings) > 10:
             elapsed = time.time() - start_time
             rate = (i + 1) / elapsed if elapsed > 0 else 0
-            eta = (len(tickers) - i - 1) / rate if rate > 0 else 0
+            eta = (len(tickers_to_process) - i - 1) / rate if rate > 0 else 0
             print(
-                f"  [{i+1}/{len(tickers)}] {ticker:6} — "
+                f"  [{i+1}/{len(tickers_to_process)}] {ticker:6} — "
                 f"{len(filings):3} filings, "
                 f"{len(ticker_transactions):4} txns | "
                 f"total: {total_written:,} written ({elapsed:.0f}s, "
@@ -220,16 +269,20 @@ def main():
     print(f"\n{'='*60}")
     print(f"  BACKFILL COMPLETE")
     print(f"{'='*60}")
-    print(f"  Duration:         {elapsed:.0f}s ({elapsed/60:.1f} min)")
-    print(f"  Tickers processed:{len(tickers):,}")
-    print(f"  Tickers w/filings:{tickers_with_filings:,}")
-    print(f"  Total filings:    {total_filings:,}")
-    print(f"  Transactions:     {total_fetched:,} fetched, {total_written:,} new")
-    print(f"  Errors:           {errors}")
-    print(f"  DB count:         {count_before:,} → {count_after:,} (+{count_after-count_before:,})")
+    print(f"  Duration:          {elapsed:.0f}s ({elapsed/60:.1f} min)")
+    print(f"  Skipped (resume):  {skipped_count:,} tickers")
+    print(f"  Processed:         {len(tickers_to_process):,} tickers")
+    print(f"  No CIK found:     {no_cik_count:,}")
+    print(f"  Tickers w/filings: {tickers_with_filings:,}")
+    print(f"  Total filings:     {total_filings:,}")
+    print(f"  Transactions:      {total_fetched:,} fetched, {total_written:,} new")
+    print(f"  Errors:            {errors}")
+    print(f"  DB count:          {count_before:,} → {count_after:,} "
+          f"(+{count_after-count_before:,})")
     print()
     print(f"  Next step: re-compute insider clusters:")
-    print(f"    docker exec -it alpaca-broker uv run python scripts/backfill_insider_clusters.py")
+    print(f"    docker exec -it alpaca-broker uv run python "
+          f"scripts/backfill_insider_clusters.py")
 
 
 if __name__ == "__main__":
