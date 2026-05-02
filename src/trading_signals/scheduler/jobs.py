@@ -259,101 +259,153 @@ def run_index_sync() -> None:
     validates new tickers against Alpaca, adds them to the
     universe, and enriches any tickers missing sector data.
     """
+    from datetime import datetime
+
     from sqlalchemy import select, update
 
     from trading_signals.collectors.yfinance_client import YFinanceClient
+    from trading_signals.db.models.collection_log import CollectionLog
     from trading_signals.db.models.universe import Universe
     from trading_signals.db.session import get_session
     from trading_signals.universe.index_sync import IndexSyncer
+    from trading_signals.utils.logging import CollectorLogCapture
 
-    logger.info("Scheduler triggered: index_sync_job")
+    collector_name = "index_sync"
+    logger.info(f"Scheduler triggered: {collector_name}_job")
 
-    with get_session() as session:
-        syncer = IndexSyncer(session)
-        result = syncer.sync()
-        session.commit()
-        logger.info(
-            f"index_sync_job finished: "
-            f"S&P 500={result.sp500_count}, Nasdaq 100={result.nasdaq100_count}, "
-            f"added={result.newly_added}, updated={result.membership_updated}"
-        )
-        if result.new_tickers:
-            logger.info(
-                f"index_sync_job new tickers: {', '.join(result.new_tickers)}"
-            )
+    started_at = datetime.now()
+    records_written = 0
 
-    # Step 2: Enrich tickers missing sector/industry data
-    with get_session() as session:
-        stmt = (
-            select(Universe.ticker)
-            .where(Universe.is_active.is_(True))
-            .where(
-                (Universe.sector.is_(None)) | (Universe.sector == "")
-            )
-            .order_by(Universe.ticker)
-        )
-        missing = [row[0] for row in session.execute(stmt).all()]
-
-    if missing:
-        logger.info(
-            f"index_sync_job: enriching {len(missing)} tickers "
-            f"with sector/industry from yfinance"
-        )
-        client = YFinanceClient(
-            batch_size=50,
-            delay_between_tickers=0.5,
-            delay_between_batches=3.0,
-        )
-        results = client.fetch_sector_info(missing)
-
-        enriched = 0
-        deactivated_etfs: list[str] = []
-
-        with get_session() as session:
-            from trading_signals.universe.blacklist import add_to_blacklist
-
-            for record in results:
-                ticker = record["ticker"]
-                quote_type = record.get("quote_type", "")
-
-                # Learned ETF filter: blacklist + deactivate non-equity tickers
-                if quote_type and quote_type.upper() != "EQUITY":
-                    add_to_blacklist(
-                        session, ticker,
-                        quote_type=quote_type,
-                        source="index_sync",
-                    )
-                    session.execute(
-                        update(Universe)
-                        .where(Universe.ticker == ticker)
-                        .values(is_active=False)
-                    )
-                    deactivated_etfs.append(ticker)
-                    logger.warning(
-                        f"index_sync_job: blacklisted + deactivated {ticker}: "
-                        f"quoteType={quote_type}"
-                    )
-                    continue
-
-                session.execute(
-                    update(Universe)
-                    .where(Universe.ticker == ticker)
-                    .values(
-                        sector=record.get("sector"),
-                        industry=record.get("industry"),
-                    )
+    with CollectorLogCapture(collector_name) as log_capture:
+        try:
+            # Step 1: Sync index membership
+            with get_session() as session:
+                syncer = IndexSyncer(session)
+                result = syncer.sync()
+                session.commit()
+                records_written += result.newly_added + result.membership_updated
+                logger.info(
+                    f"{collector_name}_job finished: "
+                    f"S&P 500={result.sp500_count}, Nasdaq 100={result.nasdaq100_count}, "
+                    f"added={result.newly_added}, updated={result.membership_updated}"
                 )
-                enriched += 1
+                if result.new_tickers:
+                    logger.info(
+                        f"{collector_name}_job new tickers: {', '.join(result.new_tickers)}"
+                    )
 
-        if deactivated_etfs:
+            # Step 2: Enrich tickers missing sector/industry data
+            with get_session() as session:
+                stmt = (
+                    select(Universe.ticker)
+                    .where(Universe.is_active.is_(True))
+                    .where(
+                        (Universe.sector.is_(None)) | (Universe.sector == "")
+                    )
+                    .order_by(Universe.ticker)
+                )
+                missing = [row[0] for row in session.execute(stmt).all()]
+
+            if missing:
+                logger.info(
+                    f"{collector_name}_job: enriching {len(missing)} tickers "
+                    f"with sector/industry from yfinance"
+                )
+                client = YFinanceClient(
+                    batch_size=50,
+                    delay_between_tickers=0.5,
+                    delay_between_batches=3.0,
+                )
+                results = client.fetch_sector_info(missing)
+
+                enriched = 0
+                deactivated_etfs: list[str] = []
+
+                with get_session() as session:
+                    from trading_signals.universe.blacklist import add_to_blacklist
+
+                    for record in results:
+                        ticker = record["ticker"]
+                        quote_type = record.get("quote_type", "")
+
+                        # Learned ETF filter: blacklist + deactivate non-equity tickers
+                        if quote_type and quote_type.upper() != "EQUITY":
+                            add_to_blacklist(
+                                session, ticker,
+                                quote_type=quote_type,
+                                source="index_sync",
+                            )
+                            session.execute(
+                                update(Universe)
+                                .where(Universe.ticker == ticker)
+                                .values(is_active=False)
+                            )
+                            deactivated_etfs.append(ticker)
+                            logger.warning(
+                                f"{collector_name}_job: blacklisted + deactivated {ticker}: "
+                                f"quoteType={quote_type}"
+                            )
+                            continue
+
+                        session.execute(
+                            update(Universe)
+                            .where(Universe.ticker == ticker)
+                            .values(
+                                sector=record.get("sector"),
+                                industry=record.get("industry"),
+                            )
+                        )
+                        enriched += 1
+                    records_written += enriched
+
+                if deactivated_etfs:
+                    logger.info(
+                        f"{collector_name}_job: blacklisted {len(deactivated_etfs)} "
+                        f"non-equity tickers: {deactivated_etfs}"
+                    )
+
+                logger.info(
+                    f"{collector_name}_job sector enrichment: "
+                    f"{enriched}/{len(missing)} tickers enriched"
+                )
+            else:
+                logger.info(f"{collector_name}_job: all tickers have sector data")
+
+            # Write success log entry
+            with get_session() as session:
+                log_entry = CollectionLog(
+                    collector_name=collector_name,
+                    started_at=started_at,
+                    finished_at=datetime.now(),
+                    status="success",
+                    records_fetched=records_written,
+                    records_written=records_written,
+                    gaps_detected=0,
+                    log_lines=log_capture.get_lines(),
+                )
+                session.add(log_entry)
+                session.commit()
+
             logger.info(
-                f"index_sync_job: blacklisted {len(deactivated_etfs)} "
-                f"non-equity tickers: {deactivated_etfs}"
+                f"{collector_name}_job completed: "
+                f"{records_written} records written"
             )
-
-        logger.info(
-            f"index_sync_job sector enrichment: "
-            f"{enriched}/{len(missing)} tickers enriched"
-        )
-    else:
-        logger.info("index_sync_job: all tickers have sector data")
+        except Exception as e:
+            logger.error(f"{collector_name}_job FAILED: {e}")
+            try:
+                with get_session() as session:
+                    log_entry = CollectionLog(
+                        collector_name=collector_name,
+                        started_at=started_at,
+                        finished_at=datetime.now(),
+                        status="failed",
+                        records_fetched=0,
+                        records_written=0,
+                        gaps_detected=0,
+                        notes=str(e)[:2000],
+                        log_lines=log_capture.get_lines(),
+                    )
+                    session.add(log_entry)
+                    session.commit()
+            except Exception:
+                logger.error(f"{collector_name}_job: Failed to write error log")
