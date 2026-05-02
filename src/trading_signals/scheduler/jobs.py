@@ -93,7 +93,7 @@ def run_form13f_collector() -> None:
 
     logger.info("Scheduler triggered: form13f_collector_job")
 
-    collector = Form13FCollector(lookback_days=90)
+    collector = Form13FCollector(lookback_days=120)
     log = collector.run()
     logger.info(
         f"form13f_collector_job finished: status={log.status}, "
