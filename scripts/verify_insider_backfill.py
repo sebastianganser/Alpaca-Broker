@@ -32,6 +32,72 @@ def main():
         print(f"  Date range:        {stats[3]} → {stats[4]}")
         print(f"  Filing range:      {stats[5]} → {stats[6]}")
 
+        # ── 1b. Date outlier investigation ───────────────────────
+        print(f"\n{'─'*70}")
+        print(f"  DATE OUTLIERS (transaction_date outside expected range)")
+        print(f"{'─'*70}\n")
+
+        # Trades with transaction_date before the lookback window
+        old = s.execute(text("""
+            SELECT ticker, insider_name, transaction_date, filing_date,
+                   transaction_type, shares, price_per_share,
+                   is_derivative, form4_url
+            FROM signals.insider_trades
+            WHERE transaction_date < '2023-01-01'
+            ORDER BY transaction_date ASC
+            LIMIT 20
+        """)).fetchall()
+
+        print(f"  Trades with transaction_date < 2023-01-01: "
+              f"({len(old)} shown, may be more)")
+        if old:
+            print(f"  {'Ticker':8} {'Date':>12} {'Filed':>12} {'Type':>5} "
+                  f"{'Deriv':>6} {'Insider':30}")
+            print(f"  {'─'*8} {'─'*12} {'─'*12} {'─'*5} {'─'*6} {'─'*30}")
+            for r in old:
+                print(f"  {r[0] or '???':8} {str(r[2]):>12} {str(r[3]):>12} "
+                      f"{r[4] or '?':>5} {'YES' if r[7] else 'no':>6} "
+                      f"{(r[1] or '???')[:30]:30}")
+
+        # Trades with transaction_date in the future
+        future = s.execute(text("""
+            SELECT ticker, insider_name, transaction_date, filing_date,
+                   transaction_type, shares, price_per_share,
+                   is_derivative, form4_url
+            FROM signals.insider_trades
+            WHERE transaction_date > CURRENT_DATE
+            ORDER BY transaction_date DESC
+            LIMIT 20
+        """)).fetchall()
+
+        print(f"\n  Trades with transaction_date in the FUTURE: "
+              f"({len(future)} shown)")
+        if future:
+            print(f"  {'Ticker':8} {'Date':>12} {'Filed':>12} {'Type':>5} "
+                  f"{'Deriv':>6} {'Insider':30}")
+            print(f"  {'─'*8} {'─'*12} {'─'*12} {'─'*5} {'─'*6} {'─'*30}")
+            for r in future:
+                print(f"  {r[0] or '???':8} {str(r[2]):>12} {str(r[3]):>12} "
+                      f"{r[4] or '?':>5} {'YES' if r[7] else 'no':>6} "
+                      f"{(r[1] or '???')[:30]:30}")
+
+        # Count totals
+        outlier_counts = s.execute(text("""
+            SELECT
+                COUNT(*) FILTER (WHERE transaction_date < '2023-01-01')
+                    AS old_count,
+                COUNT(*) FILTER (WHERE transaction_date > CURRENT_DATE)
+                    AS future_count,
+                COUNT(*) FILTER (WHERE transaction_date IS NULL)
+                    AS null_count
+            FROM signals.insider_trades
+        """)).first()
+
+        print(f"\n  Summary:")
+        print(f"    Before 2023:    {outlier_counts[0]:,} trades")
+        print(f"    In the future:  {outlier_counts[1]:,} trades")
+        print(f"    NULL dates:     {outlier_counts[2]:,} trades")
+
         # ── 2. Distribution by first letter ─────────────────────
         print(f"\n{'─'*70}")
         print(f"  DISTRIBUTION BY TICKER FIRST LETTER")

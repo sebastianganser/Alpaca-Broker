@@ -65,23 +65,31 @@ REPORT_EVERY = 10
 
 
 def get_already_backfilled_tickers(since_date: date) -> set[str]:
-    """Query the DB for tickers that already have insider_trades data.
+    """Query the DB for tickers that have DEEP backfill data.
 
-    A ticker is considered "backfilled" if it has at least one
-    insider_trade row with a filing_date within the lookback window.
-    This means the SEC submissions were already fetched and parsed
-    for this ticker in a previous run.
+    A ticker is considered "backfilled" only if its earliest
+    filing_date is within the first ~9 months of the lookback window.
+    This distinguishes tickers that were fully backfilled from those
+    that only have recent data from the daily Form4Collector.
+
+    Tickers with only recent data (e.g., from the daily collector's
+    7-day lookback) will NOT be skipped, ensuring they get a full
+    historical backfill.
 
     Returns:
         Set of ticker symbols that can be skipped.
     """
+    # Cutoff: tickers with earliest filing_date ≤ this are "deep"
+    deep_cutoff = date(2023, 12, 31)
+
     with get_session() as session:
         result = session.execute(text("""
-            SELECT DISTINCT ticker
+            SELECT ticker
             FROM signals.insider_trades
-            WHERE filing_date >= :since_date
-              AND ticker IS NOT NULL
-        """), {"since_date": since_date})
+            WHERE ticker IS NOT NULL
+            GROUP BY ticker
+            HAVING MIN(filing_date) <= :deep_cutoff
+        """), {"deep_cutoff": deep_cutoff})
         return {row[0] for row in result}
 
 
