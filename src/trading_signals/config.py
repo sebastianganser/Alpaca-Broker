@@ -5,11 +5,18 @@ and environment variables. Secrets like DB_PASSWORD and API keys
 must never have default values.
 """
 
+from datetime import date
 from urllib.parse import quote_plus
 
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# ── Universal Data Boundary ──────────────────────────────────────────
+# Earliest date for any data records in the system.
+# All backfills, queries, and validations should respect this boundary.
+# Data before this date is considered irrelevant or an outlier.
+DATA_START_DATE = date(2021, 1, 1)
 
 
 class Settings(BaseSettings):
