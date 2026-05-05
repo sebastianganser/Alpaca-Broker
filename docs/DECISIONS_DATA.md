@@ -306,3 +306,45 @@
 **Decision:** `UniqueConstraint('ticker', 'cluster_start')` + `on_conflict_do_update`. Migration 017 deduplicates existing data.
 
 **Rationale:** Idempotent – runnable any number of times without side effects. Clusters can evolve (new trades) → UPDATE is correct.
+
+---
+
+### [2026-05-02] Universal DATA_START_DATE for All Data Sources
+
+**Context:** After historical backfill of insider trades, data contained outliers dating back to year 0024 (SEC filing typos) and forward to 2033 (vesting schedules). Different backfill scripts used different start dates. No single source of truth for "how far back should data go?"
+
+**Decision:** Universal `DATA_START_DATE = date(2021, 1, 1)` in `trading_signals/config.py`. All data before this date is considered irrelevant or an outlier. All backfills, queries, and cleanup scripts reference this constant.
+
+**Rationale:** Consistent data boundary across all modules. Aligns with the prices_daily backfill starting point. Prevents date outliers from distorting aggregations and dashboard displays.
+
+**Future:** Retention window will become dynamic once ML determines the optimal lookback period.
+
+---
+
+### [2026-05-02] Form 4 Historical Backfill: Resume-Safe with Deep-Check
+
+**Context:** Daily Form4Collector uses a 7-day lookback. For Sprint 8, we need ~3 years of historical insider trades. First backfill was interrupted by a Windows update (SSH session lost). Second run needed to distinguish "fully backfilled" tickers from those with only recent daily-collector data.
+
+**Decision:** Two-phase approach:
+1. `backfill_form4.py` with resume logic: skip tickers where `MIN(filing_date) ≤ 2023-12-31` (deep data present).
+2. `cleanup_insider_outliers.py` post-backfill: delete trades outside `DATA_START_DATE..today`.
+
+**Result:** 313,544 clean trades across 647 tickers (96% universe coverage). 392 outlier records removed.
+
+**Lessons:**
+- Atomic DB commits per ticker ensure no corrupt partial data after interruptions.
+- Resume logic must check *depth*, not just *existence* of data.
+- Always run backfills in `tmux` or with `nohup` to survive SSH disconnects.
+
+---
+
+### [2026-05-05] Sprint 8 Readiness Check: Depth + Coverage Validation
+
+**Context:** The original readiness script only checked row counts (`COUNT(*) > 500`). It failed to detect that 50% of tickers had only 7 days of insider trade data instead of 3 years.
+
+**Decision:** Rewrite `sprint8_readiness.py` with two new dimensions:
+- **Depth:** Does `MIN(date)` reach back to the expected start date?
+- **Coverage:** What percentage of active universe tickers have data in each table?
+
+**Rationale:** Row counts alone hide distribution problems. A single ticker with 500 trades looks healthy in aggregate but masks 640 tickers with zero trades. Coverage + depth catches both volume and distribution gaps.
+

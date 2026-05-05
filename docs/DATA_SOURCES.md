@@ -136,6 +136,13 @@ Every purchase/sale by an "insider" (CEO, CFO, directors, >10% shareholders).
 - **Derived:** `InsiderClusterComputer` detects cluster buys (≥2 insiders in 21 days)
 - **Important:** Use company CIK (not filer CIK) for archive URLs
 
+### Backfill & Data Quality
+- **Historical backfill:** `scripts/backfill_form4.py` – resume-safe, ~3 years of data
+- **Result:** 313,544 trades across 647 tickers (96% universe coverage)
+- **Outlier cleanup:** `scripts/cleanup_insider_outliers.py` – removes trades outside `DATA_START_DATE..today`
+- **Verification:** `scripts/verify_insider_backfill.py` – distribution analysis + depth check
+- **Known issues:** SEC XML `transaction_date` can contain typos (year 0024) or future vesting dates (2033). Always validate against `DATA_START_DATE`.
+
 ---
 
 ## 5. SEC EDGAR – Form 13F (Institutional Holdings)
@@ -189,6 +196,30 @@ Due to delay, probably not a strong alpha signal, but useful as a feature in agg
 - **Unusual Whales** – Options flow + politicians (~$40/month)
 - **News Sentiment APIs** – NewsAPI, Alpha Vantage News
 - **On-Chain Data** – Arkham Intelligence, Nansen, Whale Alert
+
+---
+
+## Universal Data Boundary
+
+All data in the system is bounded by `DATA_START_DATE = 2021-01-01` (defined in `trading_signals/config.py`).
+
+- Data before this date is considered irrelevant or an outlier
+- All backfill scripts, cleanup scripts, and validation scripts reference this constant
+- The retention window will become dynamic once ML determines the optimal lookback period
+- Some tables (prices_daily, earnings_calendar) contain data slightly before this date; this will be trimmed in a future cleanup pass
+
+---
+
+## Operational Scripts
+
+| Script | Purpose | When to Run |
+|---|---|---|
+| `scripts/backfill_form4.py` | Historical insider trade backfill (~3 years) | One-time or after data loss |
+| `scripts/backfill_insider_clusters.py` | Recompute insider clusters from trades | After insider backfill |
+| `scripts/cleanup_insider_outliers.py` | Remove trades outside `DATA_START_DATE..today` | After backfill |
+| `scripts/verify_insider_backfill.py` | Distribution + depth analysis of insider data | After backfill for QA |
+| `scripts/sprint8_readiness.py` | Data depth + coverage validation (all tables) | Before starting Sprint 8 |
+| `scripts/diag_insider.py` | Quick insider trade diagnostics | Ad-hoc debugging |
 
 ---
 

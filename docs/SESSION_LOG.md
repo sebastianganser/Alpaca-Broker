@@ -151,3 +151,18 @@
 - **Fundamentals:** Plausibility ranges widened (format guard, not value filter)
 - **Insider Clusters:** UniqueConstraint + UPSERT (migration 017)
 - **TA Job:** CollectorLogCapture integration
+
+### Session 18 – 02-05 May 2026 – Insider Backfill & Data Quality Hardening
+- **Form 4 Historical Backfill:** 313,544 insider trades across 647 tickers (96% coverage)
+  - Two backfill runs (~30h + ~20h) for full 3-year depth
+  - Resume-safe logic: skip only tickers with deep data (`MIN(filing_date) ≤ 2023-12-31`)
+  - First run interrupted by Windows update → resume mechanism proven
+- **`DATA_START_DATE = 2021-01-01`:** Universal data boundary constant in `config.py`
+- **Outlier cleanup:** 392 records removed (year 0024 typos, 2033 vesting schedules)
+- **`verify_insider_backfill.py`:** Distribution analysis + backfill depth check
+- **`cleanup_insider_outliers.py`:** Removes trades outside `DATA_START_DATE..today`
+- **`sprint8_readiness.py`:** Rewritten with depth + coverage validation per table
+  - Caught the original gap: 50% of tickers had only 7 days of data
+- **Insider Clusters:** Recomputed (304 clusters) on top of full backfill
+- **Scripts added:** `scripts/verify_insider_backfill.py`, `scripts/cleanup_insider_outliers.py`
+

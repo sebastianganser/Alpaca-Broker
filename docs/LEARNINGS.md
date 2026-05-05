@@ -155,6 +155,34 @@
 
 ---
 
+### [2026-05-02] 📊 SEC Form 4: Transaction Dates Can Be Wildly Incorrect
+
+**Observation:** After full insider backfill (313k trades), `transaction_date` ranged from year 0024 to 2033. Root causes:
+- **Year 0024/0025:** Filer typos in SEC XML (SPGI: "0024-02-01" instead of "2024-02-01")
+- **2008/2009 dates:** CTAS derivatives filed in 2025 but referencing old grant dates (amendments)
+- **2033/2028:** Future vesting schedules for stock options (BEAM, TMUS, CRDO)
+
+**Lesson:** `filing_date` from SEC metadata is reliable. `transaction_date` from the XML body is user-entered and should always be validated against `DATA_START_DATE..today`. Cleanup is essential before any aggregation or ML pipeline.
+
+**Status:** 🟢 Fixed (cleanup_insider_outliers.py removes 392 records)
+
+---
+
+### [2026-05-05] 🛠️ Readiness Scripts Must Check Depth and Coverage, Not Just Row Counts
+
+**Observation:** Sprint 8 readiness script reported "Insider-Trades: 24,552 (gut, >500 reicht)" – but 50% of universe tickers had only 7 days of data from the daily collector. The backfill gap was invisible because `COUNT(*)` doesn't reveal distribution.
+
+**Lesson:** Readiness/health checks need three dimensions:
+1. **Volume:** Total row count (existing check)
+2. **Depth:** Does `MIN(date)` reach back to the expected start?
+3. **Coverage:** What % of active tickers have data?
+
+Without depth + coverage, a single high-activity ticker can mask the absence of data for hundreds of others.
+
+**Status:** 🟢 Fixed (sprint8_readiness.py rewritten with depth + coverage per table)
+
+---
+
 ## Meta-Learnings
 
 ### [2026-04-15] 🛠️ TLS Fingerprinting is Becoming Standard on Government Sites
@@ -168,3 +196,6 @@ The accession number contains the filer CIK (often a law firm), but files are st
 
 ### [2026-04-28] 🛠️ Automatic ETF Filters Can Deactivate Benchmarks
 The ETF filter correctly identified SPY as ETF and deactivated it. But SPY is needed as benchmark for `relative_strength_spy`. Fix: `BENCHMARK_TICKERS` protection set. **Lesson:** Automatic filters always need an allowlist for exceptions.
+
+### [2026-05-02] 🛠️ Long-Running Backfills Must Survive Session Loss
+First insider backfill (~30h) was interrupted by a Windows update killing the SSH session. **Lesson:** Always run long processes via `tmux` or `nohup` on the server. Implement resume-safe logic (check what's already done, skip completed items) for any multi-hour batch job.
