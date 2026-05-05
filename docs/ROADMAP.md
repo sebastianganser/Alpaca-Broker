@@ -85,12 +85,15 @@
 - [ ] `FeaturePipeline` class
 - [ ] Aggregation logic for each feature group
 - [ ] ARK conviction score, insider cluster score, analyst consensus score
+- [ ] **Temporal rolling-window features** for each signal source (short/medium/long horizons) — see [LEARNINGS_HYPOTHESES.md → Temporal Patterns](LEARNINGS_HYPOTHESES.md#feature-engineering-temporal-patterns-sprint-8-requirement)
 - [ ] Target variable backfill (1d, 5d, 20d, 60d returns)
 - [ ] Daily job after all collectors and derived computers
 - [ ] Dashboard integration: feature snapshot views
 - [ ] Tests with end-to-end scenarios
 
-**Definition of Done:** Each ticker has a complete daily feature vector. Target variables are automatically backfilled. Dashboard shows feature data.
+**Key Design Requirement:** Each feature must capture not just point-in-time values, but also signal **persistence** (e.g., `ark_increase_days_10d`), **recurrence** (e.g., `cluster_count_60d`), and **convergence** (multi-source overlap within time windows). Without these, the ML model cannot distinguish one-off noise from sustained conviction.
+
+**Definition of Done:** Each ticker has a complete daily feature vector with rolling-window aggregations. Target variables are automatically backfilled. Dashboard shows feature data.
 
 ---
 
