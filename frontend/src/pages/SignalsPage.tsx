@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   fetchArkDeltas,
   fetchArkSummary,
@@ -8,14 +8,32 @@ import {
   fetchPoliticianTrades,
   fetchAnalystRatings,
 } from '../api';
-import { TrendingUp, TrendingDown, ArrowRight, Layers } from 'lucide-react';
+import { TrendingUp, TrendingDown, ArrowRight, Layers, X } from 'lucide-react';
 
 type Tab = 'ark' | 'insider' | 'politicians' | 'ratings';
 type ArkView = 'summary' | 'daily';
 
 export default function SignalsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>('ark');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlTab = searchParams.get('tab') as Tab | null;
+  const tickerFilter = searchParams.get('ticker');
+  const [activeTab, setActiveTab] = useState<Tab>(urlTab && ['ark', 'insider', 'politicians', 'ratings'].includes(urlTab) ? urlTab : 'ark');
   const navigate = useNavigate();
+
+  const handleTabChange = (tab: Tab) => {
+    setActiveTab(tab);
+    // Preserve ticker filter when switching tabs
+    const params = new URLSearchParams();
+    params.set('tab', tab);
+    if (tickerFilter) params.set('ticker', tickerFilter);
+    setSearchParams(params, { replace: true });
+  };
+
+  const clearTickerFilter = () => {
+    const params = new URLSearchParams();
+    params.set('tab', activeTab);
+    setSearchParams(params, { replace: true });
+  };
 
   return (
     <div className="fade-in">
@@ -23,12 +41,49 @@ export default function SignalsPage() {
         <h2>Signals</h2>
       </div>
 
+      {/* Ticker Filter Badge */}
+      {tickerFilter && (
+        <div style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '6px 14px',
+          marginBottom: 'var(--space-md)',
+          background: 'rgba(40, 235, 207, 0.1)',
+          border: '1px solid var(--primary)',
+          borderRadius: '20px',
+          fontSize: '0.8rem',
+        }}>
+          <span style={{ color: 'var(--text-dim)' }}>Gefiltert nach</span>
+          <span className="mono" style={{ fontWeight: 700, color: 'var(--primary)' }}>{tickerFilter}</span>
+          <button
+            onClick={clearTickerFilter}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'var(--text-dim)',
+              padding: '2px',
+              borderRadius: '50%',
+              transition: 'color 0.15s ease',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--error)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-dim)'; }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       <div className="tabs">
         {(['ark', 'insider', 'politicians', 'ratings'] as Tab[]).map((tab) => (
           <button
             key={tab}
             className={`tab${activeTab === tab ? ' active' : ''}`}
-            onClick={() => setActiveTab(tab)}
+            onClick={() => handleTabChange(tab)}
           >
             {tab === 'ark' ? 'ARK' :
              tab === 'insider' ? 'Insider' :
@@ -37,15 +92,15 @@ export default function SignalsPage() {
         ))}
       </div>
 
-      {activeTab === 'ark' && <ArkTab navigate={navigate} />}
-      {activeTab === 'insider' && <InsiderTab navigate={navigate} />}
-      {activeTab === 'politicians' && <PoliticianTab navigate={navigate} />}
-      {activeTab === 'ratings' && <RatingsTab navigate={navigate} />}
+      {activeTab === 'ark' && <ArkTab navigate={navigate} tickerFilter={tickerFilter} />}
+      {activeTab === 'insider' && <InsiderTab navigate={navigate} tickerFilter={tickerFilter} />}
+      {activeTab === 'politicians' && <PoliticianTab navigate={navigate} tickerFilter={tickerFilter} />}
+      {activeTab === 'ratings' && <RatingsTab navigate={navigate} tickerFilter={tickerFilter} />}
     </div>
   );
 }
 
-function ArkTab({ navigate }: { navigate: (path: string) => void }) {
+function ArkTab({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
   const [view, setView] = useState<ArkView>('summary');
   const [summaryDays, setSummaryDays] = useState(5);
 
@@ -91,19 +146,23 @@ function ArkTab({ navigate }: { navigate: (path: string) => void }) {
       </div>
 
       {view === 'summary'
-        ? <ArkSummaryView days={summaryDays} navigate={navigate} />
-        : <ArkDailyView navigate={navigate} />}
+        ? <ArkSummaryView days={summaryDays} navigate={navigate} tickerFilter={tickerFilter} />
+        : <ArkDailyView navigate={navigate} tickerFilter={tickerFilter} />}
     </div>
   );
 }
 
-function ArkSummaryView({ days, navigate }: { days: number; navigate: (path: string) => void }) {
-  const { data, isLoading } = useQuery({
+function ArkSummaryView({ days, navigate, tickerFilter }: { days: number; navigate: (path: string) => void; tickerFilter: string | null }) {
+  const { data: rawData, isLoading } = useQuery({
     queryKey: ['signals-ark-summary', days],
     queryFn: () => fetchArkSummary(days),
   });
 
   if (isLoading) return <Loading />;
+
+  const data = tickerFilter
+    ? rawData?.filter((s) => s.ticker.toUpperCase() === tickerFilter.toUpperCase())
+    : rawData;
 
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -197,13 +256,17 @@ function ArkSummaryView({ days, navigate }: { days: number; navigate: (path: str
   );
 }
 
-function ArkDailyView({ navigate }: { navigate: (path: string) => void }) {
-  const { data, isLoading } = useQuery({
+function ArkDailyView({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
+  const { data: rawData, isLoading } = useQuery({
     queryKey: ['signals-ark'],
     queryFn: () => fetchArkDeltas(14),
   });
 
   if (isLoading) return <Loading />;
+
+  const data = tickerFilter
+    ? rawData?.filter((d) => d.ticker?.toUpperCase() === tickerFilter.toUpperCase())
+    : rawData;
 
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -258,13 +321,17 @@ function ArkDailyView({ navigate }: { navigate: (path: string) => void }) {
   );
 }
 
-function InsiderTab({ navigate }: { navigate: (path: string) => void }) {
-  const { data, isLoading } = useQuery({
+function InsiderTab({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
+  const { data: rawData, isLoading } = useQuery({
     queryKey: ['signals-insider'],
     queryFn: () => fetchInsiderClusters(60),
   });
 
   if (isLoading) return <Loading />;
+
+  const data = tickerFilter
+    ? rawData?.filter((c) => c.ticker.toUpperCase() === tickerFilter.toUpperCase())
+    : rawData;
 
   return (
     <div className="grid grid-3">
@@ -314,13 +381,17 @@ function InsiderTab({ navigate }: { navigate: (path: string) => void }) {
   );
 }
 
-function PoliticianTab({ navigate }: { navigate: (path: string) => void }) {
-  const { data, isLoading } = useQuery({
+function PoliticianTab({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
+  const { data: rawData, isLoading } = useQuery({
     queryKey: ['signals-politicians'],
     queryFn: () => fetchPoliticianTrades(60),
   });
 
   if (isLoading) return <Loading />;
+
+  const data = tickerFilter
+    ? rawData?.filter((t) => t.ticker?.toUpperCase() === tickerFilter.toUpperCase())
+    : rawData;
 
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -385,13 +456,17 @@ function PoliticianTab({ navigate }: { navigate: (path: string) => void }) {
   );
 }
 
-function RatingsTab({ navigate }: { navigate: (path: string) => void }) {
-  const { data, isLoading } = useQuery({
+function RatingsTab({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
+  const { data: rawData, isLoading } = useQuery({
     queryKey: ['signals-ratings'],
     queryFn: () => fetchAnalystRatings(14),
   });
 
   if (isLoading) return <Loading />;
+
+  const data = tickerFilter
+    ? rawData?.filter((r) => r.ticker.toUpperCase() === tickerFilter.toUpperCase())
+    : rawData;
 
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>

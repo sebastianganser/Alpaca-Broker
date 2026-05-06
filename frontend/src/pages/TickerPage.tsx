@@ -266,30 +266,26 @@ export default function TickerPage() {
         <div className="card">
           <div className="card-title">Signale (letzte 90 Tage)</div>
           <div className="grid grid-4">
-            <div>
-              <div className="label-dim">ARK Deltas</div>
-              <div className="stat-value" style={{ fontSize: '1.5rem' }}>
-                {signals.ark_deltas.length}
-              </div>
-            </div>
-            <div>
-              <div className="label-dim">Insider Cluster</div>
-              <div className="stat-value" style={{ fontSize: '1.5rem' }}>
-                {signals.insider_clusters.length}
-              </div>
-            </div>
-            <div>
-              <div className="label-dim">Politiker Trades</div>
-              <div className="stat-value" style={{ fontSize: '1.5rem' }}>
-                {signals.politician_trades.length}
-              </div>
-            </div>
-            <div>
-              <div className="label-dim">Analyst Ratings</div>
-              <div className="stat-value" style={{ fontSize: '1.5rem' }}>
-                {signals.analyst_ratings.length}
-              </div>
-            </div>
+            <SignalCountCard
+              label="ARK Deltas"
+              count={signals.ark_deltas.length}
+              onClick={() => navigate(`/signals?tab=ark&ticker=${symbol}`)}
+            />
+            <SignalCountCard
+              label="Insider Cluster"
+              count={signals.insider_clusters.length}
+              onClick={() => navigate(`/signals?tab=insider&ticker=${symbol}`)}
+            />
+            <SignalCountCard
+              label="Politiker Trades"
+              count={signals.politician_trades.length}
+              onClick={() => navigate(`/signals?tab=politicians&ticker=${symbol}`)}
+            />
+            <SignalCountCard
+              label="Analyst Ratings"
+              count={signals.analyst_ratings.length}
+              onClick={() => navigate(`/signals?tab=ratings&ticker=${symbol}`)}
+            />
           </div>
         </div>
       )}
@@ -315,6 +311,52 @@ function MetricCard({ label, value }: { label: string; value: string }) {
     <div>
       <div className="label-dim">{label}</div>
       <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>{value}</div>
+    </div>
+  );
+}
+
+function SignalCountCard({ label, count, onClick }: {
+  label: string; count: number; onClick: () => void;
+}) {
+  const isClickable = count > 0;
+  return (
+    <div
+      onClick={isClickable ? onClick : undefined}
+      style={{
+        cursor: isClickable ? 'pointer' : 'default',
+        padding: '12px',
+        borderRadius: 'var(--radius)',
+        transition: 'background 0.15s ease',
+        ...(isClickable ? { border: '1px solid transparent' } : {}),
+      }}
+      onMouseEnter={(e) => {
+        if (isClickable) {
+          e.currentTarget.style.background = 'var(--surface-high)';
+          e.currentTarget.style.borderColor = 'var(--primary)';
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (isClickable) {
+          e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.borderColor = 'transparent';
+        }
+      }}
+    >
+      <div className="label-dim">{label}</div>
+      <div
+        className="stat-value"
+        style={{
+          fontSize: '1.5rem',
+          ...(isClickable ? { color: 'var(--primary)' } : {}),
+        }}
+      >
+        {count}
+      </div>
+      {isClickable && (
+        <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginTop: '4px' }}>
+          Details anzeigen →
+        </div>
+      )}
     </div>
   );
 }
