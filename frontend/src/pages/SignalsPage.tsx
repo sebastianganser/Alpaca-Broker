@@ -153,9 +153,10 @@ function ArkTab({ navigate, tickerFilter }: { navigate: (path: string) => void; 
 }
 
 function ArkSummaryView({ days, navigate, tickerFilter }: { days: number; navigate: (path: string) => void; tickerFilter: string | null }) {
+  const effectiveDays = tickerFilter ? 90 : days;
   const { data: rawData, isLoading } = useQuery({
-    queryKey: ['signals-ark-summary', days],
-    queryFn: () => fetchArkSummary(days),
+    queryKey: ['signals-ark-summary', effectiveDays, tickerFilter],
+    queryFn: () => fetchArkSummary(effectiveDays),
   });
 
   if (isLoading) return <Loading />;
@@ -257,9 +258,10 @@ function ArkSummaryView({ days, navigate, tickerFilter }: { days: number; naviga
 }
 
 function ArkDailyView({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
+  const effectiveDays = tickerFilter ? 90 : 14;
   const { data: rawData, isLoading } = useQuery({
-    queryKey: ['signals-ark'],
-    queryFn: () => fetchArkDeltas(14),
+    queryKey: ['signals-ark', effectiveDays, tickerFilter],
+    queryFn: () => fetchArkDeltas(effectiveDays),
   });
 
   if (isLoading) return <Loading />;
@@ -322,9 +324,10 @@ function ArkDailyView({ navigate, tickerFilter }: { navigate: (path: string) => 
 }
 
 function InsiderTab({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
+  const effectiveDays = tickerFilter ? 90 : 60;
   const { data: rawData, isLoading } = useQuery({
-    queryKey: ['signals-insider'],
-    queryFn: () => fetchInsiderClusters(60),
+    queryKey: ['signals-insider', effectiveDays, tickerFilter],
+    queryFn: () => fetchInsiderClusters(effectiveDays),
   });
 
   if (isLoading) return <Loading />;
@@ -382,9 +385,10 @@ function InsiderTab({ navigate, tickerFilter }: { navigate: (path: string) => vo
 }
 
 function PoliticianTab({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
+  const effectiveDays = tickerFilter ? 90 : 60;
   const { data: rawData, isLoading } = useQuery({
-    queryKey: ['signals-politicians'],
-    queryFn: () => fetchPoliticianTrades(60),
+    queryKey: ['signals-politicians', effectiveDays, tickerFilter],
+    queryFn: () => fetchPoliticianTrades(effectiveDays),
   });
 
   if (isLoading) return <Loading />;
@@ -457,9 +461,10 @@ function PoliticianTab({ navigate, tickerFilter }: { navigate: (path: string) =>
 }
 
 function RatingsTab({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
+  const effectiveDays = tickerFilter ? 90 : 14;
   const { data: rawData, isLoading } = useQuery({
-    queryKey: ['signals-ratings'],
-    queryFn: () => fetchAnalystRatings(14),
+    queryKey: ['signals-ratings', effectiveDays, tickerFilter],
+    queryFn: () => fetchAnalystRatings(effectiveDays),
   });
 
   if (isLoading) return <Loading />;
