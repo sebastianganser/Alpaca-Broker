@@ -7,7 +7,9 @@ import {
   fetchInsiderClusters,
   fetchPoliticianTrades,
   fetchAnalystRatings,
+  fetchTickerSignals,
 } from '../api';
+import type { ARKDelta, ARKSummary, InsiderCluster, PoliticianTrade, AnalystRating } from '../api';
 import { TrendingUp, TrendingDown, ArrowRight, Layers, X } from 'lucide-react';
 
 type Tab = 'ark' | 'insider' | 'politicians' | 'ratings';
@@ -20,9 +22,16 @@ export default function SignalsPage() {
   const [activeTab, setActiveTab] = useState<Tab>(urlTab && ['ark', 'insider', 'politicians', 'ratings'].includes(urlTab) ? urlTab : 'ark');
   const navigate = useNavigate();
 
+  // When a ticker filter is active, use the ticker-specific endpoint
+  // to avoid global endpoint limits (e.g. 100 items)
+  const { data: tickerSignals } = useQuery({
+    queryKey: ['ticker-signals', tickerFilter],
+    queryFn: () => fetchTickerSignals(tickerFilter!, 90),
+    enabled: !!tickerFilter,
+  });
+
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
-    // Preserve ticker filter when switching tabs
     const params = new URLSearchParams();
     params.set('tab', tab);
     if (tickerFilter) params.set('ticker', tickerFilter);
@@ -92,15 +101,15 @@ export default function SignalsPage() {
         ))}
       </div>
 
-      {activeTab === 'ark' && <ArkTab navigate={navigate} tickerFilter={tickerFilter} />}
-      {activeTab === 'insider' && <InsiderTab navigate={navigate} tickerFilter={tickerFilter} />}
-      {activeTab === 'politicians' && <PoliticianTab navigate={navigate} tickerFilter={tickerFilter} />}
-      {activeTab === 'ratings' && <RatingsTab navigate={navigate} tickerFilter={tickerFilter} />}
+      {activeTab === 'ark' && <ArkTab navigate={navigate} tickerFilter={tickerFilter} tickerData={tickerSignals?.ark_deltas} />}
+      {activeTab === 'insider' && <InsiderTab navigate={navigate} tickerFilter={tickerFilter} tickerData={tickerSignals?.insider_clusters} />}
+      {activeTab === 'politicians' && <PoliticianTab navigate={navigate} tickerFilter={tickerFilter} tickerData={tickerSignals?.politician_trades} />}
+      {activeTab === 'ratings' && <RatingsTab navigate={navigate} tickerFilter={tickerFilter} tickerData={tickerSignals?.analyst_ratings} />}
     </div>
   );
 }
 
-function ArkTab({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
+function ArkTab({ navigate, tickerFilter, tickerData }: { navigate: (path: string) => void; tickerFilter: string | null; tickerData?: ARKDelta[] }) {
   const [view, setView] = useState<ArkView>('summary');
   const [summaryDays, setSummaryDays] = useState(5);
 
@@ -147,7 +156,7 @@ function ArkTab({ navigate, tickerFilter }: { navigate: (path: string) => void; 
 
       {view === 'summary'
         ? <ArkSummaryView days={summaryDays} navigate={navigate} tickerFilter={tickerFilter} />
-        : <ArkDailyView navigate={navigate} tickerFilter={tickerFilter} />}
+        : <ArkDailyView navigate={navigate} tickerFilter={tickerFilter} tickerData={tickerData} />}
     </div>
   );
 }
@@ -257,18 +266,16 @@ function ArkSummaryView({ days, navigate, tickerFilter }: { days: number; naviga
   );
 }
 
-function ArkDailyView({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
-  const effectiveDays = tickerFilter ? 90 : 14;
-  const { data: rawData, isLoading } = useQuery({
-    queryKey: ['signals-ark', effectiveDays, tickerFilter],
-    queryFn: () => fetchArkDeltas(effectiveDays),
+function ArkDailyView({ navigate, tickerFilter, tickerData }: { navigate: (path: string) => void; tickerFilter: string | null; tickerData?: ARKDelta[] }) {
+  const { data: globalData, isLoading } = useQuery({
+    queryKey: ['signals-ark'],
+    queryFn: () => fetchArkDeltas(14),
+    enabled: !tickerFilter,
   });
 
-  if (isLoading) return <Loading />;
+  if (!tickerFilter && isLoading) return <Loading />;
 
-  const data = tickerFilter
-    ? rawData?.filter((d) => d.ticker?.toUpperCase() === tickerFilter.toUpperCase())
-    : rawData;
+  const data = tickerFilter ? tickerData : globalData;
 
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -323,18 +330,16 @@ function ArkDailyView({ navigate, tickerFilter }: { navigate: (path: string) => 
   );
 }
 
-function InsiderTab({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
-  const effectiveDays = tickerFilter ? 90 : 60;
-  const { data: rawData, isLoading } = useQuery({
-    queryKey: ['signals-insider', effectiveDays, tickerFilter],
-    queryFn: () => fetchInsiderClusters(effectiveDays),
+function InsiderTab({ navigate, tickerFilter, tickerData }: { navigate: (path: string) => void; tickerFilter: string | null; tickerData?: InsiderCluster[] }) {
+  const { data: globalData, isLoading } = useQuery({
+    queryKey: ['signals-insider'],
+    queryFn: () => fetchInsiderClusters(60),
+    enabled: !tickerFilter,
   });
 
-  if (isLoading) return <Loading />;
+  if (!tickerFilter && isLoading) return <Loading />;
 
-  const data = tickerFilter
-    ? rawData?.filter((c) => c.ticker.toUpperCase() === tickerFilter.toUpperCase())
-    : rawData;
+  const data = tickerFilter ? tickerData : globalData;
 
   return (
     <div className="grid grid-3">
@@ -384,18 +389,16 @@ function InsiderTab({ navigate, tickerFilter }: { navigate: (path: string) => vo
   );
 }
 
-function PoliticianTab({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
-  const effectiveDays = tickerFilter ? 90 : 60;
-  const { data: rawData, isLoading } = useQuery({
-    queryKey: ['signals-politicians', effectiveDays, tickerFilter],
-    queryFn: () => fetchPoliticianTrades(effectiveDays),
+function PoliticianTab({ navigate, tickerFilter, tickerData }: { navigate: (path: string) => void; tickerFilter: string | null; tickerData?: PoliticianTrade[] }) {
+  const { data: globalData, isLoading } = useQuery({
+    queryKey: ['signals-politicians'],
+    queryFn: () => fetchPoliticianTrades(60),
+    enabled: !tickerFilter,
   });
 
-  if (isLoading) return <Loading />;
+  if (!tickerFilter && isLoading) return <Loading />;
 
-  const data = tickerFilter
-    ? rawData?.filter((t) => t.ticker?.toUpperCase() === tickerFilter.toUpperCase())
-    : rawData;
+  const data = tickerFilter ? tickerData : globalData;
 
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -460,18 +463,16 @@ function PoliticianTab({ navigate, tickerFilter }: { navigate: (path: string) =>
   );
 }
 
-function RatingsTab({ navigate, tickerFilter }: { navigate: (path: string) => void; tickerFilter: string | null }) {
-  const effectiveDays = tickerFilter ? 90 : 14;
-  const { data: rawData, isLoading } = useQuery({
-    queryKey: ['signals-ratings', effectiveDays, tickerFilter],
-    queryFn: () => fetchAnalystRatings(effectiveDays),
+function RatingsTab({ navigate, tickerFilter, tickerData }: { navigate: (path: string) => void; tickerFilter: string | null; tickerData?: AnalystRating[] }) {
+  const { data: globalData, isLoading } = useQuery({
+    queryKey: ['signals-ratings'],
+    queryFn: () => fetchAnalystRatings(14),
+    enabled: !tickerFilter,
   });
 
-  if (isLoading) return <Loading />;
+  if (!tickerFilter && isLoading) return <Loading />;
 
-  const data = tickerFilter
-    ? rawData?.filter((r) => r.ticker.toUpperCase() === tickerFilter.toUpperCase())
-    : rawData;
+  const data = tickerFilter ? tickerData : globalData;
 
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
