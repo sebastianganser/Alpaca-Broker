@@ -9,7 +9,7 @@ import {
   fetchAnalystRatings,
   fetchTickerSignals,
 } from '../api';
-import type { ARKDelta, ARKSummary, InsiderCluster, PoliticianTrade, AnalystRating } from '../api';
+import type { ARKDelta, InsiderCluster, PoliticianTrade, AnalystRating } from '../api';
 import { TrendingUp, TrendingDown, ArrowRight, Layers, X } from 'lucide-react';
 
 type Tab = 'ark' | 'insider' | 'politicians' | 'ratings';
