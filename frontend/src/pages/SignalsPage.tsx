@@ -30,7 +30,7 @@ const filterInputStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',
 };
 
-function useColumnFilters<T extends Record<string, unknown>>(
+function useColumnFilters<T extends Record<string, any>>(
   data: T[] | undefined,
   columns: string[],
   initialFilters?: Record<string, string>,
@@ -43,7 +43,7 @@ function useColumnFilters<T extends Record<string, unknown>>(
       columns.every((col) => {
         const f = filters[col]?.trim().toLowerCase();
         if (!f) return true;
-        const val = String(row[col] ?? '').toLowerCase();
+        const val = String((row as Record<string, unknown>)[col] ?? '').toLowerCase();
         return val.includes(f);
       }),
     );
