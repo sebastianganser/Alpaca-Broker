@@ -290,3 +290,14 @@ class LogsResponse(BaseModel):
     total: int
     page: int
     limit: int
+
+
+# ── Feature Pipeline Schemas ─────────────────────────────────────────────
+
+class FeatureStats(BaseModel):
+    """Feature pipeline statistics for the dashboard."""
+    last_snapshot_date: date | None = None
+    ticker_count: int = 0
+    feature_coverage_pct: float = 0.0
+    target_backfill_pct: float = 0.0
+    total_snapshots: int = 0

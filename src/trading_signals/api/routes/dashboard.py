@@ -15,6 +15,7 @@ from trading_signals.api.job_tracker import job_tracker
 from trading_signals.api.schemas import (
     CollectorStatus,
     DashboardSummary,
+    FeatureStats,
     SystemHealth,
     TableStats,
 )
@@ -24,6 +25,7 @@ from trading_signals.db.models import (
     ARKHolding,
     CollectionLog,
     EarningsCalendar,
+    FeatureSnapshot,
     Form13FHolding,
     FundamentalsSnapshot,
     InsiderCluster,
@@ -53,8 +55,73 @@ _TABLE_MODELS = [
     ("analyst_ratings", AnalystRating, "rating_date", "rating_date"),
     ("earnings_calendar", EarningsCalendar, "earnings_date", "earnings_date"),
     ("technical_indicators", TechnicalIndicator, "trade_date", "trade_date"),
+    ("feature_snapshots", FeatureSnapshot, "snapshot_date", "snapshot_date"),
     ("collection_log", CollectionLog, "started_at", None),
 ]
+
+
+@router.get("/feature-stats", response_model=FeatureStats)
+def get_feature_stats(db: Session = Depends(get_db)):
+    """Get feature pipeline statistics.
+
+    Returns last snapshot date, ticker count, feature coverage,
+    and target backfill completion percentage.
+    """
+    total = db.query(func.count()).select_from(FeatureSnapshot).scalar() or 0
+    if total == 0:
+        return FeatureStats()
+
+    last_date = db.query(func.max(FeatureSnapshot.snapshot_date)).scalar()
+    ticker_count = (
+        db.query(func.count(func.distinct(FeatureSnapshot.ticker))).scalar() or 0
+    )
+
+    # Feature coverage: % of non-NULL feature columns (excluding targets + meta)
+    # Sample last snapshot date for coverage calculation
+    if last_date:
+        sample = (
+            db.query(FeatureSnapshot)
+            .filter(FeatureSnapshot.snapshot_date == last_date)
+            .limit(100)
+            .all()
+        )
+        if sample:
+            feature_cols = [
+                "ark_in_etf_count", "ark_total_weight", "ark_conviction_score",
+                "insider_net_buy_count_30d", "insider_cluster_active",
+                "analyst_rating_score", "analyst_upgrades_30d",
+                "pe_ratio", "forward_pe", "price_vs_sma50", "rsi_14",
+                "earnings_days_until",
+            ]
+            filled = 0
+            checks = 0
+            for row in sample:
+                for col in feature_cols:
+                    checks += 1
+                    if getattr(row, col, None) is not None:
+                        filled += 1
+            coverage = round(filled / checks * 100, 1) if checks else 0.0
+        else:
+            coverage = 0.0
+    else:
+        coverage = 0.0
+
+    # Target backfill: % of rows where at least return_1d is filled
+    filled_targets = (
+        db.query(func.count())
+        .select_from(FeatureSnapshot)
+        .filter(FeatureSnapshot.return_1d.isnot(None))
+        .scalar() or 0
+    )
+    backfill_pct = round(filled_targets / total * 100, 1) if total else 0.0
+
+    return FeatureStats(
+        last_snapshot_date=last_date,
+        ticker_count=ticker_count,
+        feature_coverage_pct=coverage,
+        target_backfill_pct=backfill_pct,
+        total_snapshots=total,
+    )
 
 
 @router.get("/summary", response_model=DashboardSummary)
