@@ -335,60 +335,95 @@ CREATE TABLE signals.technical_indicators (
 ## Layer 3: Analysis (Feature Store + Backtests)
 
 ### `signals.feature_snapshots` ⭐
-**The heart of the project.** Daily feature vector per ticker, aggregated from all raw data layers. This table will serve as training data for ML models.
+**The heart of the project.** Daily feature vector per ticker, aggregated from all raw and derived data layers. This table serves as training data for ML models. Wide table design (~77 columns) avoids JOINs during training.
+
+> **Design:** All feature columns are nullable. Features self-activate when sufficient data exists. No imputation at the feature store level — the ML stage decides how to handle NULLs.
 
 ```sql
 CREATE TABLE signals.feature_snapshots (
   snapshot_date   DATE NOT NULL,
   ticker          VARCHAR(20) NOT NULL,
   
-  -- ARK Features
+  -- ═══ ARK Features (point-in-time) ═══
   ark_in_etf_count INTEGER,               -- How many ARK ETFs hold this ticker?
   ark_total_weight NUMERIC(10,4),         -- Sum of weight across all ARK ETFs
-  ark_weight_delta_1d NUMERIC(10,4),
-  ark_weight_delta_5d NUMERIC(10,4),
-  ark_weight_delta_20d NUMERIC(10,4),
-  ark_conviction_score NUMERIC(10,4),
-  ark_multi_etf_signal BOOLEAN,
+  ark_weight_delta_1d NUMERIC(10,4),      -- Weight change vs yesterday
+  ark_weight_delta_5d NUMERIC(10,4),      -- Weight change over 5 trading days
+  ark_weight_delta_20d NUMERIC(10,4),     -- Weight change over 20 trading days
+  ark_conviction_score NUMERIC(10,4),     -- Composite: n_etfs * (1+weight_trend) * (1+streak)
+  ark_multi_etf_signal BOOLEAN,           -- True if ≥2 ETFs hold this ticker
   
-  -- Insider Features
-  insider_net_buy_count_30d INTEGER,      -- Buys minus sells
-  insider_buy_value_30d NUMERIC(20,2),
-  insider_cluster_active BOOLEAN,
-  insider_cluster_score NUMERIC(10,4),
+  -- ═══ ARK Temporal Features ═══
+  ark_increase_days_10d INTEGER,          -- Days with delta_type='increased' in last 10d
+  ark_increase_days_20d INTEGER,          -- Days with delta_type='increased' in last 20d
+  ark_conviction_streak INTEGER,          -- Consecutive days with increase (current streak)
+  ark_weight_trend_20d NUMERIC(10,6),     -- Linear regression slope of total_weight over 20d
   
-  -- 13F Features  
-  form13f_top_holder_count INTEGER,       -- How many top holders hold the ticker
-  form13f_new_positions_count INTEGER,    -- New positions in last reporting period
+  -- ═══ Insider Features (point-in-time) ═══
+  insider_net_buy_count_30d INTEGER,      -- Buys minus sells in last 30 days
+  insider_buy_value_30d NUMERIC(20,2),    -- Total buy value in last 30 days
+  insider_cluster_active BOOLEAN,         -- Active cluster in last 21 days?
+  insider_cluster_score NUMERIC(10,4),    -- Score of most recent active cluster
   
-  -- Fundamentals
+  -- ═══ Insider Temporal Features ═══
+  cluster_count_30d INTEGER,              -- Number of clusters in last 30 days
+  cluster_count_60d INTEGER,              -- Number of clusters in last 60 days
+  cluster_score_sum_60d NUMERIC(10,4),    -- Sum of cluster scores in last 60 days
+  days_since_last_cluster INTEGER,        -- Calendar days since most recent cluster_end
+  
+  -- ═══ Analyst Features (point-in-time) ═══
+  analyst_rating_score NUMERIC(10,4),     -- Consensus score (1=sell, 5=buy)
+  analyst_upgrades_30d INTEGER,           -- Number of upgrades in last 30 days
+  analyst_price_target_upside NUMERIC(10,4), -- (median_target / current_price) - 1
+  
+  -- ═══ Analyst Temporal Features ═══
+  analyst_downgrades_30d INTEGER,         -- Number of downgrades in last 30 days
+  analyst_net_sentiment_30d INTEGER,      -- upgrades - downgrades in 30 days
+  analyst_net_sentiment_60d INTEGER,      -- upgrades - downgrades in 60 days
+  analyst_upgrade_streak INTEGER,         -- Consecutive days with ≥1 upgrade, 0 downgrades
+  
+  -- ═══ Politician Features (dual-date: disclosure + transaction) ═══
+  -- Disclosure-based (when information became public)
+  politician_buy_count_60d_disclosure INTEGER,   -- Buys disclosed in last 60 days
+  politician_distinct_90d_disclosure INTEGER,    -- Distinct politicians disclosed in 90d
+  -- Transaction-based (when trade actually occurred)
+  politician_buy_count_60d_transaction INTEGER,  -- Buys with transaction_date in last 60d
+  politician_distinct_90d_transaction INTEGER,   -- Distinct politicians traded in 90d
+  
+  -- ═══ 13F Features ═══
+  form13f_top_holder_count INTEGER,       -- How many top-20 filers hold this ticker
+  form13f_new_positions_count INTEGER,    -- New positions in latest reporting period
+  
+  -- ═══ Fundamentals (point-in-time) ═══
   pe_ratio NUMERIC(16,4),
+  forward_pe NUMERIC(16,4),
   ps_ratio NUMERIC(16,4),
   revenue_growth_yoy NUMERIC(10,6),
   profit_margin NUMERIC(10,6),
   debt_to_equity NUMERIC(16,4),
   
-  -- Technical Indicators
-  price_vs_sma50 NUMERIC(10,4),           -- (price / sma50) - 1
-  price_vs_sma200 NUMERIC(10,4),
+  -- ═══ Fundamentals Temporal Features ═══
+  pe_trend_4w NUMERIC(10,6),             -- Regression slope of pe_ratio over 4 weeks
+  margin_trend_4w NUMERIC(10,6),         -- Regression slope of profit_margin over 4 weeks
+  
+  -- ═══ Technical Indicators ═══
+  price_vs_sma50 NUMERIC(10,4),          -- (price / sma50) - 1
+  price_vs_sma200 NUMERIC(10,4),         -- (price / sma200) - 1
   rsi_14 NUMERIC(10,4),
-  relative_strength_spy NUMERIC(10,4),
-  volume_ratio_20d NUMERIC(10,4),
-  atr_14_pct NUMERIC(10,4),
+  relative_strength_spy NUMERIC(10,4),   -- Excess return vs SPY (20d)
+  volume_ratio_20d NUMERIC(10,4),        -- today_volume / sma_volume_20d
+  atr_14_pct NUMERIC(10,4),             -- ATR as % of price
   
-  -- Analyst
-  analyst_rating_score NUMERIC(10,4),     -- Consensus score
-  analyst_upgrades_30d INTEGER,
-  analyst_price_target_upside NUMERIC(10,4),
-  
-  -- Context
+  -- ═══ Earnings Features ═══
   earnings_days_until INTEGER,            -- Days until next earnings call
+  consecutive_beats INTEGER,             -- Consecutive quarters EPS > estimate
+  surprise_trend_3q NUMERIC(10,4),       -- Avg surprise_pct of last 3 quarters
   
-  -- TARGETS (ML target variables, backfilled retrospectively)
-  return_1d NUMERIC(10,6),
-  return_5d NUMERIC(10,6),
-  return_20d NUMERIC(10,6),
-  return_60d NUMERIC(10,6),
+  -- ═══ TARGET VARIABLES (backfilled retrospectively) ═══
+  return_1d NUMERIC(10,6),               -- 1-day forward return
+  return_5d NUMERIC(10,6),               -- 5-day forward return
+  return_20d NUMERIC(10,6),              -- 20-day forward return
+  return_60d NUMERIC(10,6),              -- 60-day forward return
   
   computed_at TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (snapshot_date, ticker)
@@ -420,7 +455,7 @@ CREATE TABLE signals.collection_log (
 
 ## Migrations
 
-Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–017.
+Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–018.
 
 | Migration | Description |
 |---|---|
@@ -441,3 +476,5 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 | 015 | Table `ticker_blacklist` |
 | 016 | `universe.index_membership` array |
 | 017 | `insider_clusters` unique constraint + dedup |
+| 018 | Table `feature_snapshots` (Sprint 8) |
+

@@ -3,6 +3,7 @@
 from trading_signals.db.models.ark import ARKDelta, ARKHolding
 from trading_signals.db.models.blacklist import TickerBlacklist
 from trading_signals.db.models.collection_log import CollectionLog
+from trading_signals.db.models.features import FeatureSnapshot
 from trading_signals.db.models.form13f import Form13FHolding
 from trading_signals.db.models.fundamentals import (
     AnalystRating,
@@ -21,6 +22,7 @@ __all__ = [
     "ARKHolding",
     "CollectionLog",
     "EarningsCalendar",
+    "FeatureSnapshot",
     "Form13FHolding",
     "FundamentalsSnapshot",
     "InsiderCluster",
@@ -31,4 +33,5 @@ __all__ = [
     "TickerBlacklist",
     "Universe",
 ]
+
 
