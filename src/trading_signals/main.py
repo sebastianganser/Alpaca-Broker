@@ -29,12 +29,14 @@ from trading_signals.scheduler.jobs import (
     run_analyst_ratings_collector,
     run_ark_holdings_collector,
     run_earnings_calendar_collector,
+    run_feature_pipeline,
     run_form4_collector,
     run_form13f_collector,
     run_fundamentals_collector,
     run_index_sync,
     run_politician_trades_collector,
     run_price_collector,
+    run_target_backfill,
     run_technical_indicators_computer,
 )
 from trading_signals.utils.logging import get_logger, setup_logging
@@ -128,6 +130,22 @@ def create_scheduler() -> BackgroundScheduler:
         CronTrigger(day_of_week="sun", hour=2, minute=0),
         id="earnings_calendar_collector",
         name="Weekly Earnings Calendar (yfinance)",
+    )
+
+    # ── Feature Pipeline: Daily at 02:00 (after all collectors) ──
+    scheduler.add_job(
+        run_feature_pipeline,
+        CronTrigger(hour=2, minute=0),
+        id="feature_pipeline",
+        name="Daily Feature Pipeline (Snapshot Computation)",
+    )
+
+    # ── Target Backfill: Daily at 02:15 (after feature pipeline) ──
+    scheduler.add_job(
+        run_target_backfill,
+        CronTrigger(hour=2, minute=15),
+        id="target_backfill",
+        name="Daily Target Backfill (Forward Returns)",
     )
 
     # ── Index Sync: Monthly 1st at 03:00 ──

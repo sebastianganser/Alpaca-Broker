@@ -409,3 +409,130 @@ def run_index_sync() -> None:
                     session.commit()
             except Exception:
                 logger.error(f"{collector_name}_job: Failed to write error log")
+
+
+def run_feature_pipeline() -> None:
+    """Daily feature pipeline – computes feature snapshots for all tickers.
+
+    Scheduled for 02:00 Europe/Berlin (night slot, after all collectors).
+    Aggregates all raw + derived signals into feature_snapshots table.
+    """
+    from datetime import datetime, date, timedelta
+
+    from trading_signals.utils.logging import CollectorLogCapture
+    from trading_signals.db.models.collection_log import CollectionLog
+    from trading_signals.db.session import get_session
+    from trading_signals.derived.feature_pipeline import FeaturePipeline
+
+    collector_name = "feature_pipeline"
+    logger.info(f"Scheduler triggered: {collector_name}_job")
+
+    started_at = datetime.now()
+    # Default: compute for yesterday (latest complete trading day)
+    target_date = date.today() - timedelta(days=1)
+
+    with CollectorLogCapture(collector_name) as log_capture:
+        try:
+            with get_session() as session:
+                pipeline = FeaturePipeline(session)
+                written = pipeline.compute_daily(target_date)
+
+                log_entry = CollectionLog(
+                    collector_name=collector_name,
+                    started_at=started_at,
+                    finished_at=datetime.now(),
+                    status="success",
+                    records_fetched=written,
+                    records_written=written,
+                    gaps_detected=0,
+                    log_lines=log_capture.get_lines(),
+                )
+                session.add(log_entry)
+                session.commit()
+
+            logger.info(
+                f"{collector_name}_job finished: "
+                f"{written} snapshots computed for {target_date}"
+            )
+        except Exception as e:
+            logger.error(f"{collector_name}_job FAILED: {e}")
+            try:
+                with get_session() as session:
+                    log_entry = CollectionLog(
+                        collector_name=collector_name,
+                        started_at=started_at,
+                        finished_at=datetime.now(),
+                        status="error",
+                        records_fetched=0,
+                        records_written=0,
+                        gaps_detected=0,
+                        notes=str(e)[:2000],
+                        log_lines=log_capture.get_lines(),
+                    )
+                    session.add(log_entry)
+                    session.commit()
+            except Exception:
+                logger.error(f"{collector_name}_job: Failed to write error log")
+
+
+def run_target_backfill() -> None:
+    """Daily target backfill – fills forward returns retrospectively.
+
+    Scheduled for 02:15 Europe/Berlin (after feature pipeline).
+    Computes return_1d/5d/20d/60d for feature snapshots where
+    sufficient future price data now exists.
+    """
+    from datetime import datetime
+
+    from trading_signals.utils.logging import CollectorLogCapture
+    from trading_signals.db.models.collection_log import CollectionLog
+    from trading_signals.db.session import get_session
+    from trading_signals.derived.target_backfill import TargetBackfillComputer
+
+    collector_name = "target_backfill"
+    logger.info(f"Scheduler triggered: {collector_name}_job")
+
+    started_at = datetime.now()
+
+    with CollectorLogCapture(collector_name) as log_capture:
+        try:
+            with get_session() as session:
+                computer = TargetBackfillComputer(session)
+                written = computer.backfill_all()
+
+                log_entry = CollectionLog(
+                    collector_name=collector_name,
+                    started_at=started_at,
+                    finished_at=datetime.now(),
+                    status="success",
+                    records_fetched=written,
+                    records_written=written,
+                    gaps_detected=0,
+                    log_lines=log_capture.get_lines(),
+                )
+                session.add(log_entry)
+                session.commit()
+
+            logger.info(
+                f"{collector_name}_job finished: "
+                f"{written} return values backfilled"
+            )
+        except Exception as e:
+            logger.error(f"{collector_name}_job FAILED: {e}")
+            try:
+                with get_session() as session:
+                    log_entry = CollectionLog(
+                        collector_name=collector_name,
+                        started_at=started_at,
+                        finished_at=datetime.now(),
+                        status="error",
+                        records_fetched=0,
+                        records_written=0,
+                        gaps_detected=0,
+                        notes=str(e)[:2000],
+                        log_lines=log_capture.get_lines(),
+                    )
+                    session.add(log_entry)
+                    session.commit()
+            except Exception:
+                logger.error(f"{collector_name}_job: Failed to write error log")
