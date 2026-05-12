@@ -46,9 +46,9 @@ Critical paths (data fetching, computations, later order execution) are pure Pyt
 
 ## Current Status
 
-**Phase:** 🟢 Sprint 7 completed + production operation
-**Current sprint:** Operational – system running on Unraid, data collection active
-**Next step:** Sprint 8 (Feature Pipeline)
+**Phase:** 🟢 Sprint 8 completed + production operation
+**Current sprint:** Operational – system running on Unraid, data collection + feature pipeline active
+**Next step:** Waiting Phase (2–3 months data collection), then Sprint 9 (Exploratory Analysis)
 **Last updated:** May 2026
 **Deployment:** ✅ Unraid Docker (192.168.1.93:8090)
 
@@ -67,7 +67,7 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 | **Migrations** | Alembic |
 | **Database** | PostgreSQL 18 (`postgresql18-alpaca`, 192.168.1.93:5435, DB: `broker_data`, schema: `signals`) |
 | **Package managers** | uv (Python), npm (frontend) |
-| **Scheduler** | APScheduler (10 jobs: 5 daily, 4 weekly, 1 monthly) |
+| **Scheduler** | APScheduler (12 jobs: 7 daily, 4 weekly, 1 monthly) |
 | **Price data** | Alpaca Market Data API (IEX feed, multi-symbol batch) |
 | **Universe** | ~671 active tickers (S&P 500 + Nasdaq 100 + ARK + benchmarks, ETFs filtered via blacklist) |
 | **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090) |

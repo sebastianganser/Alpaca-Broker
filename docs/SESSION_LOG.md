@@ -166,3 +166,22 @@
 - **Insider Clusters:** Recomputed (304 clusters) on top of full backfill
 - **Scripts added:** `scripts/verify_insider_backfill.py`, `scripts/cleanup_insider_outliers.py`
 
+### Session 19 – 12 May 2026 – Sprint 8: Feature Pipeline Implementation
+- **`FeaturePipeline`** class (`derived/feature_pipeline.py`): Core of the ML data pipeline
+  - 8 independent feature groups with graceful degradation
+  - ARK (11 features): ETF count, weights, deltas, conviction score, temporal trends (streak, regression)
+  - Insider (8): Net buy count, buy value, cluster activity, cluster counts/scores, days since last
+  - Analyst (7): Rating score, upgrades/downgrades, price target upside, sentiment, streak
+  - Politician (4): Dual-date buy counts + distinct politicians (disclosure + transaction)
+  - 13F (2): Top holder count, new positions (QoQ comparison)
+  - Fundamentals (8): PE/Forward PE/PS/Revenue Growth/Margin/D/E + 4-week regression slopes
+  - Technical (6): Price vs SMA50/200, RSI, relative strength, volume ratio, ATR%
+  - Earnings (3): Days until next, consecutive beats, surprise trend
+  - UPSERT on composite PK (snapshot_date, ticker) for idempotent recomputation
+- **`TargetBackfillComputer`** (`derived/target_backfill.py`): Forward returns backfill
+  - 4 horizons: 1d, 5d, 20d, 60d (trading days, not calendar)
+  - Uses actual `prices_daily` entries for trading-day offset
+- **Scheduler integration**: Feature Pipeline 02:00 CET + Target Backfill 02:15 CET
+- **API**: `GET /dashboard/feature-stats` + `FeatureStats` schema + `feature_snapshots` in table stats
+- **Tests**: 8 new unit tests (311 total, 299 passing – 12 pre-existing failures unchanged)
+- **Documentation**: CLAUDE.md, ROADMAP.md, SCHEDULER.md, SESSION_LOG.md updated

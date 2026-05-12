@@ -21,7 +21,7 @@
 | 5 | Fundamentals + Analyst Data | 🟢 Done | April 2026 |
 | 6 | Technical Indicators | 🟢 Done | April 2026 |
 | 7 | Dashboard & Operations UI | 🟢 Done | April 2026 |
-| 8 | Feature Pipeline | 🔴 Open | – |
+| 8 | Feature Pipeline | 🟢 Done | May 2026 |
 | **⏸ Wait** | **2–3 months data collection** | **–** | **–** |
 | 9 | Exploratory Analysis (Jupyter) | 🔴 Open | – |
 | 10 | Signal Scoring Models | 🔴 Open | – |
@@ -73,27 +73,13 @@
 - Docker 3-stage build, deployed on Unraid (192.168.1.93:8090)
 - 303 tests
 
----
-
-## Next Sprints
-
-### Sprint 8 – Feature Pipeline ⭐
-
-**Goal:** Aggregate all raw and derived data into `feature_snapshots` – the heart of the project.
-
-**Tasks:**
-- [ ] `FeaturePipeline` class
-- [ ] Aggregation logic for each feature group
-- [ ] ARK conviction score, insider cluster score, analyst consensus score
-- [ ] **Temporal rolling-window features** for each signal source (short/medium/long horizons) — see [LEARNINGS_HYPOTHESES.md → Temporal Patterns](LEARNINGS_HYPOTHESES.md#feature-engineering-temporal-patterns-sprint-8-requirement)
-- [ ] Target variable backfill (1d, 5d, 20d, 60d returns)
-- [ ] Daily job after all collectors and derived computers
-- [ ] Dashboard integration: feature snapshot views
-- [ ] Tests with end-to-end scenarios
-
-**Key Design Requirement:** Each feature must capture not just point-in-time values, but also signal **persistence** (e.g., `ark_increase_days_10d`), **recurrence** (e.g., `cluster_count_60d`), and **convergence** (multi-source overlap within time windows). Without these, the ML model cannot distinguish one-off noise from sustained conviction.
-
-**Definition of Done:** Each ticker has a complete daily feature vector with rolling-window aggregations. Target variables are automatically backfilled. Dashboard shows feature data.
+### Sprint 8 – Feature Pipeline ✅
+- `FeaturePipeline` class: 8 feature groups, 49 features, graceful degradation, UPSERT
+- `TargetBackfillComputer`: Forward returns (1d, 5d, 20d, 60d) via trading-day offset
+- Temporal rolling-window features: persistence, recurrence, convergence
+- Scheduler: Feature Pipeline 02:00 CET + Target Backfill 02:15 CET
+- API: `GET /dashboard/feature-stats` (coverage, backfill status)
+- 311 tests (8 new)
 
 ---
 

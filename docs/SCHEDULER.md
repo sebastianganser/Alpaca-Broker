@@ -9,11 +9,13 @@
 
 ---
 
-## Daily – Night Slot (01:00 CET)
+## Daily – Night Slot (01:00–02:15 CET)
 
 | Time (CET) | Job | Description | Sprint |
 |---|---|---|---|
-| 01:00 | `analyst_ratings_collector` | Analyst upgrades/downgrades via yfinance | 5 ✅ |
+| 01:00 | `analyst_ratings_collector` | Analyst upgrades/downgrades via yfinance (~10 min) | 5 ✅ |
+| 02:00 | `feature_pipeline` | Compute daily feature snapshots (after all collectors) | 8 ✅ |
+| 02:15 | `target_backfill` | Backfill return targets for older snapshots | 8 ✅ |
 
 ## Daily – Evening Slot (after US EOD)
 
@@ -23,8 +25,8 @@
 | 22:30 | `technical_indicators_computer` | Compute TA indicators from price data | 6 ✅ |
 | 23:00 | `ark_holdings` | ARK ETF holdings via arkfunds.io + delta computation | 2 ✅ |
 | 23:30 | `form4_collector` | New Form 4 filings (last 24h) + cluster computation | 3 ✅ |
-| – | `feature_pipeline` | Feature snapshot for the day | 8 (planned) |
-| – | `target_backfill` | Backfill returns for older snapshots | 8 (planned) |
+| ~~–~~ | ~~`feature_pipeline`~~ | Moved to night slot 02:00 (see above) | 8 ✅ |
+| ~~–~~ | ~~`target_backfill`~~ | Moved to night slot 02:15 (see above) | 8 ✅ |
 
 ## Weekly (Sunday)
 
