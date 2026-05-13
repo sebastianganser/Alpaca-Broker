@@ -50,6 +50,7 @@
 |---|---|---|
 | Price Backfill | `POST /ops/backfill/prices` | Load historical prices from 2021-01-01 (Settings > Backfill) |
 | Indicator Backfill | `POST /ops/backfill/indicators` | Recompute all TA indicators (Settings > Backfill) |
+| Target Backfill | `POST /ops/scheduler/target_backfill/trigger` | Manually trigger target return backfill (Settings > Scheduler) |
 | Sector Enrichment | `POST /ops/backfill/sectors` | Reload sectors/industries for ALL active tickers from yfinance + ETF blacklist check (Settings > Sectors) |
 | DB Reset | `POST /ops/db/reset` | Factory reset: delete all data tables (Settings > Factory Reset) |
 | VACUUM/ANALYZE | `POST /ops/db/vacuum` | PostgreSQL VACUUM + ANALYZE (Settings > VACUUM) |

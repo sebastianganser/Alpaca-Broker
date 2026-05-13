@@ -185,3 +185,21 @@
 - **API**: `GET /dashboard/feature-stats` + `FeatureStats` schema + `feature_snapshots` in table stats
 - **Tests**: 8 new unit tests (311 total, 299 passing – 12 pre-existing failures unchanged)
 - **Documentation**: CLAUDE.md, ROADMAP.md, SCHEDULER.md, SESSION_LOG.md updated
+
+### Session 20 – 13 May 2026 – Sprint 8b: Features Page & Exploration UI
+- **Backend:** 4 new API endpoints in `api/routes/features.py`:
+  - `GET /features/coverage` – Feature coverage matrix (ticker × 8 signal groups)
+  - `GET /features/convergence` – Top tickers by active signal source count
+  - `GET /features/returns` – Aggregated forward return statistics (all horizons)
+  - `GET /features/ticker/{symbol}` – Full feature detail for a single ticker
+- **Schemas:** 7 new Pydantic models (FeatureCoverageItem, FeatureCoverageResponse, SignalConvergenceItem, SignalConvergenceResponse, HorizonStats, ReturnStatsResponse, FeatureGroupDetail, TickerFeatureDetail)
+- **Frontend:** New `FeaturesPage.tsx` with 5 sections:
+  1. Pipeline Stats (4 stat cards: snapshot date, ticker count, coverage %, backfill %)
+  2. Feature Coverage Heatmap (sortable, searchable, color-coded)
+  3. Signal Convergence (top tickers by multi-source overlap with progress bars)
+  4. Return Distribution (4 horizons with fill %, mean, median, std, min, max)
+  5. Ticker Detail Modal (click-through, expandable feature groups)
+- **Navigation:** Brain icon, 6th sidebar item (between Signals and Logs)
+- **Version:** v0.2.0 · Sprint 8
+- **Verified:** All 674 tickers visible, AAPL search works, modal shows 28/49 features
+- **Documentation:** README.md, CLAUDE.md, ARCHITECTURE.md, SCHEDULER.md, ROADMAP.md updated

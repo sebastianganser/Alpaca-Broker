@@ -46,9 +46,9 @@ Critical paths (data fetching, computations, later order execution) are pure Pyt
 
 ## Current Status
 
-**Phase:** 🟢 Sprint 8 completed + production operation
-**Current sprint:** Operational – system running on Unraid, data collection + feature pipeline active
-**Next step:** Waiting Phase (2–3 months data collection), then Sprint 9 (Exploratory Analysis)
+**Phase:** 🟢 Sprint 8 + 8b completed + production operation
+**Current sprint:** Operational – system running on Unraid, data collection + feature pipeline + features UI active
+**Next step:** Waiting Phase (2–3 months data collection), then Sprint 9 (Exploratory Analysis / Jupyter)
 **Last updated:** May 2026
 **Deployment:** ✅ Unraid Docker (192.168.1.93:8090)
 
@@ -69,7 +69,7 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 | **Package managers** | uv (Python), npm (frontend) |
 | **Scheduler** | APScheduler (12 jobs: 7 daily, 4 weekly, 1 monthly) |
 | **Price data** | Alpaca Market Data API (IEX feed, multi-symbol batch) |
-| **Universe** | ~671 active tickers (S&P 500 + Nasdaq 100 + ARK + benchmarks, ETFs filtered via blacklist) |
+| **Universe** | ~674 active tickers (S&P 500 + Nasdaq 100 + ARK + benchmarks, ETFs filtered via blacklist) |
 | **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090) |
 | **Broker (later)** | Alpaca Paper Trading (NEVER live!) |
 | **Version control** | Git, [GitHub](https://github.com/sebastianganser/Alpaca-Broker) |

@@ -9,10 +9,11 @@ Build a data-driven research platform that aggregates signals from multiple sour
 ## Key Features
 
 - **📊 6 Data Sources:** Alpaca (prices), ARK (smart money), SEC EDGAR (insiders + institutions), Senate eFD (politicians), yfinance (fundamentals + ratings + earnings)
-- **🖥️ Dashboard:** FastAPI + React SPA for real-time monitoring, data exploration, and system management
-- **📈 671+ Active Tickers:** S&P 500 + Nasdaq 100 + ARK expansions
-- **🗄️ PostgreSQL 18:** Append-only raw data layer + recomputable derived features
-- **🤖 Automated:** APScheduler with 10 scheduled jobs (daily, weekly, monthly)
+- **🖥️ Dashboard:** FastAPI + React SPA with 7 pages (Dashboard, Universe, Signals, Features, Logs, Settings, Ticker Detail)
+- **📈 674+ Active Tickers:** S&P 500 + Nasdaq 100 + ARK expansions
+- **🗄️ PostgreSQL 18:** Append-only raw data layer + recomputable derived features + feature store
+- **🤖 Automated:** APScheduler with 12 scheduled jobs (7 daily, 4 weekly, 1 monthly)
+- **🧠 Feature Pipeline:** Daily ML feature vectors (49 features × 8 signal groups) with target backfill
 - **🔒 Paper Only:** Hardcoded safety check – **never** live trading
 
 ## Technology Stack
@@ -29,9 +30,9 @@ Build a data-driven research platform that aggregates signals from multiple sour
 
 ## Current Status
 
-- **Sprint 7 completed** – Dashboard & Operations UI live
+- **Sprint 8 completed** – Feature Pipeline + Features Page live
 - **System running** on Unraid (192.168.1.93:8090)
-- **Next:** Sprint 8 (Feature Pipeline)
+- **Next:** Waiting Phase (2–3 months data collection), then Sprint 9 (Exploratory Analysis)
 
 ## Documentation
 

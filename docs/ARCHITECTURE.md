@@ -89,7 +89,7 @@ Alpaca-Broker/
 │   │   │       ├── politicians.py # ✅ Sprint 4
 │   │   │       ├── fundamentals.py# ✅ Sprint 5 (3 models)
 │   │   │       ├── technical_indicators.py # ✅ Sprint 6
-│   │   │       └── features.py    # Sprint 8
+│   │   │       └── features.py    # ✅ Sprint 8 (FeatureSnapshot)
 │   │   ├── collectors/            # Data collectors (one module per source)
 │   │   │   ├── base.py            # ✅ Abstract BaseCollector
 │   │   │   ├── prices_alpaca.py   # ✅ Sprint 1b (primary)
@@ -109,7 +109,8 @@ Alpaca-Broker/
 │   │   │   ├── ark_deltas.py      # ✅ Sprint 2
 │   │   │   ├── insider_clusters.py# ✅ Sprint 3
 │   │   │   ├── technical_indicators.py # ✅ Sprint 6
-│   │   │   └── feature_pipeline.py# Sprint 8
+│   │   │   ├── feature_pipeline.py# ✅ Sprint 8
+│   │   │   └── target_backfill.py # ✅ Sprint 8
 │   │   ├── universe/              # Dynamic ticker universe
 │   │   │   ├── manager.py         # ✅
 │   │   │   ├── alpaca_validator.py # ✅
@@ -118,22 +119,23 @@ Alpaca-Broker/
 │   │   ├── api/                   # ✅ Sprint 7 (FastAPI backend)
 │   │   │   ├── deps.py            # DB session + scheduler DI
 │   │   │   ├── job_tracker.py     # APScheduler event listener
-│   │   │   ├── schemas.py         # 21+ Pydantic response schemas
+│   │   │   ├── schemas.py         # 28+ Pydantic response schemas
 │   │   │   ├── tasks.py           # BackfillManager (threading)
 │   │   │   └── routes/
 │   │   │       ├── dashboard.py   # /api/v1/dashboard/summary
 │   │   │       ├── universe.py    # /api/v1/universe (paginated)
 │   │   │       ├── signals.py     # /api/v1/signals/ark,insider,...
 │   │   │       ├── ticker.py      # /api/v1/ticker/{sym}/prices,...
+│   │   │       ├── features.py    # /api/v1/features/coverage,convergence,...
 │   │   │       └── operations.py  # /api/v1/ops/scheduler,backfill,db
 │   │   ├── scheduler/
-│   │   │   └── jobs.py            # ✅ 10 jobs configured
+│   │   │   └── jobs.py            # ✅ 12 jobs configured
 │   │   └── utils/
 │   │       ├── logging.py         # ✅
 │   │       └── retry.py           # ✅
-│   └── alembic/                   # Database migrations (001-017)
+│   └── alembic/                   # Database migrations (001-018)
 ├── tests/
-│   ├── unit/                      # ✅ 303 tests
+│   ├── unit/                      # ✅ 311+ tests
 │   ├── integration/
 │   └── fixtures/
 ├── scripts/                       # One-time scripts
@@ -151,6 +153,7 @@ Alpaca-Broker/
 │           ├── DashboardPage.tsx  # Collector status, stats, health
 │           ├── UniversePage.tsx   # Filtered/paginated ticker table
 │           ├── SignalsPage.tsx    # Tabbed: ARK, Insider, Politicians, Analyst
+│           ├── FeaturesPage.tsx   # Feature coverage, convergence, returns
 │           ├── LogsPage.tsx       # Scheduler logs (tabbed: all / errors)
 │           ├── SettingsPage.tsx   # Scheduler, backfill, DB ops
 │           └── TickerPage.tsx     # Chart, indicators, fundamentals, data quality

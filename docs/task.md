@@ -2,34 +2,41 @@
 
 > Detailplan: [implementation_plan2.md](implementation_plan2.md)
 
-## Task A: Backend-Endpoints (API + Schemas)
-- [ ] A1: Pydantic Schemas (FeatureCoverageItem, SignalConvergenceItem, ReturnStats, TickerFeatureDetail)
-- [ ] A2: `features.py` Router + `GET /features/coverage`
-- [ ] A3: `GET /features/convergence`
-- [ ] A4: `GET /features/returns`
-- [ ] A5: `GET /features/ticker/{symbol}`
-- [ ] A6: Router in `main.py` registrieren + Syntax-Check
+## Task A: Backend-Endpoints (API + Schemas) ✅
+- [x] A1: Pydantic Schemas (FeatureCoverageItem, SignalConvergenceItem, ReturnStats, TickerFeatureDetail)
+- [x] A2: `features.py` Router + `GET /features/coverage`
+- [x] A3: `GET /features/convergence`
+- [x] A4: `GET /features/returns`
+- [x] A5: `GET /features/ticker/{symbol}`
+- [x] A6: Router in `main.py` registrieren + Syntax-Check
 
-## Task B: Frontend API-Layer + Routing
-- [ ] B1: TypeScript Interfaces + fetch-Funktionen in `api.ts`
-- [ ] B2: Route `/features` in `App.tsx` + Sidebar in `Layout.tsx` (Brain-Icon)
+## Task B: Frontend API-Layer + Routing ✅
+- [x] B1: TypeScript Interfaces + fetch-Funktionen in `api.ts`
+- [x] B2: Route `/features` in `App.tsx` + Sidebar in `Layout.tsx` (Brain-Icon)
 
-## Task C: FeaturesPage – Pipeline Stats + Coverage
-- [ ] C1: Page-Grundgerüst + Pipeline Stats Kacheln
-- [ ] C2: Feature Coverage Heatmap Tabelle
+## Task C: FeaturesPage – Pipeline Stats + Coverage ✅
+- [x] C1: Page-Grundgerüst + Pipeline Stats Kacheln
+- [x] C2: Feature Coverage Heatmap Tabelle
 
-## Task D: FeaturesPage – Convergence + Returns
-- [ ] D1: Signal Convergence Sektion
-- [ ] D2: Return Distribution Sektion
+## Task D: FeaturesPage – Convergence + Returns ✅
+- [x] D1: Signal Convergence Sektion
+- [x] D2: Return Distribution Sektion
 
-## Task E: FeaturesPage – Ticker Detail
-- [ ] E1: Ticker Feature Detail (Click-Through Modal/Expand)
+## Task E: FeaturesPage – Ticker Detail ✅
+- [x] E1: Ticker Feature Detail (Click-Through Modal)
 
 ## Task F: Polish, Tests, Docs
-- [ ] F1: Syntax-Check + Build-Prüfung (Frontend + Backend)
+- [x] F1: Syntax-Check + Build-Prüfung (Frontend + Backend)
 - [ ] F2: Unit Tests für neue Backend-Endpoints
 - [ ] F3: Doku-Update (ROADMAP, SESSION_LOG)
-- [ ] F4: Git Commits + Push
+- [ ] F4: Git Commits + Push (Feature code pushed, docs pending)
+
+---
+
+## Nächster Schritt
+- Deploy auf Unraid (`git pull && docker compose up --build -d`)
+- Browser-Verifizierung der neuen Features-Seite
+- F2-F4 abschließen
 
 ---
 
