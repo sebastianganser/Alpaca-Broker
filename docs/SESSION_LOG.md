@@ -232,3 +232,19 @@
 - **Scheduler:** 15 jobs total (9 daily, 4 weekly, 1 monthly, 1 maintenance)
 - **Documentation:** CLAUDE.md, README.md, ROADMAP.md, SCHEDULER.md, DATABASE.md, DATA_SOURCES.md, ARCHITECTURE.md, DECISIONS_FEATURES.md, SESSION_LOG.md updated
 
+### Session 22 – 13 May 2026 – Signal Filters & Endpoint Bugfix
+- **Column filters on Signals page** (`SignalsPage.tsx`):
+  - Reusable `useColumnFilters` hook with text inputs in table headers
+  - Filterable columns: Ticker, ETF, Typ, Politiker, Partei, Analyst, Aktion
+  - Filter count display ("X von Y Einträgen") with clear button
+  - URL ticker param from TickerPage pre-fills the ticker column filter
+  - Replaced old ticker badge with integrated column filters
+- **Insider tab → table layout:** Converted from card grid to consistent data table
+  - Columns: Ticker, Score, Insider, Käufe, Verkäufe, Kaufvolumen, Zeitraum
+- **Bugfix: `delay_days` missing in ticker-specific endpoint** (`ticker.py`):
+  - `/ticker/{symbol}/signals` omitted `delay_days` calculation for politician trades
+  - `/signals/politicians` (global) had it → inconsistency when filtering by ticker
+  - Silent bug: Pydantic `Optional[int] = None` default masked the missing field
+  - Found via user report: Hickenlooper LBRDK trade showed "—" instead of "351d"
+- **Documentation:** LEARNINGS.md updated (new finding + meta-learning on endpoint parity)
+

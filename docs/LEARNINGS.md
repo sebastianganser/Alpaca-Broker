@@ -183,6 +183,20 @@ Without depth + coverage, a single high-activity ticker can mask the absence of 
 
 ---
 
+### [2026-05-13] 🛠️ Computed Fields Missing in Ticker-Specific Endpoint (delay_days)
+
+**Observation:** The Politician Trades tab showed `delay_days = null` (displayed as "—") when viewing a ticker-filtered signal (e.g., LBRDK via `/ticker/LBRDK/signals`). The global endpoint (`/signals/politicians`) correctly computed `delay_days: 351`, but the ticker-specific endpoint (`/ticker/{symbol}/signals`) omitted the calculation entirely.
+
+**Root cause:** The `PoliticianTradeItem` construction in `ticker.py` did not include `delay_days`. The field defaults to `None` in the Pydantic schema, so no validation error occurred – the bug was completely silent.
+
+**Data context:** The affected record (John W. Hickenlooper, LBRDK, trade 2025-05-19 → disclosure 2026-05-05) had a legitimate 351-day delay. Three Hickenlooper trades showed 336–384 day delays, well beyond the STOCK Act's 45-day requirement.
+
+**Lesson:** When the same data type is served by multiple endpoints (global list vs. ticker-specific), **all computed/derived fields must be replicated**. Silent defaults (`None`) in Pydantic schemas make such omissions invisible. Consider extracting shared serialization helpers to prevent divergence.
+
+**Status:** 🟢 Fixed (commit `0a9be3b`)
+
+---
+
 ## Meta-Learnings
 
 ### [2026-04-15] 🛠️ TLS Fingerprinting is Becoming Standard on Government Sites
@@ -199,3 +213,6 @@ The ETF filter correctly identified SPY as ETF and deactivated it. But SPY is ne
 
 ### [2026-05-02] 🛠️ Long-Running Backfills Must Survive Session Loss
 First insider backfill (~30h) was interrupted by a Windows update killing the SSH session. **Lesson:** Always run long processes via `tmux` or `nohup` on the server. Implement resume-safe logic (check what's already done, skip completed items) for any multi-hour batch job.
+
+### [2026-05-13] 🛠️ Dual-Endpoint Parity: Shared Serialization Prevents Silent Drift
+When the same data model is served by two endpoints (e.g., `/signals/politicians` and `/ticker/{symbol}/signals`), computed fields added to one are easily forgotten in the other. Pydantic's `Optional` defaults mask this. **Lesson:** Extract a shared `_serialize_politician_trade(t)` helper function to guarantee parity. Add integration tests that compare field completeness across equivalent endpoints.
