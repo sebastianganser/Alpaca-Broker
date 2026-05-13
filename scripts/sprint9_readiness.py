@@ -303,6 +303,9 @@ with get_session() as s:
         ("cluster_count_60d", "Insider Cluster 60d", 60),
         ("analyst_net_sentiment_60d", "Analyst Sentiment 60d", 60),
         ("pe_trend_4w", "PE Trend 4w", 28),
+        ("sentiment_avg_7d", "News Sentiment 7d", 7),
+        ("sentiment_avg_30d", "News Sentiment 30d", 30),
+        ("sentiment_momentum", "Sentiment Momentum", 30),
     ]
 
     for col, label, min_days in temporal_checks:
@@ -372,6 +375,78 @@ with get_session() as s:
     else:
         print(f"    ❌ Keine 13F-Daten in 2026 gefunden")
         warnings.append("Keine 13F-Daten in 2026")
+
+    # ══════════════════════════════════════════════════════════════════
+    # 4b. NEWS SENTIMENT DATA HEALTH (Sprint 8c)
+    # ══════════════════════════════════════════════════════════════════
+    print(f"\n{'─' * 72}")
+    print(f"  4b. NEWS SENTIMENT — Article & Scoring Coverage")
+    print(f"{'─' * 72}")
+
+    news_stats = safe_first(
+        s,
+        """
+        SELECT
+            COUNT(*) AS total_articles,
+            COUNT(DISTINCT CASE WHEN NOT is_global THEN article_id END) AS ticker_articles,
+            COUNT(DISTINCT CASE WHEN is_global THEN article_id END) AS global_articles,
+            MIN(published_at)::date AS earliest,
+            MAX(published_at)::date AS latest
+        FROM signals.news_articles
+        """,
+        "news_stats",
+    )
+
+    if news_stats and news_stats[0] and news_stats[0] > 0:
+        print(f"    Total Articles:    {news_stats[0]:>8,}")
+        print(f"    Ticker-specific:   {news_stats[1]:>8,}")
+        print(f"    Global/Market:     {news_stats[2]:>8,}")
+        print(f"    Date range:        {news_stats[3]} → {news_stats[4]}")
+
+        # Scoring coverage
+        scoring = safe_first(
+            s,
+            """
+            SELECT
+                COUNT(DISTINCT ns.article_id) AS scored,
+                (SELECT COUNT(*) FROM signals.news_articles) AS total,
+                ROUND(100.0 * COUNT(DISTINCT ns.article_id)
+                    / NULLIF((SELECT COUNT(*) FROM signals.news_articles), 0), 1) AS pct,
+                COUNT(DISTINCT ns.ticker) AS tickers_with_sentiment
+            FROM signals.news_sentiment ns
+            """,
+            "scoring_coverage",
+        )
+        if scoring:
+            scored = scoring[0] or 0
+            total = scoring[1] or 0
+            pct = float(scoring[2] or 0)
+            tickers = scoring[3] or 0
+            score_ok = pct >= 90
+            print(f"    Scored:            {scored:>8,} / {total:>8,}  "
+                  f"({pct:.1f}%)  {check_icon(score_ok)}")
+            print(f"    Tickers w/ score:  {tickers:>8,}")
+            if pct < 50:
+                warnings.append(f"Nur {pct:.0f}% der News-Artikel sind scored")
+
+        # Model version distribution
+        models = safe_query(
+            s,
+            """
+            SELECT model_version, COUNT(*) AS cnt
+            FROM signals.news_sentiment
+            GROUP BY model_version
+            ORDER BY cnt DESC
+            """,
+            "model_versions",
+        ) or []
+        if models:
+            print(f"    Model versions:")
+            for m in models:
+                print(f"      {m[0]}: {m[1]:,} scores")
+    else:
+        print(f"    ⏳ Noch keine News-Artikel gesammelt")
+        print(f"       News Collector startet täglich um 00:00 CET")
 
     # ══════════════════════════════════════════════════════════════════
     # 5. RAW DATA SOURCE HEALTH
