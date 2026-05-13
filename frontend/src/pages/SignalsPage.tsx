@@ -13,7 +13,6 @@ import {
 } from '../api';
 import type {
   ARKDelta, InsiderCluster, PoliticianTrade, AnalystRating,
-  SentimentSummary, SentimentArticle,
 } from '../api';
 import { TrendingUp, TrendingDown, ArrowRight, Layers, X, Filter } from 'lucide-react';
 
@@ -629,17 +628,16 @@ function SentimentTab({ navigate, tickerFilter, initialFilters }: {
       </div>
 
       {view === 'summary'
-        ? <SentimentSummaryView days={days} navigate={navigate} tickerFilter={tickerFilter} initialFilters={initialFilters} />
+        ? <SentimentSummaryView days={days} navigate={navigate} initialFilters={initialFilters} />
         : <SentimentArticlesView days={days} navigate={navigate} tickerFilter={tickerFilter} initialFilters={initialFilters} />
       }
     </div>
   );
 }
 
-function SentimentSummaryView({ days, navigate, tickerFilter, initialFilters }: {
+function SentimentSummaryView({ days, navigate, initialFilters }: {
   days: number;
   navigate: (path: string) => void;
-  tickerFilter: string | null;
   initialFilters?: Record<string, string>;
 }) {
   const { data: rawData, isLoading } = useQuery({
