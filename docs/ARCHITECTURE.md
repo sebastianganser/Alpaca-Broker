@@ -89,7 +89,8 @@ Alpaca-Broker/
 │   │   │       ├── politicians.py # ✅ Sprint 4
 │   │   │       ├── fundamentals.py# ✅ Sprint 5 (3 models)
 │   │   │       ├── technical_indicators.py # ✅ Sprint 6
-│   │   │       └── features.py    # ✅ Sprint 8 (FeatureSnapshot)
+│   │   │       ├── features.py    # ✅ Sprint 8 (FeatureSnapshot)
+│   │   │       └── news.py        # ✅ Sprint 8c (NewsArticle, NewsSentiment)
 │   │   ├── collectors/            # Data collectors (one module per source)
 │   │   │   ├── base.py            # ✅ Abstract BaseCollector
 │   │   │   ├── prices_alpaca.py   # ✅ Sprint 1b (primary)
@@ -104,13 +105,15 @@ Alpaca-Broker/
 │   │   │   ├── yfinance_client.py   # ✅ Sprint 5 (shared client)
 │   │   │   ├── fundamentals_collector.py # ✅ Sprint 5
 │   │   │   ├── analyst_ratings_collector.py # ✅ Sprint 5
-│   │   │   └── earnings_calendar_collector.py # ✅ Sprint 5
+│   │   │   ├── earnings_calendar_collector.py # ✅ Sprint 5
+│   │   │   └── news_collector.py   # ✅ Sprint 8c (Alpaca News API)
 │   │   ├── derived/               # Computed features
 │   │   │   ├── ark_deltas.py      # ✅ Sprint 2
 │   │   │   ├── insider_clusters.py# ✅ Sprint 3
 │   │   │   ├── technical_indicators.py # ✅ Sprint 6
 │   │   │   ├── feature_pipeline.py# ✅ Sprint 8
-│   │   │   └── target_backfill.py # ✅ Sprint 8
+│   │   │   ├── target_backfill.py # ✅ Sprint 8
+│   │   │   └── sentiment_scorer.py# ✅ Sprint 8c (FinBERT)
 │   │   ├── universe/              # Dynamic ticker universe
 │   │   │   ├── manager.py         # ✅
 │   │   │   ├── alpaca_validator.py # ✅
@@ -119,7 +122,7 @@ Alpaca-Broker/
 │   │   ├── api/                   # ✅ Sprint 7 (FastAPI backend)
 │   │   │   ├── deps.py            # DB session + scheduler DI
 │   │   │   ├── job_tracker.py     # APScheduler event listener
-│   │   │   ├── schemas.py         # 28+ Pydantic response schemas
+│   │   │   ├── schemas.py         # 35+ Pydantic response schemas
 │   │   │   ├── tasks.py           # BackfillManager (threading)
 │   │   │   └── routes/
 │   │   │       ├── dashboard.py   # /api/v1/dashboard/summary
@@ -129,11 +132,11 @@ Alpaca-Broker/
 │   │   │       ├── features.py    # /api/v1/features/coverage,convergence,...
 │   │   │       └── operations.py  # /api/v1/ops/scheduler,backfill,db
 │   │   ├── scheduler/
-│   │   │   └── jobs.py            # ✅ 12 jobs configured
+│   │   │   └── jobs.py            # ✅ 15 jobs configured
 │   │   └── utils/
-│   │       ├── logging.py         # ✅
+│   │       ├── logging.py         # ✅ (CollectorLogCapture + warning demotion)
 │   │       └── retry.py           # ✅
-│   └── alembic/                   # Database migrations (001-018)
+│   └── alembic/                   # Database migrations (001-020)
 ├── tests/
 │   ├── unit/                      # ✅ 311+ tests
 │   ├── integration/
@@ -152,7 +155,7 @@ Alpaca-Broker/
 │       └── pages/
 │           ├── DashboardPage.tsx  # Collector status, stats, health
 │           ├── UniversePage.tsx   # Filtered/paginated ticker table
-│           ├── SignalsPage.tsx    # Tabbed: ARK, Insider, Politicians, Analyst
+│           ├── SignalsPage.tsx    # Tabbed: ARK, Insider, Politicians, Analyst, Sentiment
 │           ├── FeaturesPage.tsx   # Feature coverage, convergence, returns
 │           ├── LogsPage.tsx       # Scheduler logs (tabbed: all / errors)
 │           ├── SettingsPage.tsx   # Scheduler, backfill, DB ops
@@ -171,35 +174,36 @@ Alpaca-Broker/
 ## Data Flow Diagram
 
 ```
-┌────────────────┐  ┌────────────────┐  ┌────────────────┐  ┌──────────────┐  ┌──────────────┐
-│ Alpaca Market  │  │ arkfunds.io    │  │ SEC EDGAR API  │  │ Senate eFD   │  │ yfinance     │
-│ Data API ⭐    │  │ (ARK Holdings) │  │ (Form 4/13F)   │  │ (Politician) │  │ (Fund/Rtg/Ea)│
-└────────┬───────┘  └────────┬───────┘  └────────┬───────┘  └──────┬───────┘  └──────┬───────┘
-         │                   │                   │                 │                 │
-         ▼                   ▼                   ▼                 ▼                 ▼
-┌────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                Collectors (Python)                                             │
-│  [prices_alpaca] [ark_holdings] [form4] [form13f] [politicians] [fund] [ratings] [earnings]   │
-└────────────────────────────────┬───────────────────────────────────────────────────────────────┘
+┌────────────────┐  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐  ┌──────────────┐  ┌──────────────┐
+│ Alpaca Market  │  │ Alpaca News    │  │ arkfunds.io    │  │ SEC EDGAR API  │  │ Senate eFD   │  │ yfinance     │
+│ Data API ⭐    │  │ API (headlines)│  │ (ARK Holdings) │  │ (Form 4/13F)   │  │ (Politician) │  │ (Fund/Rtg/Ea)│
+└────────┬───────┘  └────────┬───────┘  └────────┬───────┘  └────────┬───────┘  └──────┬───────┘  └──────┬───────┘
+         │                   │                   │                   │                 │                 │
+         ▼                   ▼                   ▼                   ▼                 ▼                 ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                  Collectors (Python)                                                           │
+│  [prices_alpaca] [news_collector] [ark_holdings] [form4] [form13f] [politicians] [fund] [ratings] [earnings]  │
+└────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────┘
                                  │ INSERT / UPSERT
                                  ▼
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
 │              Raw Layer (append-only / upsert)                                        │
 │  prices_daily | ark_holdings | insider_trades | politician_trades                    │
-│  fundamentals_snapshot | analyst_ratings | earnings_calendar                          │
+│  fundamentals_snapshot | analyst_ratings | earnings_calendar | news_articles         │
 └────────────────────────────────┬─────────────────────────────────────────────────────┘
                                  │ SELECT + COMPUTE
                                  ▼
-┌─────────────────────────────────────────────────────────┐
-│              Derived Layer (recomputable)               │
-│  ark_deltas | insider_clusters | technical_indicators   │
-└────────────────────────┬────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│              Derived Layer (recomputable)                               │
+│  ark_deltas | insider_clusters | technical_indicators                   │
+│  news_sentiment (FinBERT)                                               │
+└────────────────────────┬────────────────────────────────────────────────┘
                          │ AGGREGATE
                          ▼
-┌─────────────────────────────────────────────────────────┐
-│       Feature Store (feature_snapshots) ⭐              │
-│     One feature vector per ticker per day               │
-└────────────────────────┬────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│       Feature Store (feature_snapshots) ⭐                              │
+│     One feature vector per ticker per day (55 features, 9 groups)      │
+└────────────────────────┬────────────────────────────────────────────────┘
                          │
                          ▼
          ┌───────────────┴────────────────┐

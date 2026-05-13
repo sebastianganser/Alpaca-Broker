@@ -9,13 +9,16 @@
 
 ---
 
-## Daily – Night Slot (01:00–02:15 CET)
+## Daily – Night Slot (00:00–03:30 CET)
 
 | Time (CET) | Job | Description | Sprint |
 |---|---|---|---|
+| 00:00 | `news_collector` | News articles via Alpaca News API (~830 articles/day) | 8c ✅ |
+| 00:30 | `sentiment_computer` | FinBERT sentiment scoring on collected articles (~23s) | 8c ✅ |
 | 01:00 | `analyst_ratings_collector` | Analyst upgrades/downgrades via yfinance (~10 min) | 5 ✅ |
 | 02:00 | `feature_pipeline` | Compute daily feature snapshots (after all collectors) | 8 ✅ |
 | 02:15 | `target_backfill` | Backfill return targets for older snapshots | 8 ✅ |
+| 03:30 | `log_retention` | Delete collection_logs older than 90 days | 8c ✅ |
 
 ## Daily – Evening Slot (after US EOD)
 
@@ -25,8 +28,6 @@
 | 22:30 | `technical_indicators_computer` | Compute TA indicators from price data | 6 ✅ |
 | 23:00 | `ark_holdings` | ARK ETF holdings via arkfunds.io + delta computation | 2 ✅ |
 | 23:30 | `form4_collector` | New Form 4 filings (last 24h) + cluster computation | 3 ✅ |
-| ~~–~~ | ~~`feature_pipeline`~~ | Moved to night slot 02:00 (see above) | 8 ✅ |
-| ~~–~~ | ~~`target_backfill`~~ | Moved to night slot 02:15 (see above) | 8 ✅ |
 
 ## Weekly (Sunday)
 
@@ -68,5 +69,7 @@ Jobs are registered in `src/trading_signals/scheduler/jobs.py`.
 - **CronTrigger** – timezone-aware (`Europe/Berlin`)
 - **JobTracker** – APScheduler event listener provides live running status to the UI
 - **CollectorLogCapture** – every job captures WARNING/ERROR + collector-specific INFO lines
+- **Log Retention** – automatic cleanup of collection_logs older than 90 days (daily 03:30)
+- **Warning Demotion** – known harmless third-party warnings (e.g., HF Hub token) are automatically downgraded to INFO level
 
 See [DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) for the rationale behind these choices.

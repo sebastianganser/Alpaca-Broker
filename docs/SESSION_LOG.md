@@ -212,3 +212,23 @@
   - Price data continuity
   - Output: ✅ BEREIT or ❌ + earliest start date with timeline
   - First run result: Sprint 9 estimated **~August 2026**
+
+### Session 21 – 13 May 2026 – Sprint 8c: News Sentiment Pipeline
+- **News Collector** (`collectors/news_collector.py`): Alpaca News API integration
+  - 3-day lookback, paginated (50/request), deduplication via `article_id`
+  - Multi-ticker: `symbols` ARRAY with GIN index, `is_global` flag for macro news
+- **Sentiment Scorer** (`derived/sentiment_scorer.py`): FinBERT local inference
+  - ProsusAI/finbert (110M params), batch_size=32, ~23s for 1700 scores
+  - Model pre-cached in Docker image to avoid runtime downloads
+  - Scores: sentiment_label (positive/negative/neutral), sentiment_score (-1.0..+1.0)
+- **DB tables:** `news_articles` + `news_sentiment` (migrations 019 + 020)
+- **Feature Pipeline extended:** 9 groups, 55 features (6 new sentiment features)
+  - Bugfix: Changed `scored_at` → `published_at` filter (JOIN with `news_articles`)
+- **Frontend – Signals Page:** New "Sentiment" tab with Summary + Articles views
+- **Frontend – Features Page:** Sentiment column in heatmap + convergence score
+- **Log improvements:**
+  - CollectorLogCapture: Demote known harmless warnings (HF Hub) to INFO
+  - New `run_log_retention()` job: Auto-delete logs older than 90 days (daily 03:30)
+- **Scheduler:** 15 jobs total (9 daily, 4 weekly, 1 monthly, 1 maintenance)
+- **Documentation:** CLAUDE.md, README.md, ROADMAP.md, SCHEDULER.md, DATABASE.md, DATA_SOURCES.md, ARCHITECTURE.md, DECISIONS_FEATURES.md, SESSION_LOG.md updated
+

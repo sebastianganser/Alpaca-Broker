@@ -14,6 +14,7 @@
 | Source | Category | Cost | Frequency | Delay | Sprint | Status |
 |---|---|---|---|---|---|---|
 | **Alpaca Market Data** | Prices (OHLCV) | Free (IEX) | Daily | ~minutes after close | 1b | ✅ Primary |
+| **Alpaca News API** | News Headlines | Free | Daily | Near real-time | 8c | ✅ Active |
 | **yfinance** | Prices (fallback), Fundamentals | Free | Daily | ~20 min EOD | 1 | ⏸ Fallback |
 | **arkfunds.io** | Smart Money (ARK ETFs) | Free | Daily EOD | ~1 hour | 2 | ✅ Active |
 | **SEC EDGAR – Form 4** | Insider Trades | Free | Rolling | 2 business days (legal) | 3 | ✅ Active |
@@ -22,6 +23,7 @@
 | **yfinance – Fundamentals** | P/E, Revenue, EPS | Free | Weekly | ~ | 5 | ✅ Active |
 | **yfinance – Ratings** | Analyst Upgrades/Downgrades | Free | Daily | ~ | 5 | ✅ Active |
 | **yfinance – Earnings** | Earnings Dates + Surprises | Free | Weekly | ~ | 5 | ✅ Active |
+| **ProsusAI/finbert** | NLP Sentiment Scoring | Free (local) | Daily | <1 min | 8c | ✅ Active |
 
 ---
 
@@ -189,12 +191,68 @@ Due to delay, probably not a strong alpha signal, but useful as a feature in agg
 
 ---
 
-## 7. Not Yet Implemented – Ideas for Later
+## 7. Alpaca News API (Sprint 8c)
+
+**Category:** Financial news headlines
+**API Endpoint:** `https://data.alpaca.markets/v1beta1/news`
+**Docs:** https://docs.alpaca.markets/reference/news-1
+**Status:** ✅ Implemented (Sprint 8c)
+
+### What It Delivers
+Financial news articles with headline, summary, source, author, published_at, and associated stock symbols.
+
+### Configuration
+- **Lookback:** 3 days per daily run
+- **Page size:** 50 articles/request, paginated
+- **Deduplication:** `article_id` unique constraint
+- **Multi-ticker:** One article can reference 0..N tickers via `symbols` array
+- **Schedule:** Daily 00:00 CET
+
+### Best Practices
+- Use `symbols` array with PostgreSQL GIN index for efficient ticker lookups
+- Mark articles without specific tickers as `is_global = True`
+- Only store articles with English headlines
+
+---
+
+## 8. ProsusAI/finbert – Sentiment Scoring (Sprint 8c)
+
+**Category:** NLP sentiment analysis
+**Model:** `ProsusAI/finbert` (110M parameters, BERT-based)
+**Status:** ✅ Implemented (Sprint 8c)
+
+### What It Delivers
+Sentiment scores for financial news headlines:
+- **sentiment_label:** `positive`, `negative`, `neutral`
+- **sentiment_score:** -1.0 to +1.0 (continuous)
+- **confidence:** Model confidence (softmax probability)
+
+### Configuration
+- **Local inference:** CPU-based, no API calls, no costs
+- **Batch processing:** `batch_size=32`, ~23s for 1700 scores
+- **Max token length:** 512 tokens (headlines auto-truncated)
+- **Model pre-cached** in Docker image (~440 MB) to avoid runtime downloads
+- **Schedule:** Daily 00:30 CET (after news collector)
+
+### Signal Value
+- **Headline-only scoring:** Intentional – avoids paywall issues, headlines carry most information
+- **Per-ticker + global:** Each article generates one score per mentioned ticker + one global (NULL ticker)
+- **Rolling aggregates:** 7d and 30d windows, momentum (7d–30d spread), negative article count
+
+### Limitations
+- **Headline bias:** FinBERT scores reflect headline sentiment, which may be sensationalized
+- **English only:** Non-English headlines may produce unreliable scores
+- **Model age:** FinBERT trained on pre-2020 financial text; may miss recent terminology
+- **Planned upgrade:** Claude Haiku for more nuanced financial sentiment (Sprint 9+)
+
+---
+
+## 9. Not Yet Implemented – Ideas for Later
 
 - **OpenInsider** – Aggregated Form 4 data with pre-filtered cluster buys
 - **Finviz** – Insider screener, news aggregation (scraping gray area)
 - **Unusual Whales** – Options flow + politicians (~$40/month)
-- **News Sentiment APIs** – NewsAPI, Alpha Vantage News
+- **Reddit/social sentiment** – StockTwits, WSB mentions as contrarian signal
 - **On-Chain Data** – Arkham Intelligence, Nansen, Whale Alert
 
 ---
@@ -219,6 +277,7 @@ All data in the system is bounded by `DATA_START_DATE = 2021-01-01` (defined in 
 | `scripts/cleanup_insider_outliers.py` | Remove trades outside `DATA_START_DATE..today` | After backfill |
 | `scripts/verify_insider_backfill.py` | Distribution + depth analysis of insider data | After backfill for QA |
 | `scripts/sprint8_readiness.py` | Data depth + coverage validation (all tables) | Before starting Sprint 8 |
+| `scripts/sprint9_readiness.py` | Feature snapshot + target fill readiness check | Periodic during wait phase |
 | `scripts/diag_insider.py` | Quick insider trade diagnostics | Ad-hoc debugging |
 
 ---

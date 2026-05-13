@@ -22,6 +22,7 @@
 | 6 | Technical Indicators | 🟢 Done | April 2026 |
 | 7 | Dashboard & Operations UI | 🟢 Done | April 2026 |
 | 8 | Feature Pipeline | 🟢 Done | May 2026 |
+| 8c | News Sentiment Pipeline | 🟢 Done | May 2026 |
 | **⏸ Wait** | **2–3 months data collection** | **–** | **–** |
 | 9 | Exploratory Analysis (Jupyter) | 🔴 Open | – |
 | 10 | Signal Scoring Models | 🔴 Open | – |
@@ -92,6 +93,27 @@
 
 ---
 
+### Sprint 8c – News Sentiment Pipeline ✅
+- **7th data source:** Alpaca News API for headline collection (830+ articles/day)
+- **NLP scoring:** ProsusAI/finbert (110M params, local CPU, ~50-200ms/headline)
+  - Batch processing (batch_size=32), ~23s for ~1700 scores
+  - Model pre-cached in Docker image (~440 MB, no runtime download)
+- **DB tables:** `news_articles` + `news_sentiment` (migration 019–020)
+- **6 new features** in `feature_snapshots`: `sentiment_avg_7d`, `sentiment_avg_30d`, `sentiment_momentum`, `sentiment_neg_count_7d`, `sentiment_article_count_7d`, `market_sentiment_7d`
+- **Feature pipeline** extended to 9 groups, 55 features total
+- **2 new API endpoints:** `GET /signals/sentiment/summary`, `GET /signals/sentiment/articles`
+- **Frontend:**
+  - Features page: Sentiment column in heatmap (x/6) + convergence score
+  - Signals page: New "Sentiment" tab with Summary + Articles views
+  - Toggles: 7/14/30 day lookback, ticker/source/sentiment filters
+- **Scheduler:** News Collector (00:00) + Sentiment Scorer (00:30)
+- **Log retention:** 90-day automatic cleanup (daily 03:30)
+- **Bugfixes:**
+  - Fixed `scored_at` → `published_at` date filter in feature pipeline
+  - Demoted HF Hub warnings from WARNING to INFO in log capture
+
+---
+
 ### ⏸ Waiting Phase: 2–3 Months Data Collection
 
 **No active sprint, but important activities:**
@@ -137,7 +159,7 @@
 - Docker Compose via Compose Manager
 - PostgreSQL 18 external (`postgresql18-alpaca`, port 5435)
 - Alembic migrations run automatically via `entrypoint.sh`
-- 12 scheduler jobs active (7 daily, 4 weekly, 1 monthly)
+- 15 scheduler jobs active (9 daily, 4 weekly, 1 monthly, 1 maintenance)
 
 **Update workflow:**
 1. `git push` from Windows
@@ -147,8 +169,7 @@
 
 ## Long-term Ideas (Backlog)
 
-- **Crypto integration:** On-chain whale tracking, Arkham API
-- **News sentiment:** NLP analysis of headlines with Haiku
+- **News sentiment:** ~~NLP analysis of headlines with Haiku~~ ✅ Implemented with FinBERT (Sprint 8c). Haiku upgrade planned for Sprint 9.
 - **Reddit/social sentiment:** StockTwits, WSB mentions as contrarian signal
 - **Options flow:** Unusual options activity
 - **ML models:** XGBoost, neural networks after 12+ months of data

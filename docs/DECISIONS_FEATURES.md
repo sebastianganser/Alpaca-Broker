@@ -176,9 +176,58 @@
 
 ---
 
+## Sprint 8c Decisions
+
+### [2026-05-13] Sentiment Model: FinBERT over Claude Haiku (Initial)
+
+**Context:** Need NLP sentiment scoring for financial news headlines. Options: Claude Haiku API (~$10/month), ProsusAI/finbert (free, local), or VADER (rule-based).
+
+**Decision:** Start with ProsusAI/finbert (110M params), local CPU inference. Plan Haiku upgrade for Sprint 9+ once pipeline proves stable.
+
+**Rationale:**
+- Zero cost (local model, no API calls)
+- Latency: ~50-200ms per headline, batch processing (~23s for 1700 scores)
+- Domain-specific: Trained on financial text (vs. general-purpose VADER)
+- No external dependency during waiting phase
+- Haiku upgrade remains a viable future enhancement
+
+---
+
+### [2026-05-13] Headline-Only Scoring (No Full Article Text)
+
+**Context:** Many news articles are behind paywalls. Scoring could use: A) full article text (requires paywall bypass), B) headline + summary, or C) headline only.
+
+**Decision:** Score headlines only. Summaries are optionally available but not used for scoring.
+
+**Rationale:**
+- Headlines carry the most information density for sentiment
+- Avoids paywall issues entirely
+- Consistent data quality (every article has a headline, not all have summaries)
+- FinBERT's 512-token limit makes full articles impractical anyway
+
+---
+
+### [2026-05-13] Feature Pipeline Date Filter: published_at over scored_at
+
+**Context:** Initial implementation filtered sentiment data by `scored_at` (when FinBERT ran). This caused empty features because the pipeline computes for yesterday but all scores have today's `scored_at`.
+
+**Decision:** JOIN with `news_articles` table and filter on `published_at` (when the article was published). This correctly associates articles with their temporal context regardless of when scoring occurred.
+
+**Lesson:** Always distinguish between "when did the event happen" (published_at) vs "when did we process it" (scored_at) in temporal feature engineering.
+
+---
+
+### [2026-05-13] Log Retention: 90 Days Automatic Cleanup
+
+**Decision:** Collection logs older than 90 days are automatically deleted daily at 03:30 CET.
+
+**Rationale:** Without retention, the `collection_log` table grows unboundedly (~15 entries/day × 365 = 5,475/year). 90 days provides sufficient operational history for debugging while keeping the database lean.
+
+---
+
 ## Pending Decisions
 
 - ML model selection (Sprint 10, after sufficient data)
 - Feature importance evaluation: which politician date variant has higher impact (Sprint 9)
+- FinBERT → Haiku upgrade: when sentiment data volume justifies API costs (Sprint 9+)
 - Live trading activation criteria (Sprint 12)
-

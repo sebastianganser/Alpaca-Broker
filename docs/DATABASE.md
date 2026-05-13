@@ -259,6 +259,48 @@ CREATE TABLE signals.earnings_calendar (
 );
 ```
 
+### `signals.news_articles`
+Financial news articles from Alpaca News API. Raw layer – collected daily.
+
+```sql
+CREATE TABLE signals.news_articles (
+  id              BIGSERIAL PRIMARY KEY,
+  article_id      VARCHAR(100) UNIQUE,           -- Source-specific unique ID
+  headline        TEXT NOT NULL,
+  summary         TEXT,
+  source          VARCHAR(100),                  -- e.g. 'benzinga', 'reuters'
+  author          VARCHAR(200),
+  published_at    TIMESTAMP NOT NULL,
+  article_url     TEXT,
+  symbols         VARCHAR(20)[],                 -- PostgreSQL ARRAY (0..N tickers)
+  is_global       BOOLEAN DEFAULT FALSE,         -- True for macro/market news
+  fetched_at      TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_news_published ON signals.news_articles(published_at);
+CREATE INDEX idx_news_symbols ON signals.news_articles USING GIN(symbols);
+```
+
+### `signals.news_sentiment`
+Sentiment scores per article × ticker × model. Derived from FinBERT (later Haiku).
+
+```sql
+CREATE TABLE signals.news_sentiment (
+  id              BIGSERIAL PRIMARY KEY,
+  article_id      BIGINT REFERENCES signals.news_articles(id),
+  ticker          VARCHAR(20),                   -- NULL for global articles
+  sentiment_label VARCHAR(20) NOT NULL,          -- 'positive', 'negative', 'neutral'
+  sentiment_score NUMERIC(6,4) NOT NULL,         -- -1.0 to +1.0
+  confidence      NUMERIC(6,4),                  -- Model confidence
+  model_version   VARCHAR(50) NOT NULL,          -- e.g. 'finbert-v1'
+  scored_at       TIMESTAMP DEFAULT NOW(),
+  UNIQUE (article_id, ticker, model_version)
+);
+
+CREATE INDEX idx_sentiment_ticker_date ON signals.news_sentiment(ticker, scored_at);
+CREATE INDEX idx_sentiment_model ON signals.news_sentiment(model_version);
+```
+
 ---
 
 ## Layer 2: Derived Data (computed, reproducible)
@@ -335,7 +377,7 @@ CREATE TABLE signals.technical_indicators (
 ## Layer 3: Analysis (Feature Store + Backtests)
 
 ### `signals.feature_snapshots` ⭐
-**The heart of the project.** Daily feature vector per ticker, aggregated from all raw and derived data layers. This table serves as training data for ML models. Wide table design (~77 columns) avoids JOINs during training.
+**The heart of the project.** Daily feature vector per ticker, aggregated from all raw and derived data layers. This table serves as training data for ML models. Wide table design (~83 columns) avoids JOINs during training.
 
 > **Design:** All feature columns are nullable. Features self-activate when sufficient data exists. No imputation at the feature store level — the ML stage decides how to handle NULLs.
 
@@ -419,6 +461,14 @@ CREATE TABLE signals.feature_snapshots (
   consecutive_beats INTEGER,             -- Consecutive quarters EPS > estimate
   surprise_trend_3q NUMERIC(10,4),       -- Avg surprise_pct of last 3 quarters
   
+  -- ═══ Sentiment Features (Sprint 8c) ═══
+  sentiment_avg_7d NUMERIC(10,4),        -- Avg sentiment score (7-day rolling)
+  sentiment_avg_30d NUMERIC(10,4),       -- Avg sentiment score (30-day rolling)
+  sentiment_momentum NUMERIC(10,4),      -- 7d avg - 30d avg (trend indicator)
+  sentiment_neg_count_7d INTEGER,        -- Negative articles in last 7 days
+  sentiment_article_count_7d INTEGER,    -- Total articles in last 7 days
+  market_sentiment_7d NUMERIC(10,4),     -- Global market sentiment (no ticker)
+  
   -- ═══ TARGET VARIABLES (backfilled retrospectively) ═══
   return_1d NUMERIC(10,6),               -- 1-day forward return
   return_5d NUMERIC(10,6),               -- 5-day forward return
@@ -455,7 +505,7 @@ CREATE TABLE signals.collection_log (
 
 ## Migrations
 
-Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–018.
+Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–020.
 
 | Migration | Description |
 |---|---|
@@ -477,4 +527,6 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 | 016 | `universe.index_membership` array |
 | 017 | `insider_clusters` unique constraint + dedup |
 | 018 | Table `feature_snapshots` (Sprint 8) |
+| 019 | Tables `news_articles` + `news_sentiment` (Sprint 8c) |
+| 020 | Add 6 sentiment columns to `feature_snapshots` (Sprint 8c) |
 
