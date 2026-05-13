@@ -203,3 +203,12 @@
 - **Version:** v0.2.0 · Sprint 8
 - **Verified:** All 674 tickers visible, AAPL search works, modal shows 28/49 features
 - **Documentation:** README.md, CLAUDE.md, ARCHITECTURE.md, SCHEDULER.md, ROADMAP.md updated
+- **`sprint9_readiness.py`:** 6-section readiness check script for Sprint 9:
+  - Feature snapshot volume & continuity (gap detection)
+  - Target return fill rates per horizon (with Ø/σ)
+  - Temporal feature maturity (rolling windows)
+  - 13F quarterly data presence
+  - Collector health (last 7d success/error)
+  - Price data continuity
+  - Output: ✅ BEREIT or ❌ + earliest start date with timeline
+  - First run result: Sprint 9 estimated **~August 2026**

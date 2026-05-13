@@ -81,12 +81,14 @@
 - API: `GET /dashboard/feature-stats` (coverage, backfill status)
 - 311 tests (8 new)
 
-### Sprint 8b – Features Page & Exploration UI 🟡
-- [ ] **Backend:** 4 new API endpoints (`/features/coverage`, `/convergence`, `/returns`, `/ticker/{symbol}`)
-- [ ] **Frontend:** New `/features` page (6th sidebar item with Brain icon)
-- [ ] Pipeline Stats kacheln, Feature Coverage Heatmap, Signal Convergence, Return Distribution
-- [ ] Ticker Feature Detail (click-through)
-- [ ] Tests + Documentation
+### Sprint 8b – Features Page & Exploration UI ✅
+- 4 new API endpoints (`/features/coverage`, `/convergence`, `/returns`, `/ticker/{symbol}`)
+- 7 new Pydantic schemas (FeatureCoverageItem, SignalConvergenceItem, HorizonStats, etc.)
+- New `/features` page (6th sidebar item with Brain icon)
+- Pipeline Stats cards, Feature Coverage Heatmap, Signal Convergence, Return Distribution
+- Ticker Feature Detail (click-through modal with expandable groups)
+- 29 new unit tests (340 total)
+- `sprint9_readiness.py` diagnostic script (6-section readiness check)
 
 ---
 
@@ -94,10 +96,15 @@
 
 **No active sprint, but important activities:**
 - Regularly check that all collectors run stably
+- **Run `sprint9_readiness.py`** periodically to track progress:
+  ```bash
+  docker exec -it alpaca-broker uv run python scripts/sprint9_readiness.py
+  ```
 - Occasionally explore data ad-hoc with Claude Desktop
 - Record observations in `LEARNINGS.md`
 - If data gaps appear: improve collectors
 - Run a benchmark portfolio (S&P 500 only) in paper trading account
+- **Estimated Sprint 9 start: ~August 2026** (60d returns + 60 snapshot days needed)
 
 ---
 
@@ -130,7 +137,7 @@
 - Docker Compose via Compose Manager
 - PostgreSQL 18 external (`postgresql18-alpaca`, port 5435)
 - Alembic migrations run automatically via `entrypoint.sh`
-- 10 scheduler jobs active (5 daily, 4 weekly, 1 monthly)
+- 12 scheduler jobs active (7 daily, 4 weekly, 1 monthly)
 
 **Update workflow:**
 1. `git push` from Windows
