@@ -64,6 +64,11 @@ FEATURE_GROUPS = {
     "Earnings": [
         "earnings_days_until", "consecutive_beats", "surprise_trend_3q",
     ],
+    "Sentiment": [
+        "sentiment_avg_7d", "sentiment_avg_30d", "sentiment_momentum",
+        "sentiment_neg_count_7d", "sentiment_article_count_7d",
+        "market_sentiment_7d",
+    ],
 }
 
 # All feature column names (flat list)
@@ -79,6 +84,7 @@ SOURCE_INDICATORS = {
     "Fundamentals": "pe_ratio",
     "Technical": "rsi_14",
     "Earnings": "earnings_days_until",
+    "Sentiment": "sentiment_avg_7d",
 }
 
 
@@ -121,7 +127,9 @@ def get_feature_coverage(db: Session = Depends(get_db)):
         fundamentals = _count_filled(row, FEATURE_GROUPS["Fundamentals"])
         technical = _count_filled(row, FEATURE_GROUPS["Technical"])
         earnings = _count_filled(row, FEATURE_GROUPS["Earnings"])
-        total = ark + insider + analyst + politician + form13f + fundamentals + technical + earnings
+        sentiment = _count_filled(row, FEATURE_GROUPS["Sentiment"])
+        total = (ark + insider + analyst + politician + form13f
+                 + fundamentals + technical + earnings + sentiment)
 
         items.append(FeatureCoverageItem(
             ticker=row.ticker,
@@ -133,6 +141,7 @@ def get_feature_coverage(db: Session = Depends(get_db)):
             fundamentals=fundamentals,
             technical=technical,
             earnings=earnings,
+            sentiment=sentiment,
             total_filled=total,
         ))
 
@@ -200,6 +209,10 @@ def get_signal_convergence(
                 rsi_14=(
                     float(row.rsi_14)
                     if row.rsi_14 is not None else None
+                ),
+                sentiment_avg_7d=(
+                    float(row.sentiment_avg_7d)
+                    if row.sentiment_avg_7d is not None else None
                 ),
             ))
 

@@ -62,12 +62,13 @@ function coverageBg(filled: number, total: number): string {
 
 const GROUP_TOTALS: Record<string, number> = {
   ark: 11, insider: 8, analyst: 7, politician: 4,
-  form13f: 2, fundamentals: 8, technical: 6, earnings: 3,
+  form13f: 2, fundamentals: 8, technical: 6, earnings: 3, sentiment: 6,
 };
 
 const GROUP_LABELS: Record<string, string> = {
   ark: 'ARK', insider: 'Insider', analyst: 'Analyst', politician: 'Politician',
   form13f: '13F', fundamentals: 'Fundamentals', technical: 'Technical', earnings: 'Earnings',
+  sentiment: 'Sentiment',
 };
 
 // ── Pipeline Stats Section ──────────────────────────────────────────
@@ -335,6 +336,7 @@ function SignalConvergence() {
               <th className="text-right">Insider Score</th>
               <th className="text-right">Analyst Score</th>
               <th className="text-right">RSI</th>
+              <th className="text-right">Sentiment</th>
             </tr>
           </thead>
           <tbody>
@@ -407,6 +409,14 @@ function ConvergenceRow({ item }: { item: SignalConvergenceItem }) {
       <td className="text-right mono">{item.insider_cluster_score?.toFixed(2) ?? '—'}</td>
       <td className="text-right mono">{item.analyst_rating_score?.toFixed(2) ?? '—'}</td>
       <td className="text-right mono">{item.rsi_14?.toFixed(1) ?? '—'}</td>
+      <td className="text-right mono" style={{
+        color: item.sentiment_avg_7d != null
+          ? item.sentiment_avg_7d > 0.1 ? 'var(--success)'
+          : item.sentiment_avg_7d < -0.1 ? 'var(--error)'
+          : 'var(--on-surface-dim)'
+          : undefined,
+        fontWeight: item.sentiment_avg_7d != null ? 600 : 400,
+      }}>{item.sentiment_avg_7d?.toFixed(2) ?? '—'}</td>
     </tr>
   );
 }

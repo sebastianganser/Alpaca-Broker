@@ -8,11 +8,16 @@ import {
   fetchPoliticianTrades,
   fetchAnalystRatings,
   fetchTickerSignals,
+  fetchSentimentSummary,
+  fetchSentimentArticles,
 } from '../api';
-import type { ARKDelta, InsiderCluster, PoliticianTrade, AnalystRating } from '../api';
+import type {
+  ARKDelta, InsiderCluster, PoliticianTrade, AnalystRating,
+  SentimentSummary, SentimentArticle,
+} from '../api';
 import { TrendingUp, TrendingDown, ArrowRight, Layers, X, Filter } from 'lucide-react';
 
-type Tab = 'ark' | 'insider' | 'politicians' | 'ratings';
+type Tab = 'ark' | 'insider' | 'politicians' | 'ratings' | 'sentiment';
 type ArkView = 'summary' | 'daily';
 
 /* ─── Reusable column filter input ─────────────────────────────────── */
@@ -89,7 +94,7 @@ export default function SignalsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlTab = searchParams.get('tab') as Tab | null;
   const tickerFilter = searchParams.get('ticker');
-  const [activeTab, setActiveTab] = useState<Tab>(urlTab && ['ark', 'insider', 'politicians', 'ratings'].includes(urlTab) ? urlTab : 'ark');
+  const [activeTab, setActiveTab] = useState<Tab>(urlTab && ['ark', 'insider', 'politicians', 'ratings', 'sentiment'].includes(urlTab) ? urlTab : 'ark');
   const navigate = useNavigate();
 
   const { data: tickerSignals } = useQuery({
@@ -115,7 +120,7 @@ export default function SignalsPage() {
       </div>
 
       <div className="tabs">
-        {(['ark', 'insider', 'politicians', 'ratings'] as Tab[]).map((tab) => (
+        {(['ark', 'insider', 'politicians', 'ratings', 'sentiment'] as Tab[]).map((tab) => (
           <button
             key={tab}
             className={`tab${activeTab === tab ? ' active' : ''}`}
@@ -123,7 +128,8 @@ export default function SignalsPage() {
           >
             {tab === 'ark' ? 'ARK' :
              tab === 'insider' ? 'Insider' :
-             tab === 'politicians' ? 'Politiker' : 'Analyst'}
+             tab === 'politicians' ? 'Politiker' :
+             tab === 'ratings' ? 'Analyst' : 'Sentiment'}
           </button>
         ))}
       </div>
@@ -132,6 +138,7 @@ export default function SignalsPage() {
       {activeTab === 'insider' && <InsiderTab navigate={navigate} tickerFilter={tickerFilter} tickerData={tickerSignals?.insider_clusters} initialFilters={initialTickerFilter} />}
       {activeTab === 'politicians' && <PoliticianTab navigate={navigate} tickerFilter={tickerFilter} tickerData={tickerSignals?.politician_trades} initialFilters={initialTickerFilter} />}
       {activeTab === 'ratings' && <RatingsTab navigate={navigate} tickerFilter={tickerFilter} tickerData={tickerSignals?.analyst_ratings} initialFilters={initialTickerFilter} />}
+      {activeTab === 'sentiment' && <SentimentTab navigate={navigate} tickerFilter={tickerFilter} initialFilters={initialTickerFilter} />}
     </div>
   );
 }
@@ -548,6 +555,272 @@ function Loading() {
   return (
     <div className="loading-pulse text-dim" style={{ padding: 'var(--space-xl)' }}>
       Lade Signale...
+    </div>
+  );
+}
+
+/* ─── Sentiment Tab ────────────────────────────────────────────────────── */
+
+type SentimentView = 'summary' | 'articles';
+
+function sentimentColor(score: number | null): string {
+  if (score == null) return 'var(--on-surface-dim)';
+  if (score > 0.15) return 'var(--success)';
+  if (score < -0.15) return 'var(--error)';
+  return 'var(--warning)';
+}
+
+function sentimentBadge(label: string | null) {
+  if (!label) return <span className="badge badge-neutral">—</span>;
+  const cls = label === 'positive' ? 'badge-success'
+    : label === 'negative' ? 'badge-error'
+    : 'badge-neutral';
+  const text = label === 'positive' ? 'POSITIV'
+    : label === 'negative' ? 'NEGATIV'
+    : 'NEUTRAL';
+  return <span className={`badge ${cls}`}>{text}</span>;
+}
+
+function SentimentTab({ navigate, tickerFilter, initialFilters }: {
+  navigate: (path: string) => void;
+  tickerFilter: string | null;
+  initialFilters?: Record<string, string>;
+}) {
+  const [view, setView] = useState<SentimentView>('summary');
+  const [days, setDays] = useState(7);
+
+  return (
+    <div>
+      <div className="flex items-center gap-md mb-lg" style={{ flexWrap: 'wrap' }}>
+        <div className="flex gap-xs" style={{
+          background: 'var(--surface-high)',
+          borderRadius: 'var(--radius)',
+          padding: '2px',
+        }}>
+          <button
+            className={`btn btn-sm ${view === 'summary' ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => setView('summary')}
+            style={{ fontSize: '0.72rem' }}
+          >
+            <Layers size={12} />
+            Zusammenfassung
+          </button>
+          <button
+            className={`btn btn-sm ${view === 'articles' ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => setView('articles')}
+            style={{ fontSize: '0.72rem' }}
+          >
+            Artikel
+          </button>
+        </div>
+
+        <div className="flex gap-xs items-center">
+          {[7, 14, 30].map((d) => (
+            <button
+              key={d}
+              className={`btn btn-sm ${days === d ? 'btn-secondary' : 'btn-ghost'}`}
+              onClick={() => setDays(d)}
+              style={{ fontSize: '0.7rem', minWidth: 42 }}
+            >
+              {d}T
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {view === 'summary'
+        ? <SentimentSummaryView days={days} navigate={navigate} tickerFilter={tickerFilter} initialFilters={initialFilters} />
+        : <SentimentArticlesView days={days} navigate={navigate} tickerFilter={tickerFilter} initialFilters={initialFilters} />
+      }
+    </div>
+  );
+}
+
+function SentimentSummaryView({ days, navigate, tickerFilter, initialFilters }: {
+  days: number;
+  navigate: (path: string) => void;
+  tickerFilter: string | null;
+  initialFilters?: Record<string, string>;
+}) {
+  const { data: rawData, isLoading } = useQuery({
+    queryKey: ['sentiment-summary', days],
+    queryFn: () => fetchSentimentSummary(days),
+  });
+
+  const cols = ['ticker'];
+  const { filtered: data, filters, setFilter, clearFilters, hasActiveFilters } = useColumnFilters(
+    rawData, cols, initialFilters
+  );
+
+  if (isLoading) return <Loading />;
+
+  return (
+    <div>
+      {hasActiveFilters && (
+        <div className="flex items-center gap-sm mb-md">
+          <Filter size={14} style={{ color: 'var(--primary)' }} />
+          <span className="text-xs text-dim">{data?.length ?? 0} von {rawData?.length ?? 0} Einträgen</span>
+          <FilterClearButton onClick={clearFilters} />
+        </div>
+      )}
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Ticker<FilterInput value={filters.ticker ?? ''} onChange={(v) => setFilter('ticker', v)} /></th>
+              <th className="text-right">Ø Sentiment</th>
+              <th className="text-right">Artikel</th>
+              <th className="text-center">Positiv</th>
+              <th className="text-center">Negativ</th>
+              <th className="text-center">Neutral</th>
+              <th className="text-right">Neg. %</th>
+              <th>Letzte Headline</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data?.map((s, i) => (
+              <tr key={i} onClick={() => navigate(`/ticker/${s.ticker}`)} style={{ cursor: 'pointer' }}>
+                <td className="mono" style={{ fontWeight: 600, color: 'var(--primary)' }}>
+                  {s.ticker}
+                </td>
+                <td className="text-right mono" style={{
+                  fontWeight: 700,
+                  color: sentimentColor(s.avg_sentiment),
+                }}>
+                  {s.avg_sentiment != null ? (s.avg_sentiment > 0 ? '+' : '') + s.avg_sentiment.toFixed(3) : '—'}
+                </td>
+                <td className="text-right mono text-sm">{s.article_count}</td>
+                <td className="text-center mono text-sm" style={{ color: 'var(--success)' }}>{s.positive_count}</td>
+                <td className="text-center mono text-sm" style={{ color: 'var(--error)' }}>{s.negative_count}</td>
+                <td className="text-center mono text-sm text-dim">{s.neutral_count}</td>
+                <td className="text-right mono text-sm" style={{
+                  color: s.neg_pct > 50 ? 'var(--error)' : s.neg_pct > 30 ? 'var(--warning)' : 'var(--on-surface-dim)',
+                  fontWeight: s.neg_pct > 50 ? 600 : 400,
+                }}>
+                  {s.neg_pct.toFixed(0)}%
+                </td>
+                <td style={{ maxWidth: 300 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {sentimentBadge(s.latest_sentiment_label)}
+                    <span className="text-xs text-dim" style={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {s.latest_headline ?? '—'}
+                    </span>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {data?.length === 0 && (
+              <tr><td colSpan={8} className="text-dim" style={{ textAlign: 'center' }}>Noch keine Sentiment-Daten – News Collector startet täglich um 00:00 CET</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function SentimentArticlesView({ days, navigate, tickerFilter, initialFilters }: {
+  days: number;
+  navigate: (path: string) => void;
+  tickerFilter: string | null;
+  initialFilters?: Record<string, string>;
+}) {
+  const { data: rawData, isLoading } = useQuery({
+    queryKey: ['sentiment-articles', days, tickerFilter],
+    queryFn: () => fetchSentimentArticles(days, tickerFilter ?? undefined),
+  });
+
+  const cols = ['ticker', 'source', 'sentiment_label'];
+  const { filtered: data, filters, setFilter, clearFilters, hasActiveFilters } = useColumnFilters(
+    rawData, cols, initialFilters
+  );
+
+  if (isLoading) return <Loading />;
+
+  return (
+    <div>
+      {hasActiveFilters && (
+        <div className="flex items-center gap-sm mb-md">
+          <Filter size={14} style={{ color: 'var(--primary)' }} />
+          <span className="text-xs text-dim">{data?.length ?? 0} von {rawData?.length ?? 0} Einträgen</span>
+          <FilterClearButton onClick={clearFilters} />
+        </div>
+      )}
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Datum</th>
+              <th>Ticker<FilterInput value={filters.ticker ?? ''} onChange={(v) => setFilter('ticker', v)} /></th>
+              <th>Quelle<FilterInput value={filters.source ?? ''} onChange={(v) => setFilter('source', v)} /></th>
+              <th>Sentiment<FilterInput value={filters.sentiment_label ?? ''} onChange={(v) => setFilter('sentiment_label', v)} /></th>
+              <th className="text-right">Score</th>
+              <th>Headline</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data?.map((a, i) => (
+              <tr key={i}>
+                <td className="text-xs text-dim" style={{ whiteSpace: 'nowrap' }}>
+                  {a.published_at ? new Date(a.published_at).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—'}
+                </td>
+                <td
+                  className="mono"
+                  style={{ fontWeight: 600, color: 'var(--primary)', cursor: a.ticker ? 'pointer' : 'default' }}
+                  onClick={() => a.ticker && navigate(`/ticker/${a.ticker}`)}
+                >
+                  {a.ticker ?? 'GLOBAL'}
+                </td>
+                <td className="text-xs text-dim">{a.source ?? '—'}</td>
+                <td>{sentimentBadge(a.sentiment_label)}</td>
+                <td className="text-right mono text-sm" style={{
+                  fontWeight: 600,
+                  color: sentimentColor(a.sentiment_score),
+                }}>
+                  {a.sentiment_score != null ? a.sentiment_score.toFixed(3) : '—'}
+                </td>
+                <td style={{ maxWidth: 400 }}>
+                  {a.url ? (
+                    <a
+                      href={a.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs"
+                      style={{
+                        color: 'var(--on-surface)',
+                        textDecoration: 'none',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        display: 'block',
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {a.headline}
+                    </a>
+                  ) : (
+                    <span className="text-xs" style={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      display: 'block',
+                    }}>
+                      {a.headline}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {data?.length === 0 && (
+              <tr><td colSpan={6} className="text-dim" style={{ textAlign: 'center' }}>Keine Artikel im Zeitraum</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

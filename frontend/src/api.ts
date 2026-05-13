@@ -373,6 +373,7 @@ export interface FeatureCoverageItem {
   fundamentals: number;
   technical: number;
   earnings: number;
+  sentiment: number;
   total_filled: number;
   total_possible: number;
 }
@@ -391,6 +392,7 @@ export interface SignalConvergenceItem {
   insider_cluster_score: number | null;
   analyst_rating_score: number | null;
   rsi_14: number | null;
+  sentiment_avg_7d: number | null;
 }
 
 export interface SignalConvergenceResponse {
@@ -448,3 +450,38 @@ export const fetchReturnStats = () =>
 
 export const fetchTickerFeatures = (symbol: string) =>
   request<TickerFeatureDetail>(`/features/ticker/${symbol}`);
+
+// ── Sentiment ────────────────────────────────────────────────────────
+
+export interface SentimentSummary {
+  ticker: string;
+  avg_sentiment: number | null;
+  article_count: number;
+  negative_count: number;
+  positive_count: number;
+  neutral_count: number;
+  neg_pct: number;
+  latest_headline: string | null;
+  latest_sentiment_label: string | null;
+  latest_date: string | null;
+}
+
+export interface SentimentArticle {
+  article_id: string;
+  headline: string;
+  source: string | null;
+  published_at: string | null;
+  ticker: string | null;
+  sentiment_score: number | null;
+  sentiment_label: string | null;
+  url: string | null;
+}
+
+export const fetchSentimentSummary = (days = 7) =>
+  request<SentimentSummary[]>(`/signals/sentiment/summary?days=${days}`);
+
+export const fetchSentimentArticles = (days = 7, ticker?: string) => {
+  const params = new URLSearchParams({ days: String(days) });
+  if (ticker) params.set('ticker', ticker);
+  return request<SentimentArticle[]>(`/signals/sentiment/articles?${params.toString()}`);
+};

@@ -314,8 +314,9 @@ class FeatureCoverageItem(BaseModel):
     fundamentals: int = 0  # filled columns out of 8
     technical: int = 0     # filled columns out of 6
     earnings: int = 0      # filled columns out of 3
+    sentiment: int = 0     # filled columns out of 6
     total_filled: int = 0  # sum of all filled features
-    total_possible: int = 49  # total feature columns
+    total_possible: int = 55  # total feature columns (49 + 6 sentiment)
 
 
 class FeatureCoverageResponse(BaseModel):
@@ -335,6 +336,7 @@ class SignalConvergenceItem(BaseModel):
     insider_cluster_score: float | None = None
     analyst_rating_score: float | None = None
     rsi_14: float | None = None
+    sentiment_avg_7d: float | None = None
 
 
 class SignalConvergenceResponse(BaseModel):
@@ -376,9 +378,37 @@ class TickerFeatureDetail(BaseModel):
     snapshot_date: date | None = None
     groups: list[FeatureGroupDetail] = []
     total_filled: int = 0
-    total_possible: int = 49
+    total_possible: int = 55
     # Target variables
     return_1d: float | None = None
     return_5d: float | None = None
     return_20d: float | None = None
     return_60d: float | None = None
+
+
+# ── Sentiment Signal Schemas ─────────────────────────────────────────────
+
+class SentimentSummaryItem(BaseModel):
+    """Aggregated sentiment per ticker over a time window."""
+    ticker: str
+    avg_sentiment: float | None = None
+    article_count: int = 0
+    negative_count: int = 0
+    positive_count: int = 0
+    neutral_count: int = 0
+    neg_pct: float = 0.0
+    latest_headline: str | None = None
+    latest_sentiment_label: str | None = None
+    latest_date: date | None = None
+
+
+class SentimentArticleItem(BaseModel):
+    """Single news article with sentiment score."""
+    article_id: str
+    headline: str
+    source: str | None = None
+    published_at: datetime | None = None
+    ticker: str | None = None
+    sentiment_score: float | None = None
+    sentiment_label: str | None = None
+    url: str | None = None

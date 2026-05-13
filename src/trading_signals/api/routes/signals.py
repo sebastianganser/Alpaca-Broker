@@ -1,7 +1,7 @@
 """Signals API routes.
 
 Provides recent signal data: ARK deltas, insider clusters,
-politician trades, and analyst ratings.
+politician trades, analyst ratings, and news sentiment.
 """
 
 from datetime import date, timedelta
@@ -17,6 +17,8 @@ from trading_signals.api.schemas import (
     ARKSummaryItem,
     InsiderClusterItem,
     PoliticianTradeItem,
+    SentimentSummaryItem,
+    SentimentArticleItem,
 )
 from trading_signals.db.models import (
     AnalystRating,
@@ -25,6 +27,7 @@ from trading_signals.db.models import (
     PoliticianTrade,
 )
 from trading_signals.db.models.fundamentals import FundamentalsSnapshot
+from trading_signals.db.models.news import NewsArticle, NewsSentiment
 
 router = APIRouter(prefix="/signals")
 
@@ -256,4 +259,159 @@ def get_analyst_ratings(
             price_target_old=None,
         )
         for r in ratings
+    ]
+
+
+# ── Sentiment Signal Endpoints ───────────────────────────────────────
+
+
+@router.get("/sentiment/summary", response_model=list[SentimentSummaryItem])
+def get_sentiment_summary(
+    db: Session = Depends(get_db),
+    days: int = Query(7, ge=1, le=90, description="Lookback days"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Aggregated sentiment per ticker over a time window.
+
+    For each ticker with scored articles, returns: average sentiment,
+    article count, positive/negative/neutral breakdown, and the most
+    recent headline.
+    """
+    cutoff = date.today() - timedelta(days=days)
+
+    # Join articles + sentiment, grouped by ticker
+    rows = (
+        db.query(
+            NewsSentiment.ticker,
+            func.avg(NewsSentiment.sentiment_score).label("avg_score"),
+            func.count(NewsSentiment.id).label("cnt"),
+            func.sum(
+                func.cast(
+                    NewsSentiment.sentiment_label == "negative", BigInteger
+                )
+            ).label("neg"),
+            func.sum(
+                func.cast(
+                    NewsSentiment.sentiment_label == "positive", BigInteger
+                )
+            ).label("pos"),
+            func.sum(
+                func.cast(
+                    NewsSentiment.sentiment_label == "neutral", BigInteger
+                )
+            ).label("neu"),
+        )
+        .join(NewsArticle, NewsSentiment.article_id == NewsArticle.id)
+        .filter(
+            NewsArticle.published_at >= cutoff,
+            NewsSentiment.ticker.isnot(None),
+        )
+        .group_by(NewsSentiment.ticker)
+        .order_by(func.avg(NewsSentiment.sentiment_score))
+        .limit(limit)
+        .all()
+    )
+
+    # Collect tickers for latest headline lookup
+    tickers = [r.ticker for r in rows]
+
+    # Subquery: latest article per ticker
+    latest_headlines: dict[str, tuple] = {}
+    if tickers:
+        for ticker in tickers:
+            latest = (
+                db.query(
+                    NewsArticle.headline,
+                    NewsSentiment.sentiment_label,
+                    NewsArticle.published_at,
+                )
+                .join(NewsSentiment, NewsSentiment.article_id == NewsArticle.id)
+                .filter(
+                    NewsSentiment.ticker == ticker,
+                    NewsArticle.published_at >= cutoff,
+                )
+                .order_by(desc(NewsArticle.published_at))
+                .first()
+            )
+            if latest:
+                latest_headlines[ticker] = (
+                    latest.headline,
+                    latest.sentiment_label,
+                    latest.published_at.date() if latest.published_at else None,
+                )
+
+    items = []
+    for r in rows:
+        cnt = int(r.cnt or 0)
+        neg = int(r.neg or 0)
+        pos = int(r.pos or 0)
+        neu = int(r.neu or 0)
+        headline_info = latest_headlines.get(r.ticker)
+
+        items.append(SentimentSummaryItem(
+            ticker=r.ticker,
+            avg_sentiment=round(float(r.avg_score), 4) if r.avg_score else None,
+            article_count=cnt,
+            negative_count=neg,
+            positive_count=pos,
+            neutral_count=neu,
+            neg_pct=round(neg / cnt * 100, 1) if cnt > 0 else 0.0,
+            latest_headline=headline_info[0] if headline_info else None,
+            latest_sentiment_label=headline_info[1] if headline_info else None,
+            latest_date=headline_info[2] if headline_info else None,
+        ))
+
+    return items
+
+
+@router.get("/sentiment/articles", response_model=list[SentimentArticleItem])
+def get_sentiment_articles(
+    db: Session = Depends(get_db),
+    days: int = Query(7, ge=1, le=90, description="Lookback days"),
+    ticker: str | None = Query(None, description="Filter by ticker"),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Individual news articles with their sentiment scores.
+
+    Optionally filtered by ticker. Sorted by publication date (newest first).
+    """
+    cutoff = date.today() - timedelta(days=days)
+
+    query = (
+        db.query(
+            NewsArticle.article_id,
+            NewsArticle.headline,
+            NewsArticle.source,
+            NewsArticle.published_at,
+            NewsArticle.article_url,
+            NewsSentiment.ticker,
+            NewsSentiment.sentiment_score,
+            NewsSentiment.sentiment_label,
+        )
+        .join(NewsSentiment, NewsSentiment.article_id == NewsArticle.id)
+        .filter(NewsArticle.published_at >= cutoff)
+    )
+
+    if ticker:
+        query = query.filter(NewsSentiment.ticker == ticker.upper())
+
+    articles = (
+        query
+        .order_by(desc(NewsArticle.published_at))
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        SentimentArticleItem(
+            article_id=str(a.article_id),
+            headline=a.headline,
+            source=a.source,
+            published_at=a.published_at,
+            ticker=a.ticker,
+            sentiment_score=float(a.sentiment_score) if a.sentiment_score is not None else None,
+            sentiment_label=a.sentiment_label,
+            url=a.article_url,
+        )
+        for a in articles
     ]
