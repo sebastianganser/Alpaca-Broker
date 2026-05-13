@@ -22,6 +22,8 @@ dependencies = [
     "requests>=2.31",
     "beautifulsoup4>=4.12",
     "curl_cffi>=0.7",
+    "transformers>=4.40",
+    "torch>=2.2",
 ]
 
 [project.optional-dependencies]

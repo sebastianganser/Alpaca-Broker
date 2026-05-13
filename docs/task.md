@@ -1,4 +1,4 @@
-# Sprint 8b – Features Page & Exploration UI
+# Sprint 8b – Features Page & Exploration UI ✅
 
 > Detailplan: [implementation_plan2.md](implementation_plan2.md)
 
@@ -25,18 +25,22 @@
 ## Task E: FeaturesPage – Ticker Detail ✅
 - [x] E1: Ticker Feature Detail (Click-Through Modal)
 
-## Task F: Polish, Tests, Docs
+## Task F: Polish, Tests, Docs ✅
 - [x] F1: Syntax-Check + Build-Prüfung (Frontend + Backend)
-- [ ] F2: Unit Tests für neue Backend-Endpoints
-- [ ] F3: Doku-Update (ROADMAP, SESSION_LOG)
-- [ ] F4: Git Commits + Push (Feature code pushed, docs pending)
+- [x] F2: Unit Tests (29 neue Tests, alle grün)
+- [x] F3: Doku-Update (README, CLAUDE.md, ARCHITECTURE, SCHEDULER, SESSION_LOG, ROADMAP)
+- [x] F4: Git Commits + Push (3 Commits: feat, docs, tests)
 
 ---
 
-## Nächster Schritt
-- Deploy auf Unraid (`git pull && docker compose up --build -d`)
-- Browser-Verifizierung der neuen Features-Seite
-- F2-F4 abschließen
+## Sprint 8b Ergebnis
+
+- 4 neue Backend-Endpoints
+- 7 neue Pydantic Schemas
+- 1 neue Frontend-Page (FeaturesPage.tsx, ~550 Zeilen)
+- 29 neue Unit Tests (340 total)
+- 6 Dokumentationsdateien aktualisiert
+- Verifiziert auf Unraid (192.168.1.93:8090/features)
 
 ---
 

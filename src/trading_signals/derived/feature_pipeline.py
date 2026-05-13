@@ -1,7 +1,7 @@
 """Feature Pipeline – aggregates raw signals into daily feature vectors.
 
 The heart of the ML data preparation. For each active ticker on a given
-trading day, computes ~49 features across 8 signal groups and stores
+trading day, computes ~55 features across 9 signal groups and stores
 them in the feature_snapshots table via UPSERT.
 
 Feature Groups:
@@ -13,6 +13,7 @@ Feature Groups:
   - Fundamentals (8): Valuation ratios, margins, temporal trends
   - Technical (6): Price vs SMA, RSI, volume ratio, ATR
   - Earnings (3): Days until, consecutive beats, surprise trend
+  - Sentiment (6): News sentiment averages, momentum, attention
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from trading_signals.db.models.fundamentals import (
     FundamentalsSnapshot,
 )
 from trading_signals.db.models.insider import InsiderCluster, InsiderTrade
+from trading_signals.db.models.news import NewsSentiment
 from trading_signals.db.models.politicians import PoliticianTrade
 from trading_signals.db.models.prices import PriceDaily
 from trading_signals.db.models.technical_indicators import TechnicalIndicator
@@ -98,6 +100,7 @@ class FeaturePipeline:
             ("fundamentals", self._fundamentals_features),
             ("technical", self._technical_features),
             ("earnings", self._earnings_features),
+            ("sentiment", self._sentiment_features),
         ]:
             try:
                 features.update(method(ticker, d))
@@ -615,6 +618,78 @@ class FeaturePipeline:
         }
 
     # ── UPSERT ───────────────────────────────────────────────────────
+
+    # ── Sentiment Features (6, Sprint 8c) ────────────────────────────
+
+    def _sentiment_features(self, ticker: str, d: date) -> dict:
+        """Sentiment features from news articles.
+
+        Computes rolling-window averages and counts from the
+        news_sentiment table. Also includes a global market
+        sentiment feature as contextual signal.
+        """
+        since_7 = d - timedelta(days=7)
+        since_30 = d - timedelta(days=30)
+
+        # Helper: query sentiment scores for a ticker in a date range
+        def _avg_sentiment(t: str | None, since: date) -> tuple[float | None, int, int]:
+            """Returns (avg_score, neg_count, total_count) for ticker in window."""
+            query = (
+                select(
+                    func.avg(NewsSentiment.sentiment_score),
+                    func.count(),
+                )
+                .where(NewsSentiment.scored_at >= since)
+                .where(NewsSentiment.scored_at <= d + timedelta(days=1))
+            )
+            if t is not None:
+                query = query.where(NewsSentiment.ticker == t)
+            else:
+                query = query.where(NewsSentiment.ticker.is_(None))
+
+            row = self.session.execute(query).first()
+            avg_val = float(row[0]) if row and row[0] is not None else None
+            total = int(row[1]) if row else 0
+
+            # Count negative articles
+            neg_query = (
+                select(func.count())
+                .where(NewsSentiment.sentiment_label == "negative")
+                .where(NewsSentiment.scored_at >= since)
+                .where(NewsSentiment.scored_at <= d + timedelta(days=1))
+            )
+            if t is not None:
+                neg_query = neg_query.where(NewsSentiment.ticker == t)
+            else:
+                neg_query = neg_query.where(NewsSentiment.ticker.is_(None))
+
+            neg_count = self.session.execute(neg_query).scalar() or 0
+
+            return avg_val, neg_count, total
+
+        # Ticker-specific sentiment
+        avg_7d, neg_7d, count_7d = _avg_sentiment(ticker, since_7)
+        avg_30d, _, _ = _avg_sentiment(ticker, since_30)
+
+        # Momentum: short-term vs long-term sentiment
+        momentum = None
+        if avg_7d is not None and avg_30d is not None:
+            momentum = round(avg_7d - avg_30d, 4)
+
+        # Global market sentiment (articles without ticker association)
+        market_7d, _, _ = _avg_sentiment(None, since_7)
+
+        has_data = avg_7d is not None or avg_30d is not None or count_7d > 0
+        return {
+            "sentiment_avg_7d": round(avg_7d, 4) if avg_7d is not None else None,
+            "sentiment_avg_30d": round(avg_30d, 4) if avg_30d is not None else None,
+            "sentiment_momentum": momentum,
+            "sentiment_neg_count_7d": neg_7d if has_data else None,
+            "sentiment_article_count_7d": count_7d if has_data else None,
+            "market_sentiment_7d": (
+                round(market_7d, 4) if market_7d is not None else None
+            ),
+        }
 
     def _upsert(self, ticker: str, d: date, features: dict) -> None:
         """Insert or update a feature snapshot row."""

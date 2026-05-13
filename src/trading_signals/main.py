@@ -35,8 +35,10 @@ from trading_signals.scheduler.jobs import (
     run_form13f_collector,
     run_fundamentals_collector,
     run_index_sync,
+    run_news_collector,
     run_politician_trades_collector,
     run_price_collector,
+    run_sentiment_computer,
     run_target_backfill,
     run_technical_indicators_computer,
 )
@@ -99,6 +101,22 @@ def create_scheduler() -> BackgroundScheduler:
         CronTrigger(hour=1, minute=0),
         id="analyst_ratings_collector",
         name="Daily Analyst Ratings (yfinance)",
+    )
+
+    # ── News Collector: Daily at 00:00 (night slot, Sprint 8c) ──
+    scheduler.add_job(
+        run_news_collector,
+        CronTrigger(hour=0, minute=0),
+        id="news_collector",
+        name="Daily News Collector (Alpaca News API)",
+    )
+
+    # ── Sentiment Computer: Daily at 00:30 (after news, Sprint 8c) ──
+    scheduler.add_job(
+        run_sentiment_computer,
+        CronTrigger(hour=0, minute=30),
+        id="sentiment_computer",
+        name="Daily Sentiment Scoring (FinBERT)",
     )
 
     # ── Form 13F: Weekly Sunday at 10:00 ──

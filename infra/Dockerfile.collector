@@ -24,6 +24,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
 
 # Install dependencies (without the project itself yet)
+# Use PyTorch CPU-only index to exclude CUDA libraries (~1.5 GB savings)
+ENV UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN uv sync --no-install-project --frozen
 
 # Copy source code
@@ -35,6 +37,12 @@ COPY README.md ./
 # Install the project
 RUN uv sync --frozen
 
+# Pre-download FinBERT model so it's cached in the image
+# (avoids 440 MB download on first scheduler run)
+# Store in /app/.cache so it's included in the multi-stage COPY
+ENV HF_HOME=/app/.cache/huggingface
+RUN uv run python -c "from transformers import pipeline; pipeline('sentiment-analysis', model='ProsusAI/finbert')"
+
 # ── Stage 3: Runtime ─────────────────────────────────────────────────────
 FROM python:3.12-slim
 
@@ -45,8 +53,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy the virtual environment and source from python builder
+# Copy the virtual environment, source, and HuggingFace model cache from python builder
 COPY --from=python-builder /app /app
+ENV HF_HOME=/app/.cache/huggingface
 
 # Copy the frontend build output
 COPY --from=frontend-builder /frontend/dist /app/frontend/dist

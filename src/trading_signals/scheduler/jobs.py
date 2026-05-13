@@ -536,3 +536,87 @@ def run_target_backfill() -> None:
                     session.commit()
             except Exception:
                 logger.error(f"{collector_name}_job: Failed to write error log")
+
+
+def run_news_collector() -> None:
+    """Daily news collection from Alpaca News API.
+
+    Scheduled for 00:00 Europe/Berlin (night slot).
+    Fetches ticker-specific + global market news from the last 36 hours.
+    """
+    from trading_signals.collectors.news_collector import NewsCollectorAlpaca
+
+    logger.info("Scheduler triggered: news_collector_job")
+
+    collector = NewsCollectorAlpaca(lookback_hours=36)
+    log = collector.run()
+    logger.info(
+        f"news_collector_job finished: status={log.status}, "
+        f"written={log.records_written}"
+    )
+
+
+def run_sentiment_computer() -> None:
+    """Daily sentiment scoring of unscored news articles.
+
+    Scheduled for 00:30 Europe/Berlin (after news collector).
+    Uses FinBERT (CPU) to score all articles not yet processed.
+    """
+    from datetime import datetime
+
+    from trading_signals.db.models.collection_log import CollectionLog
+    from trading_signals.db.session import get_session
+    from trading_signals.derived.sentiment_computer import SentimentComputer
+    from trading_signals.derived.sentiment_scorer import FinBERTScorer
+    from trading_signals.utils.logging import CollectorLogCapture
+
+    collector_name = "sentiment_computer"
+    logger.info(f"Scheduler triggered: {collector_name}_job")
+
+    started_at = datetime.now()
+
+    with CollectorLogCapture(collector_name) as log_capture:
+        try:
+            scorer = FinBERTScorer(batch_size=32)
+
+            with get_session() as session:
+                computer = SentimentComputer(session, scorer)
+                written = computer.compute()
+
+                log_entry = CollectionLog(
+                    collector_name=collector_name,
+                    started_at=started_at,
+                    finished_at=datetime.now(),
+                    status="success",
+                    records_fetched=written,
+                    records_written=written,
+                    gaps_detected=0,
+                    log_lines=log_capture.get_lines(),
+                )
+                session.add(log_entry)
+                session.commit()
+
+            logger.info(
+                f"{collector_name}_job finished: "
+                f"{written} sentiment scores computed"
+            )
+        except Exception as e:
+            logger.error(f"{collector_name}_job FAILED: {e}")
+            try:
+                with get_session() as session:
+                    log_entry = CollectionLog(
+                        collector_name=collector_name,
+                        started_at=started_at,
+                        finished_at=datetime.now(),
+                        status="error",
+                        records_fetched=0,
+                        records_written=0,
+                        gaps_detected=0,
+                        notes=str(e)[:2000],
+                        log_lines=log_capture.get_lines(),
+                    )
+                    session.add(log_entry)
+                    session.commit()
+            except Exception:
+                logger.error(f"{collector_name}_job: Failed to write error log")
+

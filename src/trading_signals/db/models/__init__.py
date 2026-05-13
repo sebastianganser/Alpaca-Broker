@@ -5,6 +5,7 @@ from trading_signals.db.models.blacklist import TickerBlacklist
 from trading_signals.db.models.collection_log import CollectionLog
 from trading_signals.db.models.features import FeatureSnapshot
 from trading_signals.db.models.form13f import Form13FHolding
+from trading_signals.db.models.news import NewsArticle, NewsSentiment
 from trading_signals.db.models.fundamentals import (
     AnalystRating,
     EarningsCalendar,
@@ -27,6 +28,8 @@ __all__ = [
     "FundamentalsSnapshot",
     "InsiderCluster",
     "InsiderTrade",
+    "NewsArticle",
+    "NewsSentiment",
     "PoliticianTrade",
     "PriceDaily",
     "TechnicalIndicator",

@@ -16,6 +16,7 @@ Feature groups:
   - Fundamentals: Point-in-time (6) + temporal (2) = 8 features
   - Technical: Point-in-time (6) = 6 features
   - Earnings: Context (3) = 3 features
+  - Sentiment: News-based (6) = 6 features
   - Targets: Forward returns (4) = 4 target variables
 """
 
@@ -138,6 +139,14 @@ class FeatureSnapshot(Base):
     earnings_days_until: Mapped[int | None] = mapped_column(Integer)
     consecutive_beats: Mapped[int | None] = mapped_column(Integer)
     surprise_trend_3q: Mapped[float | None] = mapped_column(Numeric(10, 4))
+
+    # ── Sentiment Features (news-based, Sprint 8c) ───────────────────
+    sentiment_avg_7d: Mapped[float | None] = mapped_column(Numeric(6, 4))
+    sentiment_avg_30d: Mapped[float | None] = mapped_column(Numeric(6, 4))
+    sentiment_momentum: Mapped[float | None] = mapped_column(Numeric(6, 4))
+    sentiment_neg_count_7d: Mapped[int | None] = mapped_column(Integer)
+    sentiment_article_count_7d: Mapped[int | None] = mapped_column(Integer)
+    market_sentiment_7d: Mapped[float | None] = mapped_column(Numeric(6, 4))
 
     # ── Target Variables (backfilled retrospectively) ────────────────
     return_1d: Mapped[float | None] = mapped_column(Numeric(10, 6))

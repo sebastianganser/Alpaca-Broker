@@ -236,6 +236,8 @@ def reset_database(db: Session = Depends(get_db)):
         # Tables to truncate (order matters for FK constraints)
         tables_to_reset = [
             "signals.feature_snapshots",
+            "signals.news_sentiment",
+            "signals.news_articles",
             "signals.technical_indicators",
             "signals.analyst_ratings",
             "signals.earnings_calendar",
