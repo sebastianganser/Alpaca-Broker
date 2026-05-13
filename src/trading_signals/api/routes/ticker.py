@@ -265,6 +265,11 @@ def get_ticker_signals(
                 disclosure_date=t.disclosure_date,
                 transaction_type=t.transaction_type,
                 amount_range=t.amount_range,
+                delay_days=(
+                    (t.disclosure_date - t.transaction_date).days
+                    if t.disclosure_date and t.transaction_date
+                    else None
+                ),
             )
             for t in pol_trades
         ],
