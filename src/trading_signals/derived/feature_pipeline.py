@@ -625,45 +625,54 @@ class FeaturePipeline:
         """Sentiment features from news articles.
 
         Computes rolling-window averages and counts from the
-        news_sentiment table. Also includes a global market
-        sentiment feature as contextual signal.
+        news_sentiment table, joined with news_articles to filter
+        by publication date (not scoring date). Also includes a global
+        market sentiment feature as contextual signal.
         """
+        from trading_signals.db.models.news import NewsArticle
+
         since_7 = d - timedelta(days=7)
         since_30 = d - timedelta(days=30)
+        end = d + timedelta(days=1)  # inclusive upper bound
 
         # Helper: query sentiment scores for a ticker in a date range
+        # Uses published_at from NewsArticle (not scored_at from NewsSentiment)
         def _avg_sentiment(t: str | None, since: date) -> tuple[float | None, int, int]:
             """Returns (avg_score, neg_count, total_count) for ticker in window."""
-            query = (
+            base_join = (
                 select(
                     func.avg(NewsSentiment.sentiment_score),
                     func.count(),
                 )
-                .where(NewsSentiment.scored_at >= since)
-                .where(NewsSentiment.scored_at <= d + timedelta(days=1))
+                .select_from(NewsSentiment)
+                .join(NewsArticle, NewsSentiment.article_id == NewsArticle.id)
+                .where(NewsArticle.published_at >= since)
+                .where(NewsArticle.published_at < end)
             )
             if t is not None:
-                query = query.where(NewsSentiment.ticker == t)
+                base_join = base_join.where(NewsSentiment.ticker == t)
             else:
-                query = query.where(NewsSentiment.ticker.is_(None))
+                base_join = base_join.where(NewsSentiment.ticker.is_(None))
 
-            row = self.session.execute(query).first()
+            row = self.session.execute(base_join).first()
             avg_val = float(row[0]) if row and row[0] is not None else None
             total = int(row[1]) if row else 0
 
             # Count negative articles
-            neg_query = (
+            neg_join = (
                 select(func.count())
+                .select_from(NewsSentiment)
+                .join(NewsArticle, NewsSentiment.article_id == NewsArticle.id)
                 .where(NewsSentiment.sentiment_label == "negative")
-                .where(NewsSentiment.scored_at >= since)
-                .where(NewsSentiment.scored_at <= d + timedelta(days=1))
+                .where(NewsArticle.published_at >= since)
+                .where(NewsArticle.published_at < end)
             )
             if t is not None:
-                neg_query = neg_query.where(NewsSentiment.ticker == t)
+                neg_join = neg_join.where(NewsSentiment.ticker == t)
             else:
-                neg_query = neg_query.where(NewsSentiment.ticker.is_(None))
+                neg_join = neg_join.where(NewsSentiment.ticker.is_(None))
 
-            neg_count = self.session.execute(neg_query).scalar() or 0
+            neg_count = self.session.execute(neg_join).scalar() or 0
 
             return avg_val, neg_count, total
 
