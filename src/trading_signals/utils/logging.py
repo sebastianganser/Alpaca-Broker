@@ -64,8 +64,24 @@ class CollectorLogCapture(logging.Handler):
         self._lines: list[dict] = []
         self.setLevel(logging.DEBUG)  # Accept all, filter in emit()
 
+    # Known harmless warnings that should be displayed as INFO, not WARNING.
+    # These are third-party messages that don't indicate real problems.
+    _DEMOTE_PATTERNS = (
+        "unauthenticated requests to the HF Hub",
+        "HF_TOKEN",
+    )
+
     def emit(self, record: logging.LogRecord) -> None:
         """Capture relevant log lines."""
+        # Demote known harmless warnings to INFO
+        if record.levelno == logging.WARNING:
+            msg = record.getMessage()
+            if any(p in msg for p in self._DEMOTE_PATTERNS):
+                record = logging.LogRecord(
+                    record.name, logging.INFO, record.pathname,
+                    record.lineno, record.msg, record.args, record.exc_info,
+                )
+
         # Always capture WARNING+
         if record.levelno >= logging.WARNING:
             self._append(record)

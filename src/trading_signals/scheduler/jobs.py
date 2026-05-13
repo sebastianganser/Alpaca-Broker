@@ -620,3 +620,41 @@ def run_sentiment_computer() -> None:
             except Exception:
                 logger.error(f"{collector_name}_job: Failed to write error log")
 
+
+# ── Log Retention ────────────────────────────────────────────────────────
+
+LOG_RETENTION_DAYS = 90
+
+
+def run_log_retention() -> None:
+    """Delete collection_logs older than LOG_RETENTION_DAYS.
+
+    Scheduled for 03:30 Europe/Berlin (daily, after all collectors).
+    Keeps the database lean by pruning old log entries.
+    """
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import delete
+
+    from trading_signals.db.models.collection_log import CollectionLog
+    from trading_signals.db.session import get_session
+
+    cutoff = datetime.now() - timedelta(days=LOG_RETENTION_DAYS)
+    logger.info(
+        f"Scheduler triggered: log_retention_job "
+        f"(deleting logs older than {cutoff.date()})"
+    )
+
+    try:
+        with get_session() as session:
+            result = session.execute(
+                delete(CollectionLog)
+                .where(CollectionLog.started_at < cutoff)
+            )
+            deleted = result.rowcount
+            session.commit()
+
+        logger.info(f"log_retention_job finished: {deleted} old log entries deleted")
+    except Exception as e:
+        logger.error(f"log_retention_job FAILED: {e}")
+

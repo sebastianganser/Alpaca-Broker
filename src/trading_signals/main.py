@@ -35,6 +35,7 @@ from trading_signals.scheduler.jobs import (
     run_form13f_collector,
     run_fundamentals_collector,
     run_index_sync,
+    run_log_retention,
     run_news_collector,
     run_politician_trades_collector,
     run_price_collector,
@@ -173,6 +174,14 @@ def create_scheduler() -> BackgroundScheduler:
         CronTrigger(day=1, hour=3, minute=0),
         id="index_sync",
         name="Monthly Index Membership Sync (S&P 500 + Nasdaq 100)",
+    )
+
+    # ── Log Retention: Daily at 03:30 (cleanup old logs) ──
+    scheduler.add_job(
+        run_log_retention,
+        CronTrigger(hour=3, minute=30),
+        id="log_retention",
+        name="Daily Log Retention (90 days)",
     )
 
     return scheduler
