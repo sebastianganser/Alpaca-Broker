@@ -40,8 +40,10 @@ RUN uv sync --frozen
 # Pre-download FinBERT model so it's cached in the image
 # (avoids 440 MB download on first scheduler run)
 # Store in /app/.cache so it's included in the multi-stage COPY
+# NOTE: Use .venv/bin/python directly – uv run re-resolves dependencies
+#       which conflicts with the PyTorch CPU index containing old packages
 ENV HF_HOME=/app/.cache/huggingface
-RUN uv run python -c "from transformers import pipeline; pipeline('sentiment-analysis', model='ProsusAI/finbert')"
+RUN .venv/bin/python -c "from transformers import pipeline; pipeline('sentiment-analysis', model='ProsusAI/finbert')"
 
 # ── Stage 3: Runtime ─────────────────────────────────────────────────────
 FROM python:3.12-slim
