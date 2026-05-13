@@ -352,3 +352,99 @@ export const fetchLogs = (params: Record<string, string | number> = {}) => {
 
 export const fetchCollectorNames = () =>
   request<string[]>('/logs/collectors');
+
+// ── Features ─────────────────────────────────────────────────────────
+
+export interface FeatureStats {
+  last_snapshot_date: string | null;
+  ticker_count: number;
+  feature_coverage_pct: number;
+  target_backfill_pct: number;
+  total_snapshots: number;
+}
+
+export interface FeatureCoverageItem {
+  ticker: string;
+  ark: number;
+  insider: number;
+  analyst: number;
+  politician: number;
+  form13f: number;
+  fundamentals: number;
+  technical: number;
+  earnings: number;
+  total_filled: number;
+  total_possible: number;
+}
+
+export interface FeatureCoverageResponse {
+  snapshot_date: string | null;
+  items: FeatureCoverageItem[];
+  ticker_count: number;
+}
+
+export interface SignalConvergenceItem {
+  ticker: string;
+  active_sources: number;
+  source_names: string[];
+  ark_conviction_score: number | null;
+  insider_cluster_score: number | null;
+  analyst_rating_score: number | null;
+  rsi_14: number | null;
+}
+
+export interface SignalConvergenceResponse {
+  snapshot_date: string | null;
+  items: SignalConvergenceItem[];
+}
+
+export interface HorizonStats {
+  horizon: string;
+  filled_count: number;
+  total_count: number;
+  filled_pct: number;
+  mean: number | null;
+  median: number | null;
+  std: number | null;
+  min_val: number | null;
+  max_val: number | null;
+}
+
+export interface ReturnStatsResponse {
+  horizons: HorizonStats[];
+  total_snapshots: number;
+}
+
+export interface FeatureGroupDetail {
+  group: string;
+  features: Record<string, number | boolean | null>;
+  filled: number;
+  total: number;
+}
+
+export interface TickerFeatureDetail {
+  ticker: string;
+  snapshot_date: string | null;
+  groups: FeatureGroupDetail[];
+  total_filled: number;
+  total_possible: number;
+  return_1d: number | null;
+  return_5d: number | null;
+  return_20d: number | null;
+  return_60d: number | null;
+}
+
+export const fetchFeatureStats = () =>
+  request<FeatureStats>('/dashboard/feature-stats');
+
+export const fetchFeatureCoverage = () =>
+  request<FeatureCoverageResponse>('/features/coverage');
+
+export const fetchSignalConvergence = (limit = 50) =>
+  request<SignalConvergenceResponse>(`/features/convergence?limit=${limit}`);
+
+export const fetchReturnStats = () =>
+  request<ReturnStatsResponse>('/features/returns');
+
+export const fetchTickerFeatures = (symbol: string) =>
+  request<TickerFeatureDetail>(`/features/ticker/${symbol}`);

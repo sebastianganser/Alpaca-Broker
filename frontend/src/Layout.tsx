@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   Globe,
   Activity,
+  Brain,
   FileText,
   Settings,
   LockOpen,
@@ -14,6 +15,7 @@ const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/universe', icon: Globe, label: 'Universe' },
   { to: '/signals', icon: Activity, label: 'Signals' },
+  { to: '/features', icon: Brain, label: 'Features' },
   { to: '/logs', icon: FileText, label: 'Logs' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
@@ -134,7 +136,7 @@ export default function Layout() {
         <WorldClock />
         <div style={{ padding: '0 var(--space-lg)' }}>
           <div className="label-dim" style={{ fontSize: '0.6rem' }}>
-            v0.1.0 · Sprint 7
+            v0.2.0 · Sprint 8
           </div>
         </div>
       </aside>

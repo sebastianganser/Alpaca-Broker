@@ -301,3 +301,84 @@ class FeatureStats(BaseModel):
     feature_coverage_pct: float = 0.0
     target_backfill_pct: float = 0.0
     total_snapshots: int = 0
+
+
+class FeatureCoverageItem(BaseModel):
+    """Coverage per ticker across feature groups (for heatmap)."""
+    ticker: str
+    ark: int = 0           # filled columns out of 11
+    insider: int = 0       # filled columns out of 8
+    analyst: int = 0       # filled columns out of 7
+    politician: int = 0    # filled columns out of 4
+    form13f: int = 0       # filled columns out of 2
+    fundamentals: int = 0  # filled columns out of 8
+    technical: int = 0     # filled columns out of 6
+    earnings: int = 0      # filled columns out of 3
+    total_filled: int = 0  # sum of all filled features
+    total_possible: int = 49  # total feature columns
+
+
+class FeatureCoverageResponse(BaseModel):
+    """Coverage matrix for all tickers on a given date."""
+    snapshot_date: date | None = None
+    items: list[FeatureCoverageItem] = []
+    ticker_count: int = 0
+
+
+class SignalConvergenceItem(BaseModel):
+    """Ticker with active signal source count (multi-source overlap)."""
+    ticker: str
+    active_sources: int = 0
+    source_names: list[str] = []
+    # Key feature values for context
+    ark_conviction_score: float | None = None
+    insider_cluster_score: float | None = None
+    analyst_rating_score: float | None = None
+    rsi_14: float | None = None
+
+
+class SignalConvergenceResponse(BaseModel):
+    """Top tickers by signal convergence."""
+    snapshot_date: date | None = None
+    items: list[SignalConvergenceItem] = []
+
+
+class HorizonStats(BaseModel):
+    """Stats for a single return horizon."""
+    horizon: str         # "1d", "5d", "20d", "60d"
+    filled_count: int = 0
+    total_count: int = 0
+    filled_pct: float = 0.0
+    mean: float | None = None
+    median: float | None = None
+    std: float | None = None
+    min_val: float | None = None
+    max_val: float | None = None
+
+
+class ReturnStatsResponse(BaseModel):
+    """Aggregated forward return statistics."""
+    horizons: list[HorizonStats] = []
+    total_snapshots: int = 0
+
+
+class FeatureGroupDetail(BaseModel):
+    """Feature values for a single group."""
+    group: str
+    features: dict[str, float | int | bool | None] = {}
+    filled: int = 0
+    total: int = 0
+
+
+class TickerFeatureDetail(BaseModel):
+    """All features for a single ticker (latest snapshot)."""
+    ticker: str
+    snapshot_date: date | None = None
+    groups: list[FeatureGroupDetail] = []
+    total_filled: int = 0
+    total_possible: int = 49
+    # Target variables
+    return_1d: float | None = None
+    return_5d: float | None = None
+    return_20d: float | None = None
+    return_60d: float | None = None

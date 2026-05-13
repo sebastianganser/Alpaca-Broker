@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from trading_signals.api.deps import set_scheduler
 from trading_signals.api.job_tracker import job_tracker
 from trading_signals.api.routes.dashboard import router as dashboard_router
+from trading_signals.api.routes.features import router as features_router
 from trading_signals.api.routes.logs import router as logs_router
 from trading_signals.api.routes.operations import router as operations_router
 from trading_signals.api.routes.signals import router as signals_router
@@ -218,6 +219,7 @@ app.add_middleware(
 # ── API Routes ───────────────────────────────────────────────────────────
 
 app.include_router(dashboard_router, prefix="/api/v1", tags=["Dashboard"])
+app.include_router(features_router, prefix="/api/v1", tags=["Features"])
 app.include_router(universe_router, prefix="/api/v1", tags=["Universe"])
 app.include_router(signals_router, prefix="/api/v1", tags=["Signals"])
 app.include_router(ticker_router, prefix="/api/v1", tags=["Ticker"])
