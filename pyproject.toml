@@ -50,3 +50,12 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+
+# ── uv Configuration ────────────────────────────────────────────────────
+# PyTorch CPU-only index to avoid pulling CUDA libraries (~1.5 GB savings)
+[tool.uv]
+index-strategy = "unsafe-best-match"
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/cpu"
+name = "pytorch-cpu"

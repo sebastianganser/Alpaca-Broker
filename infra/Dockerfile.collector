@@ -24,8 +24,6 @@ WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
 
 # Install dependencies (without the project itself yet)
-# Use PyTorch CPU-only index to exclude CUDA libraries (~1.5 GB savings)
-ENV UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN uv sync --no-install-project --frozen
 
 # Copy source code
