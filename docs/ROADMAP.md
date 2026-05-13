@@ -81,6 +81,13 @@
 - API: `GET /dashboard/feature-stats` (coverage, backfill status)
 - 311 tests (8 new)
 
+### Sprint 8b – Features Page & Exploration UI 🟡
+- [ ] **Backend:** 4 new API endpoints (`/features/coverage`, `/convergence`, `/returns`, `/ticker/{symbol}`)
+- [ ] **Frontend:** New `/features` page (6th sidebar item with Brain icon)
+- [ ] Pipeline Stats kacheln, Feature Coverage Heatmap, Signal Convergence, Return Distribution
+- [ ] Ticker Feature Detail (click-through)
+- [ ] Tests + Documentation
+
 ---
 
 ### ⏸ Waiting Phase: 2–3 Months Data Collection
@@ -94,8 +101,11 @@
 
 ---
 
-### Sprint 9 – Exploratory Analysis
-- Jupyter notebook setup, descriptive statistics, correlation matrix, feature importance
+### Sprint 9 – Exploratory Analysis (Jupyter)
+- Jupyter notebook setup, descriptive statistics
+- **Feature ↔ Return correlation analysis** (requires ~3 months of feature snapshots)
+- Feature importance: Random Forest, LASSO, correlation matrix
+- Politician dual-date evaluation (disclosure vs. transaction)
 - Document findings in LEARNINGS.md
 
 ### Sprint 10 – Signal Scoring

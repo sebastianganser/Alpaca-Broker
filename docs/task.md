@@ -1,39 +1,45 @@
-# Sprint 8 – Feature Pipeline Tasks
+# Sprint 8b – Features Page & Exploration UI
 
-## Milestone 1: FeaturePipeline Core
-- [x] `derived/feature_pipeline.py` – Klasse + compute_daily()
-- [x] ARK Features (point-in-time + temporal)
-- [x] Insider Features (point-in-time + temporal)
-- [x] Analyst Features (point-in-time + temporal)
-- [x] Politician Features (dual-date)
-- [x] 13F Features
-- [x] Fundamentals Features (point-in-time + temporal)
-- [x] Technical Features
-- [x] Earnings Features
-- [x] UPSERT-Logik + Commit
+> Detailplan: [implementation_plan2.md](implementation_plan2.md)
 
-## Milestone 2: Target Backfill
-- [x] `derived/target_backfill.py` – TargetBackfillComputer
-- [x] Forward-Return-Berechnung (1d, 5d, 20d, 60d)
-- [x] Batch-Update-Optimierung
+## Task A: Backend-Endpoints (API + Schemas)
+- [ ] A1: Pydantic Schemas (FeatureCoverageItem, SignalConvergenceItem, ReturnStats, TickerFeatureDetail)
+- [ ] A2: `features.py` Router + `GET /features/coverage`
+- [ ] A3: `GET /features/convergence`
+- [ ] A4: `GET /features/returns`
+- [ ] A5: `GET /features/ticker/{symbol}`
+- [ ] A6: Router in `main.py` registrieren + Syntax-Check
 
-## Milestone 3: Scheduler Integration
-- [x] `scheduler/jobs.py` – run_feature_pipeline() + run_target_backfill()
-- [x] `main.py` – Jobs registrieren (02:00 + 02:15 CET)
-- [ ] Git Commit: "feat: add feature pipeline + target backfill scheduler jobs"
+## Task B: Frontend API-Layer + Routing
+- [ ] B1: TypeScript Interfaces + fetch-Funktionen in `api.ts`
+- [ ] B2: Route `/features` in `App.tsx` + Sidebar in `Layout.tsx` (Brain-Icon)
 
-## Milestone 4: API & Dashboard
-- [x] `api/schemas.py` – FeatureStats Schema
-- [x] `api/routes/dashboard.py` – GET /dashboard/feature-stats
-- [ ] Git Commit: "feat: add feature stats API endpoint"
+## Task C: FeaturesPage – Pipeline Stats + Coverage
+- [ ] C1: Page-Grundgerüst + Pipeline Stats Kacheln
+- [ ] C2: Feature Coverage Heatmap Tabelle
 
-## Milestone 5: Tests
-- [x] `tests/test_feature_pipeline.py` – 8 Tests, alle grün ✅
-- [ ] Git Commit: "test: add feature pipeline tests"
+## Task D: FeaturesPage – Convergence + Returns
+- [ ] D1: Signal Convergence Sektion
+- [ ] D2: Return Distribution Sektion
 
-## Milestone 6: Documentation & Finalization
-- [x] `CLAUDE.md` – Current Status aktualisiert (Sprint 8 Done, 12 Jobs)
-- [x] `docs/ROADMAP.md` – Sprint 8 als Done, Tasks abgehakt
-- [x] `docs/SESSION_LOG.md` – Session 19 dokumentiert
-- [x] `docs/SCHEDULER.md` – Bereits aktuell (in vorheriger Session aktualisiert)
-- [ ] Git Commits ausstehend
+## Task E: FeaturesPage – Ticker Detail
+- [ ] E1: Ticker Feature Detail (Click-Through Modal/Expand)
+
+## Task F: Polish, Tests, Docs
+- [ ] F1: Syntax-Check + Build-Prüfung (Frontend + Backend)
+- [ ] F2: Unit Tests für neue Backend-Endpoints
+- [ ] F3: Doku-Update (ROADMAP, SESSION_LOG)
+- [ ] F4: Git Commits + Push
+
+---
+
+## Fortschritt Sprint 8 (abgeschlossen)
+
+- [x] Milestone 1: FeaturePipeline Core
+- [x] Milestone 2: Target Backfill
+- [x] Milestone 3: Scheduler Integration
+- [x] Milestone 4: API & Dashboard
+- [x] Milestone 5: Tests (8/8 grün)
+- [x] Milestone 6: Documentation
+- [x] Git Commits + Push
+- [x] Unraid Deploy + manueller Testlauf verifiziert
