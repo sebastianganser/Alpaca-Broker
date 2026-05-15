@@ -7,7 +7,7 @@ politician trades, analyst ratings, and news sentiment.
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import desc, func
+from sqlalchemy import BigInteger, desc, func
 from sqlalchemy.orm import Session
 
 from trading_signals.api.deps import get_db
