@@ -7,7 +7,7 @@ politician trades, analyst ratings, and news sentiment.
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import BigInteger, desc, func
+from sqlalchemy import case, desc, func
 from sqlalchemy.orm import Session
 
 from trading_signals.api.deps import get_db
@@ -285,21 +285,15 @@ def get_sentiment_summary(
             NewsSentiment.ticker,
             func.avg(NewsSentiment.sentiment_score).label("avg_score"),
             func.count(NewsSentiment.id).label("cnt"),
-            func.sum(
-                func.cast(
-                    NewsSentiment.sentiment_label == "negative", BigInteger
-                )
-            ).label("neg"),
-            func.sum(
-                func.cast(
-                    NewsSentiment.sentiment_label == "positive", BigInteger
-                )
-            ).label("pos"),
-            func.sum(
-                func.cast(
-                    NewsSentiment.sentiment_label == "neutral", BigInteger
-                )
-            ).label("neu"),
+            func.sum(case(
+                (NewsSentiment.sentiment_label == "negative", 1), else_=0
+            )).label("neg"),
+            func.sum(case(
+                (NewsSentiment.sentiment_label == "positive", 1), else_=0
+            )).label("pos"),
+            func.sum(case(
+                (NewsSentiment.sentiment_label == "neutral", 1), else_=0
+            )).label("neu"),
         )
         .join(NewsArticle, NewsSentiment.article_id == NewsArticle.id)
         .filter(
