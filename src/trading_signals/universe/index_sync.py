@@ -6,7 +6,7 @@ against Alpaca before being added.
 
 Sources:
   - S&P 500: https://en.wikipedia.org/wiki/List_of_S%26P_500_companies
-  - Nasdaq 100: https://en.wikipedia.org/wiki/Nasdaq-100
+  - Nasdaq 100: https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies
 """
 
 import io
@@ -174,18 +174,21 @@ class IndexSyncer:
         return tickers
 
     def _fetch_nasdaq100(self) -> set[str]:
-        """Fetch Nasdaq 100 tickers from Wikipedia."""
+        """Fetch Nasdaq 100 tickers from Wikipedia.
+
+        Uses the dedicated list page (same pattern as S&P 500).
+        Wikipedia moved the components table from the main Nasdaq-100
+        article to this separate page around July/August 2026.
+        """
         r = requests.get(
-            "https://en.wikipedia.org/wiki/Nasdaq-100",
+            "https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies",
             headers={"User-Agent": USER_AGENT},
             timeout=15,
         )
         r.raise_for_status()
         tables = pd.read_html(io.StringIO(r.text))
         for t in tables:
-            if len(t) > 90:
-                for col in t.columns:
-                    if "ticker" in str(col).lower() or "symbol" in str(col).lower():
-                        return set(t[col].dropna().str.strip().tolist())
+            if "Ticker" in t.columns and len(t) > 90:
+                return set(t["Ticker"].dropna().str.strip().tolist())
         logger.warning("[index_sync] Nasdaq 100 table not found on Wikipedia")
         return set()
