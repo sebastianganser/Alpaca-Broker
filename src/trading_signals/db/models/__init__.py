@@ -1,5 +1,6 @@
 """ORM models for the signals schema."""
 
+from trading_signals.db.models.analysis import AnalysisReport
 from trading_signals.db.models.ark import ARKDelta, ARKHolding
 from trading_signals.db.models.blacklist import TickerBlacklist
 from trading_signals.db.models.collection_log import CollectionLog
@@ -18,6 +19,7 @@ from trading_signals.db.models.technical_indicators import TechnicalIndicator
 from trading_signals.db.models.universe import Universe
 
 __all__ = [
+    "AnalysisReport",
     "AnalystRating",
     "ARKDelta",
     "ARKHolding",

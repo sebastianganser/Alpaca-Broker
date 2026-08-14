@@ -24,6 +24,10 @@ dependencies = [
     "curl_cffi>=0.7",
     "transformers>=4.40",
     "torch>=2.2",
+    # Sprint 9: Automated feature analysis (monthly)
+    "scikit-learn>=1.4",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +35,11 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "ruff>=0.4",
+]
+analysis = [
+    # Interactive tools for local notebook use only
+    "jupyterlab>=4.0",
+    "plotly>=5.18",
 ]
 
 [build-system]

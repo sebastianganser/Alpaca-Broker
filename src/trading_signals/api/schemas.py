@@ -412,3 +412,23 @@ class SentimentArticleItem(BaseModel):
     sentiment_score: float | None = None
     sentiment_label: str | None = None
     url: str | None = None
+
+
+# ── Analysis Report Schemas ──────────────────────────────────────────────
+
+class AnalysisReportItem(BaseModel):
+    """Summary of a single analysis report."""
+    report_date: date
+    snapshot_count: int
+    ticker_count: int
+    date_range_start: date
+    date_range_end: date
+    computation_time_seconds: float | None = None
+    computed_at: datetime | None = None
+    has_html: bool = False
+
+
+class AnalysisReportListResponse(BaseModel):
+    """List of analysis reports."""
+    reports: list[AnalysisReportItem]
+    total: int

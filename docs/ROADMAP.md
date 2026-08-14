@@ -130,12 +130,14 @@
 
 ---
 
-### Sprint 9 – Exploratory Analysis (Jupyter)
-- Jupyter notebook setup, descriptive statistics
-- **Feature ↔ Return correlation analysis** (requires ~3 months of feature snapshots)
-- Feature importance: Random Forest, LASSO, correlation matrix
-- Politician dual-date evaluation (disclosure vs. transaction)
-- Document findings in LEARNINGS.md
+### Sprint 9 – Exploratory Analysis (Jupyter) 🔄 In Progress (Aug 2026)
+- ✅ Jupyter notebook setup, analysis dependencies (`[analysis]` optional group)
+- 🔄 **Feature ↔ Return correlation analysis** (93 snapshot days, 748 tickers)
+- 🔄 Feature importance: Random Forest, LASSO, correlation matrix
+- 🔄 Politician dual-date evaluation (disclosure vs. transaction)
+- [ ] Document findings in LEARNINGS.md
+- **Notebooks:** `notebooks/01_descriptive_statistics.py`, `02_feature_return_correlations.py`, `03_feature_importance.py`
+- **Note:** return_60d excluded (6.2% fill), 13F features excluded (no quarterly filing since pipeline start)
 
 ### Sprint 10 – Signal Scoring
 - Weighted scoring model, optional LASSO/gradient boosting

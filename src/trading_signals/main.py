@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from trading_signals.api.deps import set_scheduler
 from trading_signals.api.job_tracker import job_tracker
+from trading_signals.api.routes.analysis import router as analysis_router
 from trading_signals.api.routes.dashboard import router as dashboard_router
 from trading_signals.api.routes.features import router as features_router
 from trading_signals.api.routes.logs import router as logs_router
@@ -30,6 +31,7 @@ from trading_signals.scheduler.jobs import (
     run_analyst_ratings_collector,
     run_ark_holdings_collector,
     run_earnings_calendar_collector,
+    run_feature_analysis,
     run_feature_pipeline,
     run_form4_collector,
     run_form13f_collector,
@@ -184,6 +186,14 @@ def create_scheduler() -> BackgroundScheduler:
         name="Daily Log Retention (90 days)",
     )
 
+    # ── Feature Analysis: Monthly 1st at 05:00 (after index sync) ──
+    scheduler.add_job(
+        run_feature_analysis,
+        CronTrigger(day=1, hour=5, minute=0),
+        id="feature_analysis",
+        name="Monthly Feature Analysis (Correlations + ML Importance)",
+    )
+
     return scheduler
 
 
@@ -245,6 +255,7 @@ app.add_middleware(
 
 # ── API Routes ───────────────────────────────────────────────────────────
 
+app.include_router(analysis_router, prefix="/api/v1", tags=["Analysis"])
 app.include_router(dashboard_router, prefix="/api/v1", tags=["Dashboard"])
 app.include_router(features_router, prefix="/api/v1", tags=["Features"])
 app.include_router(universe_router, prefix="/api/v1", tags=["Universe"])

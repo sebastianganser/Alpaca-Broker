@@ -658,3 +658,77 @@ def run_log_retention() -> None:
     except Exception as e:
         logger.error(f"log_retention_job FAILED: {e}")
 
+
+# ── Feature Analysis ─────────────────────────────────────────────────────
+
+
+def run_feature_analysis() -> None:
+    """Monthly feature analysis – correlations, importance, hypothesis tests.
+
+    Scheduled for 1st of each month at 05:00 Europe/Berlin.
+    Runs Spearman correlations, Random Forest + LASSO feature importance,
+    and hypothesis tests (H1–H13). Stores structured results in
+    analysis_reports table and generates an HTML report.
+
+    CPU-intensive (~2–5 min depending on data volume).
+    """
+    from datetime import datetime
+
+    from trading_signals.utils.logging import CollectorLogCapture
+    from trading_signals.db.models.collection_log import CollectionLog
+    from trading_signals.db.session import get_session
+
+    collector_name = "feature_analysis"
+    logger.info(f"Scheduler triggered: {collector_name}_job")
+
+    started_at = datetime.now()
+
+    with CollectorLogCapture(collector_name) as log_capture:
+        try:
+            from trading_signals.analysis.feature_report import (
+                FeatureAnalysisEngine,
+            )
+
+            with get_session() as session:
+                engine = FeatureAnalysisEngine(session)
+                report = engine.run()
+
+                log_entry = CollectionLog(
+                    collector_name=collector_name,
+                    started_at=started_at,
+                    finished_at=datetime.now(),
+                    status="success",
+                    records_fetched=report.snapshot_count,
+                    records_written=1,
+                    gaps_detected=0,
+                    log_lines=log_capture.get_lines(),
+                )
+                session.add(log_entry)
+                session.commit()
+
+            logger.info(
+                f"{collector_name}_job finished: "
+                f"{report.snapshot_count} snapshots analyzed, "
+                f"{report.ticker_count} tickers, "
+                f"{report.computation_time_seconds:.0f}s"
+            )
+        except Exception as e:
+            logger.error(f"{collector_name}_job FAILED: {e}")
+            try:
+                with get_session() as session:
+                    log_entry = CollectionLog(
+                        collector_name=collector_name,
+                        started_at=started_at,
+                        finished_at=datetime.now(),
+                        status="error",
+                        records_fetched=0,
+                        records_written=0,
+                        gaps_detected=0,
+                        notes=str(e)[:2000],
+                        log_lines=log_capture.get_lines(),
+                    )
+                    session.add(log_entry)
+                    session.commit()
+            except Exception:
+                logger.error(f"{collector_name}_job: Failed to write error log")
+
