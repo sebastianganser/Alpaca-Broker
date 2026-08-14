@@ -138,7 +138,7 @@ class FeatureAnalysisEngine:
             )
         except Exception as e:
             logger.error(f"Error generating HTML report: {e}")
-            logger.debug(traceback.format_exc())
+            logger.error(traceback.format_exc())
             
         # 8. Store in DB
         report_obj = None
@@ -452,68 +452,107 @@ class FeatureAnalysisEngine:
             corr_data.append(row)
             
         heatmap_img = ""
+        corr_df = None
         if corr_data:
-            corr_df = pd.DataFrame(corr_data).set_index('Feature')
-            corr_df['max_abs'] = corr_df.abs().max(axis=1)
-            top_corr = corr_df.sort_values('max_abs', ascending=False).drop('max_abs', axis=1).head(20)
-            
-            fig, ax = plt.subplots(figsize=(8, 10))
-            sns.heatmap(top_corr, annot=True, cmap='coolwarm', center=0, fmt='.3f', ax=ax)
-            ax.set_title("Top 20 Features Correlation Heatmap")
-            plt.tight_layout()
-            heatmap_img = _fig_to_base64(fig)
+            try:
+                corr_df = pd.DataFrame(corr_data).set_index('Feature')
+                corr_df_abs = corr_df.abs().max(axis=1)
+                top_idx = corr_df_abs.sort_values(ascending=False).head(20).index
+                top_corr = corr_df.loc[top_idx]
+                
+                fig, ax = plt.subplots(figsize=(8, 10))
+                sns.heatmap(top_corr, annot=True, cmap='coolwarm', center=0, fmt='.3f', ax=ax)
+                ax.set_title("Top 20 Features Correlation Heatmap")
+                plt.tight_layout()
+                heatmap_img = _fig_to_base64(fig)
+            except Exception as e:
+                logger.error(f"Error creating heatmap: {e}")
             
         # 2. Top-15 Features per Horizon
         horizon_imgs = []
-        if corr_data:
+        if corr_df is not None:
             for tgt in TARGET_RETURNS:
-                fig, ax = plt.subplots(figsize=(8, 6))
-                df_sorted = corr_df.sort_values(tgt, key=abs, ascending=False).head(15)
-                sns.barplot(x=df_sorted[tgt], y=df_sorted.index, ax=ax, palette='viridis')
-                ax.set_title(f"Top 15 Features by |Spearman| for {tgt}")
-                plt.tight_layout()
-                horizon_imgs.append(_fig_to_base64(fig))
+                try:
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    sorted_idx = corr_df[tgt].abs().sort_values(ascending=False).head(15).index
+                    plot_data = corr_df.loc[sorted_idx, tgt]
+                    colors = ['#e74c3c' if v < 0 else '#2ecc71' for v in plot_data]
+                    ax.barh(range(len(plot_data)), plot_data.values, color=colors)
+                    ax.set_yticks(range(len(plot_data)))
+                    ax.set_yticklabels(plot_data.index)
+                    ax.invert_yaxis()
+                    ax.set_title(f"Top 15 Features by |Spearman ρ| for {tgt}")
+                    ax.set_xlabel("Spearman ρ")
+                    plt.tight_layout()
+                    horizon_imgs.append(_fig_to_base64(fig))
+                except Exception as e:
+                    logger.error(f"Error creating horizon plot for {tgt}: {e}")
                 
         # 3. Feature Group Comparison
         group_img = ""
-        if corr_data:
-            group_avg = []
-            for gname, gfeats in FEATURE_GROUPS.items():
-                g_df = corr_df[corr_df.index.isin(gfeats)]
-                if not g_df.empty:
-                    for tgt in TARGET_RETURNS:
-                        group_avg.append({
-                            'Group': gname,
-                            'Horizon': tgt,
-                            'Avg_Abs_Rho': g_df[tgt].abs().mean()
-                        })
-            if group_avg:
-                gdf = pd.DataFrame(group_avg)
-                fig, ax = plt.subplots(figsize=(10, 6))
-                sns.barplot(data=gdf, x='Group', y='Avg_Abs_Rho', hue='Horizon', ax=ax)
-                ax.set_title("Average |Spearman Correlation| by Feature Group")
-                plt.xticks(rotation=45)
-                plt.tight_layout()
-                group_img = _fig_to_base64(fig)
+        if corr_df is not None:
+            try:
+                group_avg = []
+                for gname, gfeats in FEATURE_GROUPS.items():
+                    g_df = corr_df[corr_df.index.isin(gfeats)]
+                    if not g_df.empty:
+                        for tgt in TARGET_RETURNS:
+                            group_avg.append({
+                                'Group': gname,
+                                'Horizon': tgt,
+                                'Avg_Abs_Rho': g_df[tgt].abs().mean()
+                            })
+                if group_avg:
+                    gdf = pd.DataFrame(group_avg)
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    sns.barplot(data=gdf, x='Group', y='Avg_Abs_Rho', hue='Horizon', ax=ax)
+                    ax.set_title("Average |Spearman ρ| by Feature Group")
+                    plt.xticks(rotation=45)
+                    plt.tight_layout()
+                    group_img = _fig_to_base64(fig)
+            except Exception as e:
+                logger.error(f"Error creating group comparison: {e}")
                 
         # 4. RF vs LASSO
         rf_lasso_img = ""
         consensus = results.get('consensus_features', [])
         if consensus:
-            top_rf = sorted([f for f in consensus if f['rf_rank'] < 999], key=lambda x: x['rf_rank'])[:10]
-            top_la = sorted([f for f in consensus if f['lasso_rank'] < 999], key=lambda x: x['lasso_rank'])[:10]
-            
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
-            if top_rf:
-                sns.barplot(x=[results['feature_importance_rf'][f['feature']]['importance'] for f in top_rf],
-                            y=[f['feature'] for f in top_rf], ax=ax1, palette='mako')
-                ax1.set_title('Top 10 RF Permutation Importance')
-            if top_la:
-                sns.barplot(x=[results['feature_importance_lasso'][f['feature']] for f in top_la],
-                            y=[f['feature'] for f in top_la], ax=ax2, palette='rocket')
-                ax2.set_title('Top 10 LASSO Coefficients')
-            plt.tight_layout()
-            rf_lasso_img = _fig_to_base64(fig)
+            try:
+                rf_imp = results.get('feature_importance_rf', {})
+                lasso_imp = results.get('feature_importance_lasso', {})
+                
+                top_rf = sorted(
+                    [c for c in consensus if c['feature'] in rf_imp],
+                    key=lambda x: abs(rf_imp.get(x['feature'], {}).get('importance', 0)),
+                    reverse=True
+                )[:10]
+                top_la = sorted(
+                    [c for c in consensus if c['feature'] in lasso_imp and lasso_imp[c['feature']] != 0],
+                    key=lambda x: abs(lasso_imp.get(x['feature'], 0)),
+                    reverse=True
+                )[:10]
+                
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+                if top_rf:
+                    rf_vals = [rf_imp[f['feature']]['importance'] for f in top_rf]
+                    rf_names = [f['feature'] for f in top_rf]
+                    ax1.barh(range(len(rf_vals)), rf_vals)
+                    ax1.set_yticks(range(len(rf_vals)))
+                    ax1.set_yticklabels(rf_names)
+                    ax1.invert_yaxis()
+                    ax1.set_title('Top 10 RF Permutation Importance')
+                if top_la:
+                    la_vals = [lasso_imp[f['feature']] for f in top_la]
+                    la_names = [f['feature'] for f in top_la]
+                    ax2.barh(range(len(la_vals)), la_vals)
+                    ax2.set_yticks(range(len(la_vals)))
+                    ax2.set_yticklabels(la_names)
+                    ax2.invert_yaxis()
+                    ax2.set_title('Top 10 LASSO Coefficients')
+                plt.tight_layout()
+                rf_lasso_img = _fig_to_base64(fig)
+            except Exception as e:
+                logger.error(f"Error creating RF/LASSO plot: {e}")
 
         # 5. Tables
         cons_rows = ""
