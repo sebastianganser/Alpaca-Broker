@@ -129,6 +129,11 @@ def trigger_analysis(db: Session = Depends(get_db)) -> TriggerResponse:
 
         engine = FeatureAnalysisEngine(db)
         report = engine.run()
+        if report is None:
+            return TriggerResponse(
+                success=False,
+                message="Analysis returned no results (insufficient data?)",
+            )
         return TriggerResponse(
             success=True,
             message=(

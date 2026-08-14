@@ -5,7 +5,7 @@ Automated monthly feature analysis for trading signals.
 import time
 import base64
 import traceback
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 from typing import Dict, List, Any, Optional
 
@@ -150,7 +150,19 @@ class FeatureAnalysisEngine:
         except Exception as e:
             logger.error(f"Error storing results to DB: {e}")
             logger.debug(traceback.format_exc())
-            
+
+        # Fallback: return a transient object if DB store failed
+        if report_obj is None:
+            report_obj = AnalysisReport(
+                report_date=date.today(),
+                snapshot_count=snapshot_count,
+                ticker_count=ticker_count,
+                date_range_start=self._to_date(date_range_start),
+                date_range_end=self._to_date(date_range_end),
+                computation_time_seconds=computation_time,
+            )
+            logger.warning("Returning transient report (DB store may have failed)")
+
         logger.info(f"FeatureAnalysisEngine pipeline completed in {computation_time:.1f}s")
         return report_obj
 
@@ -572,14 +584,26 @@ class FeatureAnalysisEngine:
         """
         return html
 
+    @staticmethod
+    def _to_date(val) -> date:
+        """Convert pandas Timestamp or datetime to Python date."""
+        if hasattr(val, 'date'):
+            return val.date() if callable(val.date) else val.date
+        return val
+
     def _store_results(self, d_start, d_end, snaps, tickers, results, html, comp_time) -> AnalysisReport:
         logger.info("Storing results in DB...")
+
+        report_date = date.today()
+        d_start_py = self._to_date(d_start)
+        d_end_py = self._to_date(d_end)
+
         stmt = insert(AnalysisReport).values(
-            report_date=date.today(),
+            report_date=report_date,
             snapshot_count=snaps,
             ticker_count=tickers,
-            date_range_start=d_start,
-            date_range_end=d_end,
+            date_range_start=d_start_py,
+            date_range_end=d_end_py,
             feature_correlations=results.get('feature_correlations', {}),
             feature_importance_rf=results.get('feature_importance_rf', {}),
             feature_importance_lasso=results.get('feature_importance_lasso', {}),
@@ -589,7 +613,7 @@ class FeatureAnalysisEngine:
             computation_time_seconds=comp_time,
             computed_at=datetime.utcnow()
         )
-        
+
         update_dict = {
             'snapshot_count': stmt.excluded.snapshot_count,
             'ticker_count': stmt.excluded.ticker_count,
@@ -604,14 +628,14 @@ class FeatureAnalysisEngine:
             'computation_time_seconds': stmt.excluded.computation_time_seconds,
             'computed_at': stmt.excluded.computed_at
         }
-        
+
         stmt = stmt.on_conflict_do_update(
-            index_elements=['report_date'],
+            index_elements=[AnalysisReport.__table__.c.report_date],
             set_=update_dict
         )
-        
+
         self.session.execute(stmt)
-        self.session.commit()
-        
-        # Fetch and return the updated object
-        return self.session.query(AnalysisReport).filter_by(report_date=date.today()).first()
+        self.session.flush()
+
+        # Fetch and return the persisted object
+        return self.session.query(AnalysisReport).filter_by(report_date=report_date).first()
