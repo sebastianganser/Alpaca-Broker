@@ -137,6 +137,15 @@ FEATURE_GROUPS = {
     "Sentiment": ["sentiment_avg_7d", "sentiment_avg_30d", "sentiment_momentum"],
 }
 
+# Sparse signal groups have structurally low coverage (not every ticker
+# is in ARK ETFs, has insider trades, or politician activity).
+FEATURE_GROUP_THRESHOLDS = {
+    "ARK": 15.0,
+    "Insider": 20.0,
+    "Politician": 20.0,
+}
+FEATURE_GROUP_DEFAULT_THRESHOLD = 50.0
+
 latest_date = df["snapshot_date"].max()
 latest = df[df["snapshot_date"] == latest_date]
 
@@ -146,8 +155,10 @@ for group, cols in FEATURE_GROUPS.items():
         fill_pct = 100.0 * latest[available].notna().mean().mean()
     else:
         fill_pct = 0.0
-    ok = fill_pct >= 50.0
-    print(f"  {group:>14}:  {fill_pct:5.1f}%  {'✅' if ok else '❌'}")
+    min_pct = FEATURE_GROUP_THRESHOLDS.get(group, FEATURE_GROUP_DEFAULT_THRESHOLD)
+    ok = fill_pct >= min_pct
+    sparse = " (sparse)" if group in FEATURE_GROUP_THRESHOLDS else ""
+    print(f"  {group:>14}:  {fill_pct:5.1f}%  (min: {min_pct:.0f}%{sparse})  {'✅' if ok else '❌'}")
     results.append(ok)
 
 # %% ── Check 4: Earnings Cycle Coverage ────────────────────────────────
