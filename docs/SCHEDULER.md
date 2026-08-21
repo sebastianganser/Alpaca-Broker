@@ -16,6 +16,7 @@
 | 00:00 | `news_collector` | News articles via Alpaca News API (~830 articles/day) | 8c ✅ |
 | 00:30 | `sentiment_computer` | FinBERT sentiment scoring on collected articles (~23s) | 8c ✅ |
 | 01:00 | `analyst_ratings_collector` | Analyst upgrades/downgrades via yfinance (~10 min) | 5 ✅ |
+| 01:30 | `estimates_collector` | EPS/Revenue consensus + revisions via yfinance (rolling 90-day window) | 9.5a ✅ |
 | 02:00 | `feature_pipeline` | Compute daily feature snapshots (after all collectors) | 8 ✅ |
 | 02:15 | `target_backfill` | Backfill return targets for older snapshots | 8 ✅ |
 | 03:30 | `log_retention` | Delete collection_logs older than 90 days | 8c ✅ |

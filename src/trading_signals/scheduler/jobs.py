@@ -161,6 +161,30 @@ def run_analyst_ratings_collector() -> None:
     )
 
 
+def run_estimates_collector() -> None:
+    """Daily estimates collection via yfinance.
+
+    Scheduled for 01:30 Europe/Berlin (night slot, after analyst ratings).
+    Fetches EPS/Revenue consensus, revisions, and trend data.
+
+    CRITICAL: Yahoo provides a rolling 90-day window for EPS revisions.
+    Every day this collector doesn't run, one day of irrecoverable
+    revision history is permanently lost.
+    """
+    from trading_signals.collectors.estimates_collector import (
+        EstimatesCollector,
+    )
+
+    logger.info("Scheduler triggered: estimates_collector_job")
+
+    collector = EstimatesCollector()
+    log = collector.run()
+    logger.info(
+        f"estimates_collector_job finished: status={log.status}, "
+        f"written={log.records_written}"
+    )
+
+
 def run_earnings_calendar_collector() -> None:
     """Weekly earnings calendar update via yfinance.
 

@@ -247,11 +247,36 @@ Sentiment scores for financial news headlines:
 
 ---
 
-## 9. Not Yet Implemented – Ideas for Later
+## 9. yfinance – Analyst Estimates & Revisions (Sprint 9.5a)
+
+**Purpose:** Daily capture of analyst consensus estimates (EPS & Revenue), revision counts, and the rolling 90-day EPS trend window from Yahoo Finance.
+
+**API Properties Used:**
+- `ticker.earnings_estimate` → EPS avg/low/high, analyst count, year-ago, growth
+- `ticker.revenue_estimate` → Revenue avg/low/high, analyst count, year-ago, growth
+- `ticker.eps_trend` → EPS consensus at current, 7d, 30d, 60d, 90d ago
+- `ticker.eps_revisions` → Count of up/down revisions in 7d and 30d
+
+**Periods Collected:** `0q` (current quarter), `+1q` (next quarter), `0y` (current year), `+1y` (next year)
+
+**Key Feature Signals:**
+- **Revisions Momentum** (eps_current vs eps_30d_ago) – one of the strongest short-term predictive factors in quantitative finance
+- **Upward vs Downward Bias** (rev_up_30d vs rev_down_30d) – net revision direction
+- **Consensus Spread** (eps_high - eps_low) – analyst disagreement as uncertainty proxy
+
+**Schedule:** Daily 01:30 CET (after analyst_ratings, before feature_pipeline)
+
+**Critical Note:** Yahoo provides a **rolling 90-day window** for EPS trend data. This collector must run daily without fail — every missed day permanently loses one day of irrecoverable revision history. The `raw JSONB` column stores the complete API response for future-proofing.
+
+**Rate Limiting:** Shared `YFinanceClient` with 0.5s inter-ticker delay, 3s batch pauses.
+
+---
+
+## 10. Not Yet Implemented – Ideas for Later
 
 - **OpenInsider** – Aggregated Form 4 data with pre-filtered cluster buys
 - **Finviz** – Insider screener, news aggregation (scraping gray area)
-- **Unusual Whales** – Options flow + politicians (~$40/month)
+- **Unusual Whales** – Options flow + politicians (~\$40/month)
 - **Reddit/social sentiment** – StockTwits, WSB mentions as contrarian signal
 - **On-Chain Data** – Arkham Intelligence, Nansen, Whale Alert
 

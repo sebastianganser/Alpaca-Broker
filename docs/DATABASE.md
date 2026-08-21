@@ -259,6 +259,52 @@ CREATE TABLE signals.earnings_calendar (
 );
 ```
 
+### `signals.estimates_snapshot`
+Daily point-in-time snapshot of analyst consensus estimates, EPS revisions, and revenue forecasts.
+*Sprint 9.5a. Most time-critical data source — rolling 90-day window at Yahoo.*
+
+```sql
+CREATE TABLE signals.estimates_snapshot (
+  id              BIGSERIAL PRIMARY KEY,
+  ticker          VARCHAR(20) NOT NULL,
+  as_of           DATE NOT NULL,                 -- Point-in-time (fetch date)
+  period          VARCHAR(10) NOT NULL,           -- '0q', '+1q', '0y', '+1y'
+  -- EPS Consensus
+  eps_avg         NUMERIC(16,4),
+  eps_low         NUMERIC(16,4),
+  eps_high        NUMERIC(16,4),
+  eps_n_analysts  INTEGER,
+  eps_year_ago    NUMERIC(16,4),
+  eps_growth      NUMERIC(10,6),
+  -- EPS Trend (rolling 90-day window)
+  eps_current     NUMERIC(16,4),
+  eps_7d_ago      NUMERIC(16,4),
+  eps_30d_ago     NUMERIC(16,4),
+  eps_60d_ago     NUMERIC(16,4),
+  eps_90d_ago     NUMERIC(16,4),
+  -- Revision Counts
+  rev_up_7d       INTEGER,
+  rev_up_30d      INTEGER,
+  rev_down_7d     INTEGER,
+  rev_down_30d    INTEGER,
+  -- Revenue Consensus
+  revenue_avg     NUMERIC(20,2),
+  revenue_low     NUMERIC(20,2),
+  revenue_high    NUMERIC(20,2),
+  revenue_n_analysts INTEGER,
+  revenue_year_ago NUMERIC(20,2),
+  revenue_growth  NUMERIC(10,6),
+  -- Metadata
+  source          VARCHAR(50) NOT NULL DEFAULT 'yfinance',
+  raw             JSONB,                         -- Complete raw response (future-proofing)
+  fetched_at      TIMESTAMP DEFAULT NOW(),
+  UNIQUE (ticker, as_of, period, source)
+);
+
+CREATE INDEX idx_estimates_ticker ON signals.estimates_snapshot(ticker);
+CREATE INDEX idx_estimates_as_of ON signals.estimates_snapshot(as_of);
+```
+
 ### `signals.news_articles`
 Financial news articles from Alpaca News API. Raw layer – collected daily.
 

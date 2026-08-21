@@ -31,6 +31,7 @@ from trading_signals.scheduler.jobs import (
     run_analyst_ratings_collector,
     run_ark_holdings_collector,
     run_earnings_calendar_collector,
+    run_estimates_collector,
     run_feature_analysis,
     run_feature_pipeline,
     run_form4_collector,
@@ -104,6 +105,15 @@ def create_scheduler() -> BackgroundScheduler:
         CronTrigger(hour=1, minute=0),
         id="analyst_ratings_collector",
         name="Daily Analyst Ratings (yfinance)",
+    )
+
+    # ── Estimates Collector: Daily at 01:30 (after ratings, Sprint 9.5a) ──
+    # CRITICAL: Rolling 90-day window – must run daily without fail.
+    scheduler.add_job(
+        run_estimates_collector,
+        CronTrigger(hour=1, minute=30),
+        id="estimates_collector",
+        name="Daily Estimates Collector (EPS/Revenue Consensus + Revisions)",
     )
 
     # ── News Collector: Daily at 00:00 (night slot, Sprint 8c) ──

@@ -320,6 +320,159 @@ class YFinanceClient:
 
         return self._iterate_with_rate_limit(tickers, _fetch_single, "earnings_dates")
 
+    def fetch_estimates(self, tickers: list[str]) -> list[dict]:
+        """Fetch EPS/Revenue consensus, revisions, and trend data.
+
+        For each ticker, extracts data from four yfinance properties:
+          - eps_trend:       EPS consensus at current, 7d, 30d, 60d, 90d ago
+          - eps_revisions:   Count of up/down revisions in 7d and 30d
+          - earnings_estimate: Avg/low/high EPS, analyst count, year-ago, growth
+          - revenue_estimate:  Avg/low/high revenue, analyst count, year-ago, growth
+
+        Returns one record per ticker per period (0q, +1q, 0y, +1y).
+
+        CRITICAL: This data has a rolling 90-day window at Yahoo.
+        What is not captured today is permanently lost in 90 days.
+
+        Returns:
+            List of dicts with estimate data, multiple per ticker (one per period).
+        """
+        # Period codes used by yfinance DataFrames
+        _PERIODS = ["0q", "+1q", "0y", "+1y"]
+
+        def _safe_df_value(df, row_key: str, col_key: str) -> Any:
+            """Safely extract a value from a yfinance DataFrame."""
+            try:
+                if df is None or (hasattr(df, "empty") and df.empty):
+                    return None
+                if row_key in df.index and col_key in df.columns:
+                    return _clean_numeric(df.loc[row_key, col_key])
+            except Exception:
+                pass
+            return None
+
+        def _fetch_single(ticker_str: str) -> list[dict] | None:
+            t = yf.Ticker(ticker_str)
+
+            # Fetch all four data sources
+            try:
+                eps_trend = t.eps_trend
+            except Exception:
+                eps_trend = None
+
+            try:
+                eps_revisions = t.eps_revisions
+            except Exception:
+                eps_revisions = None
+
+            try:
+                earnings_est = t.earnings_estimate
+            except Exception:
+                earnings_est = None
+
+            try:
+                revenue_est = t.revenue_estimate
+            except Exception:
+                revenue_est = None
+
+            # If all sources returned nothing, skip this ticker
+            all_empty = all(
+                df is None or (hasattr(df, "empty") and df.empty)
+                for df in [eps_trend, eps_revisions, earnings_est, revenue_est]
+            )
+            if all_empty:
+                return None
+
+            # Build raw dict for JSONB storage (future-proofing)
+            raw_data: dict[str, Any] = {}
+            for name, df in [
+                ("eps_trend", eps_trend),
+                ("eps_revisions", eps_revisions),
+                ("earnings_estimate", earnings_est),
+                ("revenue_estimate", revenue_est),
+            ]:
+                if df is not None and hasattr(df, "to_dict"):
+                    try:
+                        raw_data[name] = {
+                            str(k): {str(k2): str(v2) for k2, v2 in v.items()}
+                            for k, v in df.to_dict().items()
+                        }
+                    except Exception:
+                        raw_data[name] = str(df)
+
+            records = []
+            for period in _PERIODS:
+                record = {
+                    "ticker": ticker_str,
+                    "period": period,
+                    # EPS Consensus (from earnings_estimate)
+                    "eps_avg": _safe_df_value(earnings_est, period, "avg"),
+                    "eps_low": _safe_df_value(earnings_est, period, "low"),
+                    "eps_high": _safe_df_value(earnings_est, period, "high"),
+                    "eps_n_analysts": None,
+                    "eps_year_ago": _safe_df_value(earnings_est, period, "yearAgoEps"),
+                    "eps_growth": _safe_df_value(earnings_est, period, "growth"),
+                    # EPS Trend (rolling 90-day window)
+                    "eps_current": _safe_df_value(eps_trend, period, "current"),
+                    "eps_7d_ago": _safe_df_value(eps_trend, period, "7daysAgo"),
+                    "eps_30d_ago": _safe_df_value(eps_trend, period, "30daysAgo"),
+                    "eps_60d_ago": _safe_df_value(eps_trend, period, "60daysAgo"),
+                    "eps_90d_ago": _safe_df_value(eps_trend, period, "90daysAgo"),
+                    # Revision counts
+                    "rev_up_7d": None,
+                    "rev_up_30d": None,
+                    "rev_down_7d": None,
+                    "rev_down_30d": None,
+                    # Revenue Consensus (from revenue_estimate)
+                    "revenue_avg": _safe_df_value(revenue_est, period, "avg"),
+                    "revenue_low": _safe_df_value(revenue_est, period, "low"),
+                    "revenue_high": _safe_df_value(revenue_est, period, "high"),
+                    "revenue_n_analysts": None,
+                    "revenue_year_ago": _safe_df_value(revenue_est, period, "yearAgoRevenue"),
+                    "revenue_growth": _safe_df_value(revenue_est, period, "growth"),
+                    # Raw data (same for all periods of this ticker)
+                    "raw": raw_data,
+                }
+
+                # Extract numberOfAnalysts (column name varies)
+                for col in ["numberOfAnalysts", "numberOfAnalyst"]:
+                    val = _safe_df_value(earnings_est, period, col)
+                    if val is not None:
+                        record["eps_n_analysts"] = int(val)
+                        break
+
+                for col in ["numberOfAnalysts", "numberOfAnalyst"]:
+                    val = _safe_df_value(revenue_est, period, col)
+                    if val is not None:
+                        record["revenue_n_analysts"] = int(val)
+                        break
+
+                # Extract revision counts (eps_revisions has different row keys)
+                rev_up_7d = _safe_df_value(eps_revisions, period, "upLast7days")
+                rev_up_30d = _safe_df_value(eps_revisions, period, "upLast30days")
+                rev_down_7d = _safe_df_value(eps_revisions, period, "downLast7days")
+                rev_down_30d = _safe_df_value(eps_revisions, period, "downLast30days")
+                if rev_up_7d is not None:
+                    record["rev_up_7d"] = int(rev_up_7d)
+                if rev_up_30d is not None:
+                    record["rev_up_30d"] = int(rev_up_30d)
+                if rev_down_7d is not None:
+                    record["rev_down_7d"] = int(rev_down_7d)
+                if rev_down_30d is not None:
+                    record["rev_down_30d"] = int(rev_down_30d)
+
+                # Only add record if it has at least some data
+                has_data = any(
+                    record.get(k) is not None
+                    for k in ["eps_avg", "eps_current", "revenue_avg", "rev_up_30d"]
+                )
+                if has_data:
+                    records.append(record)
+
+            return records if records else None
+
+        return self._iterate_with_rate_limit(tickers, _fetch_single, "estimates")
+
 
 def _clean_numeric(value: Any) -> float | None:
     """Clean a numeric value from yfinance, returning None for invalid values."""

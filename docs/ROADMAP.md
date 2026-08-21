@@ -24,8 +24,9 @@
 | 8 | Feature Pipeline | 🟢 Done | May 2026 |
 | 8c | News Sentiment Pipeline | 🟢 Done | May 2026 |
 | **⏸ Wait** | **2–3 months data collection** | **–** | **–** |
-| 9 | Exploratory Analysis (Jupyter) | 🔴 Open | – |
-| 10 | Signal Scoring Models | 🔴 Open | – |
+| 9 | Exploratory Analysis (Jupyter) | 🟢 Done | Aug 2026 |
+| 9.5| Data Hardening & Extension | 🔴 Open | Aug 2026 |
+| 10 | Signal Scoring Models | 🔴 Open | Nov 2026 |
 | 11 | Backtest Framework | 🔴 Open | – |
 | 12 | Paper Trading Integration | 🔴 Open | – |
 
@@ -130,14 +131,48 @@
 
 ---
 
-### Sprint 9 – Exploratory Analysis (Jupyter) 🔄 In Progress (Aug 2026)
+### Sprint 9 – Exploratory Analysis (Jupyter) ✅
 - ✅ Jupyter notebook setup, analysis dependencies (`[analysis]` optional group)
-- 🔄 **Feature ↔ Return correlation analysis** (93 snapshot days, 748 tickers)
-- 🔄 Feature importance: Random Forest, LASSO, correlation matrix
-- 🔄 Politician dual-date evaluation (disclosure vs. transaction)
-- [ ] Document findings in LEARNINGS.md
-- **Notebooks:** `notebooks/01_descriptive_statistics.py`, `02_feature_return_correlations.py`, `03_feature_importance.py`
+- ✅ Feature ↔ Return correlation analysis (93 snapshot days, 748 tickers)
+- ✅ Feature importance: Random Forest, LASSO, correlation matrix
+- ✅ Politician dual-date evaluation (disclosure vs. transaction)
+- ✅ Documented findings in LEARNINGS.md
 - **Note:** return_60d excluded (6.2% fill), 13F features excluded (no quarterly filing since pipeline start)
+
+### Sprint 9.5a – Data Hardening (Bias Prevention) 🟡 In Progress
+*Based on Opus 5 Concept (Aug 2026). Blocker items that must be resolved before Sprint 10.*
+- [x] **B1:** `EstimatesCollector` (yfinance) for EPS/Revenue consensus + revisions — *CRITICAL: rolling 90-day window*
+- [ ] **A1:** Reconstruct historical S&P 500 / Nasdaq 100 universe (Survivorship Bias)
+  - [ ] `index_membership` table with `valid_from` / `valid_to`
+  - [ ] Reload delisteted tickers via Alpaca Assets `asof` parameter
+  - [ ] Retarget cross-sectional feature calculations to point-in-time universe
+- [ ] **A2:** Implement `available_from` dates across all signal tables (Lookahead Bias)
+- [ ] **C4:** Validate `adjustment=all` against known stock splits (spot check)
+
+### Sprint 9.5b – Data Extension (New Sources + Derived Features) 🔴 Open
+*New data dimensions identified by Opus 5 to close the biggest feature gaps.*
+- [ ] **D1:** FRED Macro Regime Collector (`DGS2/10`, HY Spread, VIX, Dollar Index, Inflation Expectation)
+- [ ] **B3:** Benchmark ETFs in `prices_daily` (SPY, QQQ, IWM + 11 GICS Sector ETFs)
+- [ ] **B2:** Earnings Surprise / SUE calculation (extends existing `earnings_calendar`)
+- [ ] **B5:** Short Interest Collector (Massive Free Tier primary, yfinance fallback)
+- [ ] **D3:** Options IV Collector (Alpaca `/v1beta1/options/snapshots`, start early for IV-Rank buildup)
+- [ ] **E1-E4:** Derived features from existing data:
+  - [ ] 13F Deltas (analog to `ark_deltas`)
+  - [ ] Continuous Insider Ratio (volume-weighted, 10b5-1 filtered)
+  - [ ] Sentiment Momentum (7d/30d delta, news volume vs. average)
+  - [ ] Liquidity measures (Dollar Volume 20d, Amihud Illiquidity)
+- [ ] **D2:** Market Breadth (computed from `prices_daily`, no new collector)
+- [ ] **B4:** Sector-neutralization in Feature Pipeline (universe.sector already populated)
+
+### Sprint 9.5c – Candidate Pipeline MVP 🔴 Open
+*Minimum viable candidate selection and Context Pack generation.*
+- [ ] **C1-C3:** Data quality fixes (Politician lag weighting, ticker parser, party mapping)
+- [ ] **F1:** Rule-based Composite Score + Guardrails (UI-configurable):
+  - [ ] Min. liquidity, max 2/sector, pairwise correlation, churn lock, min-score
+  - [ ] `candidate_selections` + `candidate_rejections` tables
+- [ ] **F2:** Context Pack MVP (Candidates + Top Features + Market Context, YAML frontmatter)
+  - [ ] Output to configurable Unraid path (`CONTEXT_PACK_PATH` env var)
+  - [ ] Daily overview + per-candidate Markdown
 
 ### Sprint 10 – Signal Scoring
 - Weighted scoring model, optional LASSO/gradient boosting
