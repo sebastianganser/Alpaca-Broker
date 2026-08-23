@@ -35,9 +35,9 @@ class TestFeatureGroupDefinitions:
     """Verify feature group structure is consistent with the model."""
 
     def test_all_groups_present(self):
-        """All 8 signal groups must be defined."""
+        """All 9 signal groups must be defined."""
         expected_groups = {"ARK", "Insider", "Analyst", "Politician", "13F",
-                          "Fundamentals", "Technical", "Earnings"}
+                          "Fundamentals", "Technical", "Earnings", "Sentiment"}
         assert set(FEATURE_GROUPS.keys()) == expected_groups
 
     def test_ark_has_11_features(self):
@@ -65,8 +65,8 @@ class TestFeatureGroupDefinitions:
         assert len(FEATURE_GROUPS["Earnings"]) == 3
 
     def test_total_feature_count(self):
-        """Total features across all groups should be 49."""
-        assert len(ALL_FEATURE_COLS) == 49
+        """Total features across all groups should be 55 (49 base + 6 sentiment)."""
+        assert len(ALL_FEATURE_COLS) == 55
 
     def test_no_duplicates(self):
         """Each feature column name should be unique."""
@@ -130,7 +130,7 @@ class TestCoverageSchemas:
         assert item.ticker == "AAPL"
         assert item.ark == 0
         assert item.total_filled == 0
-        assert item.total_possible == 49
+        assert item.total_possible == 55  # 49 base + 6 sentiment (Sprint 8c)
 
     def test_coverage_item_with_values(self):
         item = FeatureCoverageItem(

@@ -111,8 +111,6 @@ class TestARKHoldingsCollector:
         mock_result = MagicMock()
         mock_result.rowcount = 1
         session.execute.return_value = mock_result
-        # Mock get_active_tickers for universe expansion
-        session.execute.return_value.scalars.return_value.all.return_value = []
 
         data = {
             "ARKK": [
@@ -130,7 +128,20 @@ class TestARKHoldingsCollector:
             ]
         }
 
-        with patch.object(collector, "_expand_universe", return_value=[]):
+        # NewTickerOnboarder is lazy-imported inside store(), so we patch
+        # at the source module, not the ARK module attribute.
+        with patch(
+            "trading_signals.universe.onboarder.NewTickerOnboarder"
+        ) as mock_onboarder_cls, patch(
+            "trading_signals.db.session.get_session"
+        ) as mock_get_session:
+            mock_onboard_session = MagicMock()
+            mock_get_session.return_value.__enter__ = MagicMock(
+                return_value=mock_onboard_session
+            )
+            mock_get_session.return_value.__exit__ = MagicMock(return_value=False)
+            mock_onboarder_cls.return_value.onboard.return_value = []
+
             fetched, written = collector.store(session, data)
 
         assert fetched == 1

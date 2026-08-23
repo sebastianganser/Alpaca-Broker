@@ -205,41 +205,76 @@ class TestTransactionTypeNorm:
 
 
 class TestSenateSearchParsing:
-    """Test parsing of Senate eFD search results."""
+    """Test parsing of Senate eFD AJAX records.
+
+    The collector uses DataTables AJAX API (JSON) instead of HTML table
+    scraping. Each record is a list of HTML-encoded cell values:
+    [first_name, last_name, office, report_link_html, date_filed]
+    """
 
     def test_parses_electronic_filings(self):
-        client = DisclosureClient()
-        filings = client._parse_senate_search_results(SENATE_SEARCH_RESULTS_HTML)
-        # Should only include /ptr/ links, not /paper/ links
-        assert len(filings) == 2
+        """PTR links (/ptr/) should be parsed, paper links (/paper/) excluded."""
+        client = DisclosureClient.__new__(DisclosureClient)
+        # Electronic PTR filing – should be parsed
+        ptr_record = [
+            "Tommy", "Tuberville", "Tuberville, Tommy (Senator)",
+            '<a href="/search/view/ptr/abc-123/">Periodic Transaction Report</a>',
+            "01/15/2026",
+        ]
+        # Paper filing – should be excluded
+        paper_record = [
+            "Nancy", "Pelosi", "Pelosi, Nancy (Senator)",
+            '<a href="/search/view/paper/def-456/">Periodic Transaction Report</a>',
+            "01/20/2026",
+        ]
+        assert client._parse_ajax_record(ptr_record) is not None
+        assert client._parse_ajax_record(paper_record) is None
 
     def test_excludes_paper_filings(self):
-        client = DisclosureClient()
-        filings = client._parse_senate_search_results(SENATE_SEARCH_RESULTS_HTML)
-        urls = [f["ptr_link"] for f in filings]
-        assert all("/ptr/" in url for url in urls)
-        assert not any("/paper/" in url for url in urls)
+        client = DisclosureClient.__new__(DisclosureClient)
+        paper_record = [
+            "Nancy", "Pelosi", "Pelosi, Nancy (Senator)",
+            '<a href="/search/view/paper/def-456/">Periodic Transaction Report</a>',
+            "01/20/2026",
+        ]
+        assert client._parse_ajax_record(paper_record) is None
 
     def test_extracts_name(self):
-        client = DisclosureClient()
-        filings = client._parse_senate_search_results(SENATE_SEARCH_RESULTS_HTML)
-        assert filings[0]["first_name"] == "Tommy"
-        assert filings[0]["last_name"] == "Tuberville"
+        client = DisclosureClient.__new__(DisclosureClient)
+        record = [
+            "Tommy", "Tuberville", "Tuberville, Tommy (Senator)",
+            '<a href="/search/view/ptr/abc-123/">Periodic Transaction Report</a>',
+            "01/15/2026",
+        ]
+        filing = client._parse_ajax_record(record)
+        assert filing["first_name"] == "Tommy"
+        assert filing["last_name"] == "Tuberville"
 
     def test_extracts_date(self):
-        client = DisclosureClient()
-        filings = client._parse_senate_search_results(SENATE_SEARCH_RESULTS_HTML)
-        assert filings[0]["date_filed"] == "01/15/2026"
+        client = DisclosureClient.__new__(DisclosureClient)
+        record = [
+            "Tommy", "Tuberville", "Tuberville, Tommy (Senator)",
+            '<a href="/search/view/ptr/abc-123/">Periodic Transaction Report</a>',
+            "01/15/2026",
+        ]
+        filing = client._parse_ajax_record(record)
+        assert filing["date_filed"] == "01/15/2026"
 
     def test_full_url_built(self):
-        client = DisclosureClient()
-        filings = client._parse_senate_search_results(SENATE_SEARCH_RESULTS_HTML)
-        assert filings[0]["ptr_link"].startswith("https://efdsearch.senate.gov")
+        client = DisclosureClient.__new__(DisclosureClient)
+        record = [
+            "Tommy", "Tuberville", "Tuberville, Tommy (Senator)",
+            '<a href="/search/view/ptr/abc-123/">Periodic Transaction Report</a>',
+            "01/15/2026",
+        ]
+        filing = client._parse_ajax_record(record)
+        assert filing["ptr_link"].startswith("https://efdsearch.senate.gov")
 
     def test_empty_table_returns_empty(self):
-        client = DisclosureClient()
-        html = "<html><body><p>No results</p></body></html>"
-        assert client._parse_senate_search_results(html) == []
+        """Records with insufficient cells should return None."""
+        client = DisclosureClient.__new__(DisclosureClient)
+        assert client._parse_ajax_record([]) is None
+        assert client._parse_ajax_record(["only", "two"]) is None
 
 
 # ============================================================================

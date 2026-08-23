@@ -254,6 +254,11 @@ class TestFetchAnalystRatings:
     def test_extracts_ratings(self, mock_ticker_cls):
         """Should extract rating data from upgrades_downgrades."""
         import pandas as pd
+        from datetime import datetime, timedelta
+
+        # Use recent dates relative to today to stay within lookback window
+        recent_date_1 = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+        recent_date_2 = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
 
         mock_ticker = MagicMock()
         mock_df = pd.DataFrame(
@@ -263,7 +268,7 @@ class TestFetchAnalystRatings:
                 "FromGrade": ["Hold", "Equal-Weight"],
                 "Action": ["up", "up"],
             },
-            index=pd.to_datetime(["2026-04-10", "2026-04-11"]),
+            index=pd.to_datetime([recent_date_1, recent_date_2]),
         )
         type(mock_ticker).upgrades_downgrades = PropertyMock(return_value=mock_df)
         mock_ticker_cls.return_value = mock_ticker
@@ -296,6 +301,11 @@ class TestFetchAnalystRatings:
     def test_lookback_filter(self, mock_ticker_cls):
         """Old ratings beyond lookback should be filtered out."""
         import pandas as pd
+        from datetime import datetime, timedelta
+
+        # One old date (beyond 30 days) and one recent
+        old_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        recent_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
 
         mock_ticker = MagicMock()
         mock_df = pd.DataFrame(
@@ -305,7 +315,7 @@ class TestFetchAnalystRatings:
                 "FromGrade": ["", ""],
                 "Action": ["init", "init"],
             },
-            index=pd.to_datetime(["2020-01-01", "2026-04-10"]),
+            index=pd.to_datetime([old_date, recent_date]),
         )
         type(mock_ticker).upgrades_downgrades = PropertyMock(return_value=mock_df)
         mock_ticker_cls.return_value = mock_ticker
