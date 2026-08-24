@@ -60,7 +60,7 @@ class FeaturePipeline:
         Returns:
             Number of feature snapshot rows written/updated.
         """
-        tickers = self._get_active_tickers()
+        tickers = self._get_active_tickers(target_date)
         logger.info(
             f"[feature_pipeline] Computing features for {len(tickers)} "
             f"tickers on {target_date}"
@@ -80,13 +80,16 @@ class FeaturePipeline:
         )
         return written
 
-    def _get_active_tickers(self) -> list[str]:
-        stmt = (
-            select(Universe.ticker)
-            .where(Universe.is_active.is_(True))
-            .order_by(Universe.ticker)
-        )
-        return [r[0] for r in self.session.execute(stmt).all()]
+    def _get_active_tickers(self, target_date: date) -> list[str]:
+        """Return tickers that were active on target_date.
+
+        Uses point-in-time index membership data if available,
+        otherwise falls back to Universe.is_active == True.
+        """
+        from trading_signals.universe.manager import UniverseManager
+
+        manager = UniverseManager(self.session)
+        return manager.get_universe_as_of(target_date)
 
     def _compute_ticker(self, ticker: str, d: date) -> dict:
         """Compute all features for one ticker, gracefully degrading."""

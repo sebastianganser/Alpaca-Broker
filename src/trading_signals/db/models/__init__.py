@@ -7,6 +7,7 @@ from trading_signals.db.models.collection_log import CollectionLog
 from trading_signals.db.models.estimates import EstimatesSnapshot
 from trading_signals.db.models.features import FeatureSnapshot
 from trading_signals.db.models.form13f import Form13FHolding
+from trading_signals.db.models.index_membership import IndexMembership
 from trading_signals.db.models.news import NewsArticle, NewsSentiment
 from trading_signals.db.models.fundamentals import (
     AnalystRating,
@@ -30,6 +31,7 @@ __all__ = [
     "FeatureSnapshot",
     "Form13FHolding",
     "FundamentalsSnapshot",
+    "IndexMembership",
     "InsiderCluster",
     "InsiderTrade",
     "NewsArticle",

@@ -11,6 +11,7 @@ Sources:
 
 import io
 from dataclasses import dataclass, field
+from datetime import date
 
 import pandas as pd
 import requests
@@ -158,7 +159,87 @@ class IndexSyncer:
             f"[index_sync] Done: {result.newly_added} added, "
             f"{result.membership_updated} memberships updated"
         )
+
+        # ── Maintain index_membership intervals ──────────────────────
+        # Compare current index composition against open intervals
+        # to detect additions and removals for point-in-time tracking.
+        self._update_membership_intervals(membership)
+
         return result
+
+    def _update_membership_intervals(
+        self,
+        current_membership: dict[str, set[str]],
+    ) -> None:
+        """Maintain index_membership intervals based on detected changes.
+
+        Compares current index composition (from Wikipedia) against
+        open intervals in the index_membership table. Creates new
+        intervals for additions and closes intervals for removals.
+        """
+        from sqlalchemy import and_
+        from trading_signals.db.models.index_membership import IndexMembership
+
+        today = date.today()
+
+        for index_name in ("sp500", "nasdaq100"):
+            current_tickers = current_membership.get(index_name, set())
+            # Also check tickers that have this index in their membership set
+            # (the membership dict is keyed by ticker, values are sets of indexes)
+            current_for_index = set()
+            for ticker, indexes in current_membership.items():
+                if index_name in indexes:
+                    current_for_index.add(ticker)
+
+            # Get all currently-open intervals for this index
+            open_intervals = self.session.execute(
+                select(IndexMembership.ticker).where(
+                    and_(
+                        IndexMembership.index_name == index_name,
+                        IndexMembership.valid_to.is_(None),
+                    )
+                )
+            ).all()
+            previously_active = {r[0] for r in open_intervals}
+
+            # Detect additions: in current but not in open intervals
+            additions = current_for_index - previously_active
+            for ticker in additions:
+                self.session.add(IndexMembership(
+                    ticker=ticker,
+                    index_name=index_name,
+                    valid_from=today,
+                    valid_to=None,
+                    reason="Monthly index sync detected addition",
+                    source="index_sync",
+                ))
+
+            # Detect removals: in open intervals but not in current
+            removals = previously_active - current_for_index
+            for ticker in removals:
+                # Close the open interval
+                self.session.execute(
+                    update(IndexMembership)
+                    .where(
+                        and_(
+                            IndexMembership.ticker == ticker,
+                            IndexMembership.index_name == index_name,
+                            IndexMembership.valid_to.is_(None),
+                        )
+                    )
+                    .values(
+                        valid_to=today,
+                        reason="Monthly index sync detected removal",
+                    )
+                )
+
+            if additions or removals:
+                self.session.flush()
+                logger.info(
+                    f"[index_sync] {index_name}: "
+                    f"{len(additions)} new intervals, "
+                    f"{len(removals)} intervals closed"
+                )
 
     def _fetch_sp500(self) -> set[str]:
         """Fetch S&P 500 tickers from Wikipedia."""

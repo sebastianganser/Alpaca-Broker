@@ -12,6 +12,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from trading_signals.db.models.universe import Universe
+from trading_signals.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class UniverseManager:
@@ -130,3 +133,74 @@ class UniverseManager:
             Universe.is_active.is_(True)
         )
         return self.session.execute(stmt).scalar_one()
+
+    def get_universe_as_of(
+        self,
+        target_date: date,
+        index_name: str | None = None,
+    ) -> list[str]:
+        """Return tickers that were active index members on target_date.
+
+        Queries the index_membership table for intervals that contain
+        target_date: valid_from <= target_date AND (valid_to IS NULL OR valid_to > target_date)
+
+        If no membership data exists at all, falls back to current is_active=True
+        to avoid breaking the pipeline before historical data is seeded.
+
+        Args:
+            target_date: The date to query membership for.
+            index_name: If given, only return members of this index
+                        (e.g. 'sp500', 'nasdaq100'). If None, returns
+                        the union of all indexes.
+
+        Returns:
+            Sorted list of ticker symbols.
+        """
+        from sqlalchemy import and_, func, or_
+        from trading_signals.db.models.index_membership import IndexMembership
+
+        # Check if we have any membership data at all
+        has_data = self.session.execute(
+            select(func.count()).select_from(IndexMembership)
+        ).scalar_one()
+
+        if has_data == 0:
+            # No membership data yet → fall back to legacy behavior
+            logger.info(
+                "[universe] No index_membership data found, "
+                "falling back to is_active=True"
+            )
+            return [
+                r[0] for r in self.session.execute(
+                    select(Universe.ticker)
+                    .where(Universe.is_active.is_(True))
+                    .order_by(Universe.ticker)
+                ).all()
+            ]
+
+        # Point-in-time query: find tickers with active intervals on target_date
+        conditions = [
+            IndexMembership.valid_from <= target_date,
+            or_(
+                IndexMembership.valid_to.is_(None),
+                IndexMembership.valid_to > target_date,
+            ),
+        ]
+        if index_name:
+            conditions.append(IndexMembership.index_name == index_name)
+
+        stmt = (
+            select(IndexMembership.ticker)
+            .where(and_(*conditions))
+            .distinct()
+            .order_by(IndexMembership.ticker)
+        )
+
+        tickers = [r[0] for r in self.session.execute(stmt).all()]
+
+        logger.debug(
+            f"[universe] get_universe_as_of({target_date}, {index_name}): "
+            f"{len(tickers)} tickers"
+        )
+        return tickers
+

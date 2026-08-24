@@ -305,6 +305,33 @@ CREATE INDEX idx_estimates_ticker ON signals.estimates_snapshot(ticker);
 CREATE INDEX idx_estimates_as_of ON signals.estimates_snapshot(as_of);
 ```
 
+### `signals.index_membership`
+Historical index constituent membership with time intervals. Tracks when
+each ticker joined and left an index (S&P 500, Nasdaq 100). Enables
+point-in-time universe queries to prevent survivorship bias.
+
+- **Primary source:** Wikipedia "Selected changes" tables
+- **Backup source:** GitHub fja05680/sp500 CSV
+- **Ongoing updates:** Monthly IndexSyncer job detects additions/removals
+- **valid_to = NULL** means ticker is currently an active member
+
+```sql
+CREATE TABLE signals.index_membership (
+  id              BIGSERIAL PRIMARY KEY,
+  ticker          TEXT NOT NULL,
+  index_name      TEXT NOT NULL,        -- 'sp500', 'nasdaq100'
+  valid_from      DATE NOT NULL,
+  valid_to        DATE,                 -- NULL = currently active
+  reason          TEXT,                 -- 'Delisted', 'Merger', etc.
+  replaced_by     TEXT,                 -- Successor ticker
+  source          TEXT NOT NULL,        -- 'wikipedia', 'github_csv', 'index_sync'
+  UNIQUE (ticker, index_name, valid_from)
+);
+
+CREATE INDEX ix_membership_lookup ON signals.index_membership(index_name, valid_from, valid_to);
+CREATE INDEX ix_membership_ticker ON signals.index_membership(ticker);
+```
+
 ### `signals.news_articles`
 Financial news articles from Alpaca News API. Raw layer – collected daily.
 

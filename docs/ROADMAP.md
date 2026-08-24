@@ -142,10 +142,19 @@
 ### Sprint 9.5a – Data Hardening (Bias Prevention) 🟡 In Progress
 *Based on Opus 5 Concept (Aug 2026). Blocker items that must be resolved before Sprint 10.*
 - [x] **B1:** `EstimatesCollector` (yfinance) for EPS/Revenue consensus + revisions — *CRITICAL: rolling 90-day window*
-- [ ] **A1:** Reconstruct historical S&P 500 / Nasdaq 100 universe (Survivorship Bias)
-  - [ ] `index_membership` table with `valid_from` / `valid_to`
-  - [ ] Reload delisteted tickers via Alpaca Assets `asof` parameter
-  - [ ] Retarget cross-sectional feature calculations to point-in-time universe
+- [x] **A1 (Stufe 1):** Point-in-Time Index Membership (Survivorship Bias Prevention)
+  - [x] `index_membership` table with `valid_from` / `valid_to` intervals (migration 023)
+  - [x] Wikipedia S&P 500 / Nasdaq 100 changes parser + GitHub CSV backup
+  - [x] Layout change detection with warning logs
+  - [x] `UniverseManager.get_universe_as_of(target_date)` point-in-time query
+  - [x] Feature Pipeline uses historical universe composition
+  - [x] `IndexSyncer` maintains ongoing intervals automatically
+  - [x] Manual seeding endpoint `POST /ops/seed/index-membership`
+  - ~~Alpaca Assets `asof` parameter~~ *(does not exist — corrected from Opus 5 concept)*
+- [ ] **A1 (Stufe 2/3):** *(Follow-up, planned for later sprint)*
+  - [ ] Backfill price data for delisted tickers (via Alpaca historical bars)
+  - [ ] Full feature computation for delisted tickers
+  - [ ] Manual "Recompute History" button in Settings UI
 - [ ] **A2:** Implement `available_from` dates across all signal tables (Lookahead Bias)
 - [ ] **C4:** Validate `adjustment=all` against known stock splits (spot check)
 

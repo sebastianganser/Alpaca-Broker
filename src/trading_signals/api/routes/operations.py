@@ -169,6 +169,112 @@ def start_sector_enrichment():
         raise HTTPException(status_code=409, detail=str(e))
 
 
+# ── Index Membership Seeding ─────────────────────────────────────────────
+
+@router.post("/seed/index-membership", response_model=TriggerResponse)
+def seed_index_membership(db: Session = Depends(get_db)):
+    """Seed historical index membership data from Wikipedia + GitHub backup.
+
+    Parses S&P 500 and Nasdaq 100 historical changes from Wikipedia and
+    the fja05680/sp500 GitHub CSV, then generates membership intervals
+    in the index_membership table.
+
+    This is a one-time operation that should be run after deploying
+    the index_membership migration. Subsequent updates are handled
+    automatically by the monthly IndexSyncer job.
+
+    Idempotent: Running multiple times will not create duplicates
+    (uses ON CONFLICT DO NOTHING via unique constraint).
+    """
+    import threading
+
+    def _run_seed():
+        from trading_signals.db.session import get_session
+        from trading_signals.universe.wikipedia_index_history import (
+            GitHubSP500Backup,
+            WikipediaIndexHistoryParser,
+            generate_intervals_from_changes,
+        )
+        from trading_signals.db.models.index_membership import IndexMembership
+        from trading_signals.config import DATA_START_DATE
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        parser = WikipediaIndexHistoryParser()
+
+        # 1. Parse Wikipedia S&P 500 changes
+        sp500_result = parser.parse_sp500_changes()
+
+        # 2. Parse Nasdaq 100 changes
+        nasdaq_result = parser.parse_nasdaq100_changes()
+
+        # 3. Try GitHub CSV as additional/backup source for S&P 500
+        github_result = GitHubSP500Backup().fetch_changes()
+
+        # Merge all changes (Wikipedia primary, GitHub as supplement)
+        all_changes = sp500_result.changes + nasdaq_result.changes
+
+        # Use GitHub CSV changes if Wikipedia returned few results
+        if len(sp500_result.changes) < 20 and github_result.changes:
+            all_changes = github_result.changes + nasdaq_result.changes
+
+        # 4. Get current index members to fill gaps for long-standing members
+        with get_session() as session:
+            from trading_signals.universe.index_sync import IndexSyncer
+            syncer = IndexSyncer(session)
+            current_sp500 = syncer._fetch_sp500()
+            current_nasdaq100 = syncer._fetch_nasdaq100()
+
+        current_members = {
+            "sp500": current_sp500,
+            "nasdaq100": current_nasdaq100,
+        }
+
+        # 5. Generate intervals
+        intervals = generate_intervals_from_changes(
+            all_changes, current_members, DATA_START_DATE
+        )
+
+        # 6. Insert into database (idempotent)
+        with get_session() as session:
+            inserted = 0
+            for iv in intervals:
+                stmt = (
+                    pg_insert(IndexMembership)
+                    .values(**iv)
+                    .on_conflict_do_nothing(
+                        constraint="uq_membership_ticker_index_from"
+                    )
+                )
+                result = session.execute(stmt)
+                inserted += result.rowcount
+
+        # Log warnings from parsing
+        all_warnings = (
+            sp500_result.warnings
+            + nasdaq_result.warnings
+            + github_result.warnings
+        )
+        for w in all_warnings:
+            from trading_signals.utils.logging import get_logger
+            get_logger("index_membership_seed").warning(w)
+
+        from trading_signals.utils.logging import get_logger
+        logger = get_logger("index_membership_seed")
+        logger.info(
+            f"[seed] Index membership seeding complete: "
+            f"{inserted}/{len(intervals)} intervals inserted "
+            f"({len(all_changes)} changes parsed)"
+        )
+
+    thread = threading.Thread(target=_run_seed, daemon=True)
+    thread.start()
+
+    return TriggerResponse(
+        success=True,
+        message="Index membership seeding started in background",
+    )
+
+
 # ── Database Operations ──────────────────────────────────────────────────
 
 @router.get("/db/stats", response_model=list[DbTableInfo])
