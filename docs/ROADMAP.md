@@ -156,7 +156,7 @@
   - [ ] Full feature computation for delisted tickers
   - [ ] Manual "Recompute History" button in Settings UI
 - [ ] **A2:** Implement `available_from` dates across all signal tables (Lookahead Bias)
-- [ ] **C4:** Validate `adjustment=all` against known stock splits (spot check)
+- [x] **C4:** Validate `adjustment=all` against known stock splits ✅ (AMZN, GOOGL, SHOP, NVDA, CMG — all smooth)
 
 ### Sprint 9.5b – Data Extension (New Sources + Derived Features) 🔴 Open
 *New data dimensions identified by Opus 5 to close the biggest feature gaps.*
