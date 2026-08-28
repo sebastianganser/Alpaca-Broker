@@ -74,9 +74,10 @@ class WikipediaIndexHistoryParser:
     def parse_sp500_changes(self) -> ParseResult:
         """Parse S&P 500 historical changes from Wikipedia.
 
-        The S&P 500 Wikipedia page has a 'Selected changes' table
-        (usually tables[1]) with columns:
-          Date, Added (Ticker, Security), Removed (Ticker, Security), Reason
+        Strategy:
+        1. Try to find the 'Selected changes' table (tables[1+])
+        2. If not found (layout changed), fall back to extracting
+           'Date added' from the main constituents table (table[0])
 
         Returns:
             ParseResult with list of IndexChange objects.
@@ -93,25 +94,89 @@ class WikipediaIndexHistoryParser:
             result.warnings.append(msg)
             return result
 
-        # Find the changes table (not the current constituents table)
+        # Strategy 1: Find the dedicated changes table
         changes_df = self._find_changes_table(tables, "sp500")
-        if changes_df is None:
+        if changes_df is not None:
+            result.changes = self._parse_sp500_changes_df(changes_df)
+            logger.info(
+                f"[index_history] Parsed {len(result.changes)} S&P 500 changes "
+                f"from Wikipedia changes table"
+            )
+            return result
+
+        # Strategy 2: Fall back to 'Date added' column in main table
+        logger.info(
+            "[index_history] S&P 500 changes table not found. "
+            "Falling back to 'Date added' column from constituents table."
+        )
+        result.changes = self._parse_sp500_date_added(tables)
+        if result.changes:
+            logger.info(
+                f"[index_history] Extracted {len(result.changes)} S&P 500 additions "
+                f"from 'Date added' column (no removal data available)"
+            )
+        else:
             msg = (
-                "S&P 500 changes table not found on Wikipedia. "
-                "Layout may have changed. Found tables with columns: "
+                "S&P 500: Neither changes table nor 'Date added' column found. "
+                f"Layout may have changed. Tables: "
                 + str([list(t.columns)[:5] for t in tables[:5]])
             )
             logger.warning(f"[index_history] LAYOUT CHANGE DETECTED: {msg}")
             result.warnings.append(msg)
-            return result
 
-        # Parse each row into IndexChange objects
-        result.changes = self._parse_sp500_changes_df(changes_df)
-        logger.info(
-            f"[index_history] Parsed {len(result.changes)} S&P 500 changes "
-            f"from Wikipedia"
-        )
         return result
+
+    def _parse_sp500_date_added(
+        self, tables: list[pd.DataFrame]
+    ) -> list[IndexChange]:
+        """Extract additions from the 'Date added' column in the main table.
+
+        When the changes table is unavailable, we can still infer when
+        each current member was added to the index. This gives us
+        'added' events but no 'removed' events.
+        """
+        changes: list[IndexChange] = []
+        data_start = DATA_START_DATE
+
+        # Find the main constituents table (has 'Symbol' and 'Date added')
+        for df in tables:
+            cols_lower = [str(c).lower() for c in df.columns]
+            if "symbol" in cols_lower and any("date" in c for c in cols_lower):
+                symbol_col = df.columns[cols_lower.index("symbol")]
+                date_col = None
+                for c in df.columns:
+                    if "date" in str(c).lower() and "added" in str(c).lower():
+                        date_col = c
+                        break
+                if date_col is None:
+                    continue
+
+                for _, row in df.iterrows():
+                    ticker = str(row[symbol_col]).strip().upper()
+                    date_str = str(row[date_col]).strip()
+                    added_date = self._parse_date(date_str)
+
+                    if not ticker or ticker == "NAN" or not added_date:
+                        continue
+                    if added_date < data_start:
+                        continue
+
+                    changes.append(IndexChange(
+                        change_date=added_date,
+                        ticker=ticker,
+                        index_name="sp500",
+                        action="added",
+                        reason="From Wikipedia 'Date added' column",
+                        source="wikipedia",
+                    ))
+
+                logger.info(
+                    f"[index_history] Found {len(changes)} tickers added "
+                    f"to S&P 500 since {data_start}"
+                )
+                return changes
+
+        return changes
 
     def parse_nasdaq100_changes(self) -> ParseResult:
         """Parse Nasdaq 100 historical changes from Wikipedia.
@@ -157,8 +222,10 @@ class WikipediaIndexHistoryParser:
         """Find the 'Selected changes' table among parsed tables.
 
         Uses heuristics to identify the correct table:
-        - Must have columns containing 'Date' and 'Added' or 'Removed'
-        - Must have more than 10 rows (the changes table is large)
+        - Must have BOTH 'Added' and 'Removed' column groups
+        - Must NOT have a 'Symbol' column (that's the main constituents table)
+        - Must have more than 10 rows
+        - 'Date added' in the main table does NOT count as a changes table
         """
         for i, df in enumerate(tables):
             cols_lower = [str(c).lower() for c in df.columns]
@@ -169,11 +236,22 @@ class WikipediaIndexHistoryParser:
                     for c in df.columns.get_level_values(-1)
                 ]
 
-            has_date = any("date" in c for c in cols_lower)
-            has_added = any("added" in c for c in cols_lower)
-            has_removed = any("removed" in c for c in cols_lower)
+            # Skip the main constituents table (has 'Symbol' column)
+            if "symbol" in cols_lower:
+                continue
 
-            if has_date and (has_added or has_removed) and len(df) > 10:
+            has_date = any("date" in c for c in cols_lower)
+            # Must have BOTH added and removed as separate column concepts
+            has_added = any(
+                c == "added" or c.startswith("added ") or c.endswith(" added")
+                for c in cols_lower
+            )
+            has_removed = any(
+                c == "removed" or c.startswith("removed ") or c.endswith(" removed")
+                for c in cols_lower
+            )
+
+            if has_date and has_added and has_removed and len(df) > 10:
                 logger.debug(
                     f"[index_history] Found {index_name} changes table "
                     f"at index {i} ({len(df)} rows)"
