@@ -43,15 +43,24 @@ def upgrade() -> None:
     )
 
     # Add macro feature columns to feature_snapshots
-    macro_columns = [
+    new_columns = [
+        # D1: Macro features
         ("macro_yield_spread", sa.Numeric(10, 4)),
         ("macro_vix", sa.Numeric(10, 2)),
         ("macro_vix_regime", sa.Integer),
         ("macro_hy_spread", sa.Numeric(10, 4)),
         ("macro_dollar_index", sa.Numeric(10, 2)),
         ("macro_inflation_expectation", sa.Numeric(10, 4)),
+        # B2: Earnings SUE
+        ("sue_last", sa.Numeric(10, 4)),
+        ("days_since_last_earnings", sa.Integer),
+        # E3: Sentiment extension
+        ("news_volume_ratio_7d", sa.Numeric(10, 4)),
+        # E4: Liquidity
+        ("dollar_volume_20d", sa.Numeric(20, 0)),
+        ("amihud_illiquidity_20d", sa.Numeric(16, 6)),
     ]
-    for col_name, col_type in macro_columns:
+    for col_name, col_type in new_columns:
         op.add_column(
             "feature_snapshots",
             sa.Column(col_name, col_type),
@@ -60,8 +69,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Drop macro columns from feature_snapshots
+    # Drop new columns from feature_snapshots
     for col_name in [
+        "amihud_illiquidity_20d", "dollar_volume_20d",
+        "news_volume_ratio_7d",
+        "days_since_last_earnings", "sue_last",
         "macro_inflation_expectation", "macro_dollar_index", "macro_hy_spread",
         "macro_vix_regime", "macro_vix", "macro_yield_spread",
     ]:

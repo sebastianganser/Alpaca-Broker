@@ -1,7 +1,7 @@
 """Feature Pipeline – aggregates raw signals into daily feature vectors.
 
 The heart of the ML data preparation. For each active ticker on a given
-trading day, computes ~55 features across 9 signal groups and stores
+trading day, computes ~70 features across 11 signal groups and stores
 them in the feature_snapshots table via UPSERT.
 
 Feature Groups:
@@ -12,8 +12,10 @@ Feature Groups:
   - 13F (2): Top holder count, new positions
   - Fundamentals (8): Valuation ratios, margins, temporal trends
   - Technical (6): Price vs SMA, RSI, volume ratio, ATR
-  - Earnings (3): Days until, consecutive beats, surprise trend
-  - Sentiment (6): News sentiment averages, momentum, attention
+  - Liquidity (2): Dollar volume 20d, Amihud illiquidity (Sprint 9.5b E4)
+  - Earnings (5): Days until, beats, surprise trend, SUE, PEAD (Sprint 9.5b B2)
+  - Sentiment (7): News sentiment, momentum, attention, volume ratio (Sprint 9.5b E3)
+  - Macro (6): VIX, yields, HY spread, dollar, inflation (Sprint 9.5b D1)
 """
 
 from __future__ import annotations
@@ -584,9 +586,65 @@ class FeaturePipeline:
             ),
             "volume_ratio_20d": vol_ratio,
             "atr_14_pct": atr_pct,
+            **self._liquidity_features(ticker, d),
         }
 
-    # ── Earnings Features (3) ────────────────────────────────────────
+    # ── Liquidity Features (2, Sprint 9.5b E4) ───────────────────────
+
+    def _liquidity_features(self, ticker: str, d: date) -> dict:
+        """Dollar volume and Amihud illiquidity ratio over 20 trading days.
+
+        dollar_volume_20d: 20-day SMA of Close * Volume (in USD)
+        amihud_illiquidity_20d: mean(|daily_return| / dollar_volume)
+        Higher Amihud = less liquid = higher price impact per dollar traded.
+        """
+        since_20 = d - timedelta(days=30)  # calendar days → ~20 trading days
+        prices = list(self.session.execute(
+            select(PriceDaily.close, PriceDaily.volume)
+            .where(PriceDaily.ticker == ticker)
+            .where(PriceDaily.trade_date.between(since_20, d))
+            .order_by(PriceDaily.trade_date)
+        ).all())
+
+        if len(prices) < 5:
+            return {}
+
+        # Dollar volume: Close * Volume for each day
+        dollar_vols = []
+        for row in prices:
+            c, v = row[0], row[1]
+            if c and v and float(c) > 0 and int(v) > 0:
+                dollar_vols.append(float(c) * int(v))
+
+        dollar_volume_20d = None
+        if dollar_vols:
+            dollar_volume_20d = round(sum(dollar_vols) / len(dollar_vols), 0)
+
+        # Amihud: mean(|return| / dollar_volume)
+        amihud = None
+        if len(dollar_vols) >= 2:
+            amihud_vals = []
+            for i in range(1, len(prices)):
+                prev_c, curr_c = prices[i - 1][0], prices[i][0]
+                curr_v = prices[i][1]
+                if prev_c and curr_c and curr_v:
+                    prev_c, curr_c = float(prev_c), float(curr_c)
+                    dv = curr_c * int(curr_v)
+                    if prev_c > 0 and dv > 0:
+                        daily_ret = abs((curr_c - prev_c) / prev_c)
+                        amihud_vals.append(daily_ret / dv)
+            if amihud_vals:
+                # Scale by 1e6 for readability (Amihud values are tiny)
+                amihud = round(
+                    sum(amihud_vals) / len(amihud_vals) * 1e6, 6
+                )
+
+        return {
+            "dollar_volume_20d": dollar_volume_20d,
+            "amihud_illiquidity_20d": amihud,
+        }
+
+    # ── Earnings Features (5, Sprint 9.5b) ───────────────────────────
 
     def _earnings_features(self, ticker: str, d: date) -> dict:
         # Days until next earnings
@@ -630,10 +688,40 @@ class FeaturePipeline:
         surprises = [float(r[3]) for r in past[:3] if r[3] is not None]
         surprise_trend = round(sum(surprises) / len(surprises), 4) if surprises else None
 
+        # B2 Sprint 9.5b: SUE (Standardized Unexpected Earnings)
+        # SUE = (EPS_actual - EPS_estimate) / stdev(historical surprises)
+        # Normalizes surprise for cross-sectional comparison
+        sue_last = None
+        if past and past[0][1] is not None and past[0][2] is not None:
+            raw_surprise = float(past[0][2]) - float(past[0][1])
+            # Historical surprise stdev from available quarters
+            hist_surprises = [
+                float(r[2]) - float(r[1])
+                for r in past if r[1] is not None and r[2] is not None
+            ]
+            if len(hist_surprises) >= 2:
+                mean_s = sum(hist_surprises) / len(hist_surprises)
+                stdev_s = (
+                    sum((s - mean_s) ** 2 for s in hist_surprises)
+                    / (len(hist_surprises) - 1)
+                ) ** 0.5
+                if stdev_s > 0.001:  # avoid division by near-zero
+                    sue_last = round(raw_surprise / stdev_s, 4)
+            elif raw_surprise != 0:
+                # Only 1 quarter: use raw surprise as-is (no normalization)
+                sue_last = round(raw_surprise, 4)
+
+        # B2: Days since last earnings (PEAD effect lasts 1-60 trading days)
+        days_since = None
+        if past:
+            days_since = (d - past[0][0]).days
+
         return {
             "earnings_days_until": days_until,
             "consecutive_beats": consecutive_beats or None,
             "surprise_trend_3q": surprise_trend,
+            "sue_last": sue_last,
+            "days_since_last_earnings": days_since,
         }
 
     # ── UPSERT ───────────────────────────────────────────────────────
@@ -708,6 +796,18 @@ class FeaturePipeline:
         market_7d, _, _ = _avg_sentiment(None, since_7)
 
         has_data = avg_7d is not None or avg_30d is not None or count_7d > 0
+
+        # E3 Sprint 9.5b: News volume ratio (spike detection)
+        # 7d article count vs 90d average → unusual news activity
+        news_vol_ratio = None
+        if count_7d > 0:
+            since_90 = d - timedelta(days=90)
+            _, _, count_90d = _avg_sentiment(ticker, since_90)
+            if count_90d > 0:
+                avg_weekly_90d = count_90d / (90 / 7)
+                if avg_weekly_90d > 0:
+                    news_vol_ratio = round(count_7d / avg_weekly_90d, 4)
+
         return {
             "sentiment_avg_7d": round(avg_7d, 4) if avg_7d is not None else None,
             "sentiment_avg_30d": round(avg_30d, 4) if avg_30d is not None else None,
@@ -717,6 +817,7 @@ class FeaturePipeline:
             "market_sentiment_7d": (
                 round(market_7d, 4) if market_7d is not None else None
             ),
+            "news_volume_ratio_7d": news_vol_ratio,
         }
 
     # ── Macro Features (6, Sprint 9.5b) ──────────────────────────────

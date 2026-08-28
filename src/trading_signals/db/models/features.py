@@ -135,10 +135,12 @@ class FeatureSnapshot(Base):
     volume_ratio_20d: Mapped[float | None] = mapped_column(Numeric(10, 4))
     atr_14_pct: Mapped[float | None] = mapped_column(Numeric(10, 4))
 
-    # ── Earnings Features ────────────────────────────────────────────
+    # ── Earnings Features ─────────────────────────────────────────────
     earnings_days_until: Mapped[int | None] = mapped_column(Integer)
     consecutive_beats: Mapped[int | None] = mapped_column(Integer)
     surprise_trend_3q: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    sue_last: Mapped[float | None] = mapped_column(Numeric(10, 4))  # Sprint 9.5b B2
+    days_since_last_earnings: Mapped[int | None] = mapped_column(Integer)  # Sprint 9.5b B2
 
     # ── Sentiment Features (news-based, Sprint 8c) ───────────────────
     sentiment_avg_7d: Mapped[float | None] = mapped_column(Numeric(6, 4))
@@ -147,6 +149,11 @@ class FeatureSnapshot(Base):
     sentiment_neg_count_7d: Mapped[int | None] = mapped_column(Integer)
     sentiment_article_count_7d: Mapped[int | None] = mapped_column(Integer)
     market_sentiment_7d: Mapped[float | None] = mapped_column(Numeric(6, 4))
+    news_volume_ratio_7d: Mapped[float | None] = mapped_column(Numeric(10, 4))  # Sprint 9.5b E3
+
+    # ── Liquidity Features (Sprint 9.5b E4) ──────────────────────────
+    dollar_volume_20d: Mapped[float | None] = mapped_column(Numeric(20, 0))
+    amihud_illiquidity_20d: Mapped[float | None] = mapped_column(Numeric(16, 6))
 
     # ── Macro Features (market-wide, Sprint 9.5b) ────────────────────
     macro_yield_spread: Mapped[float | None] = mapped_column(Numeric(10, 4))
