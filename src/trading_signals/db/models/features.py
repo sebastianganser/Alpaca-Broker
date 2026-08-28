@@ -167,6 +167,10 @@ class FeatureSnapshot(Base):
     macro_dollar_index: Mapped[float | None] = mapped_column(Numeric(10, 2))
     macro_inflation_expectation: Mapped[float | None] = mapped_column(Numeric(10, 4))
 
+    # ── Market Breadth Features (Sprint 9.5b D2) ─────────────────────
+    breadth_advance_decline: Mapped[float | None] = mapped_column(Numeric(6, 4))
+    breadth_pct_above_sma50: Mapped[float | None] = mapped_column(Numeric(6, 4))
+
     # ── Target Variables (backfilled retrospectively) ────────────────
     return_1d: Mapped[float | None] = mapped_column(Numeric(10, 6))
     return_5d: Mapped[float | None] = mapped_column(Numeric(10, 6))
