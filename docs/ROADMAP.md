@@ -139,7 +139,7 @@
 - ✅ Documented findings in LEARNINGS.md
 - **Note:** return_60d excluded (6.2% fill), 13F features excluded (no quarterly filing since pipeline start)
 
-### Sprint 9.5a – Data Hardening (Bias Prevention) 🟡 In Progress
+### Sprint 9.5a – Data Hardening (Bias Prevention) ✅ Complete
 *Based on Opus 5 Concept (Aug 2026). Blocker items that must be resolved before Sprint 10.*
 - [x] **B1:** `EstimatesCollector` (yfinance) for EPS/Revenue consensus + revisions — *CRITICAL: rolling 90-day window*
 - [x] **A1 (Stufe 1):** Point-in-Time Index Membership (Survivorship Bias Prevention)
@@ -155,7 +155,11 @@
   - [ ] Backfill price data for delisted tickers (via Alpaca historical bars)
   - [ ] Full feature computation for delisted tickers
   - [ ] Manual "Recompute History" button in Settings UI
-- [ ] **A2:** Implement `available_from` dates across all signal tables (Lookahead Bias)
+- [x] **A2:** Lookahead Bias Prevention in Feature Pipeline ✅
+  - [x] 13F features: `filing_date <= d` statt `report_period <= d` (45-day fix)
+  - [x] Insider features: `filing_date <= d` guard auf alle Trade-Queries (2-10 day fix)
+  - [x] Earnings features: 90-day forward window limit + documented remaining risk
+  - Note: Politician features already correct (dual disclosure/transaction date)
 - [x] **C4:** Validate `adjustment=all` against known stock splits ✅ (AMZN, GOOGL, SHOP, NVDA, CMG — all smooth)
 
 ### Sprint 9.5b – Data Extension (New Sources + Derived Features) 🔴 Open

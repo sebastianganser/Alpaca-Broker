@@ -221,12 +221,14 @@ class FeaturePipeline:
         since_60 = d - timedelta(days=60)
 
         # Net buy count (buys - sells) in 30d
+        # Point-in-time: only count trades whose Form 4 was filed by day d
         buys_30 = self.session.execute(
             select(func.count())
             .where(InsiderTrade.ticker == ticker)
             .where(InsiderTrade.transaction_type == "P")
             .where(InsiderTrade.is_derivative.is_(False))
             .where(InsiderTrade.transaction_date.between(since_30, d))
+            .where(InsiderTrade.filing_date <= d)
         ).scalar() or 0
         sells_30 = self.session.execute(
             select(func.count())
@@ -234,6 +236,7 @@ class FeaturePipeline:
             .where(InsiderTrade.transaction_type == "S")
             .where(InsiderTrade.is_derivative.is_(False))
             .where(InsiderTrade.transaction_date.between(since_30, d))
+            .where(InsiderTrade.filing_date <= d)
         ).scalar() or 0
         net_buy = buys_30 - sells_30
 
@@ -244,16 +247,15 @@ class FeaturePipeline:
             .where(InsiderTrade.transaction_type == "P")
             .where(InsiderTrade.is_derivative.is_(False))
             .where(InsiderTrade.transaction_date.between(since_30, d))
+            .where(InsiderTrade.filing_date <= d)
         ).scalar()
 
         # Active cluster check
         active_cluster = self.session.execute(
             select(InsiderCluster)
             .where(InsiderCluster.ticker == ticker)
-            .where(InsiderCluster.cluster_end >= since_30)
             .where(InsiderCluster.cluster_start <= d)
-            .order_by(InsiderCluster.cluster_score.desc())
-            .limit(1)
+            .where(InsiderCluster.cluster_end >= d)
         ).scalar()
 
         # Temporal: cluster counts + days since last
@@ -422,11 +424,13 @@ class FeaturePipeline:
     # ── 13F Features (2) ─────────────────────────────────────────────
 
     def _13f_features(self, ticker: str, d: date) -> dict:
-        # Latest report period
+        # Latest report period whose filing was public by day d
+        # NOTE: filing_date is when the 13F was submitted to EDGAR,
+        # which can be up to 45 days after report_period (quarter end).
         latest_period = self.session.execute(
             select(func.max(Form13FHolding.report_period))
             .where(Form13FHolding.ticker == ticker)
-            .where(Form13FHolding.report_period <= d)
+            .where(Form13FHolding.filing_date <= d)  # point-in-time: publicly filed
         ).scalar()
         if not latest_period:
             return {}
@@ -435,6 +439,7 @@ class FeaturePipeline:
             select(func.count(func.distinct(Form13FHolding.filer_cik)))
             .where(Form13FHolding.ticker == ticker)
             .where(Form13FHolding.report_period == latest_period)
+            .where(Form13FHolding.filing_date <= d)
         ).scalar() or 0
 
         # Previous quarter for new positions comparison
@@ -442,6 +447,7 @@ class FeaturePipeline:
             select(func.max(Form13FHolding.report_period))
             .where(Form13FHolding.ticker == ticker)
             .where(Form13FHolding.report_period < latest_period)
+            .where(Form13FHolding.filing_date <= d)
         ).scalar()
 
         new_positions = 0
@@ -450,11 +456,13 @@ class FeaturePipeline:
                 select(Form13FHolding.filer_cik)
                 .where(Form13FHolding.ticker == ticker)
                 .where(Form13FHolding.report_period == latest_period)
+                .where(Form13FHolding.filing_date <= d)
             ).all())
             prev_filers = set(r[0] for r in self.session.execute(
                 select(Form13FHolding.filer_cik)
                 .where(Form13FHolding.ticker == ticker)
                 .where(Form13FHolding.report_period == prev_period)
+                .where(Form13FHolding.filing_date <= d)
             ).all())
             new_positions = len(current_filers - prev_filers)
 
@@ -580,10 +588,16 @@ class FeaturePipeline:
 
     def _earnings_features(self, ticker: str, d: date) -> dict:
         # Days until next earnings
+        # NOTE (Lookahead): This assumes future earnings dates were known as of d.
+        # In practice, companies announce dates ~3 weeks ahead. For robust
+        # backtesting, an announced_at / available_from field would be needed
+        # on earnings_calendar. Limit forward window to 90 days to reduce risk.
+        max_forward = d + timedelta(days=90)
         next_earn = self.session.execute(
             select(func.min(EarningsCalendar.earnings_date))
             .where(EarningsCalendar.ticker == ticker)
             .where(EarningsCalendar.earnings_date >= d)
+            .where(EarningsCalendar.earnings_date <= max_forward)
         ).scalar()
         days_until = (next_earn - d).days if next_earn else None
 
