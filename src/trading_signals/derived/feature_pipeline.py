@@ -33,6 +33,7 @@ from trading_signals.db.models.fundamentals import (
     FundamentalsSnapshot,
 )
 from trading_signals.db.models.insider import InsiderCluster, InsiderTrade
+from trading_signals.db.models.macro_series import MacroSeries
 from trading_signals.db.models.news import NewsSentiment
 from trading_signals.db.models.politicians import PoliticianTrade
 from trading_signals.db.models.prices import PriceDaily
@@ -104,6 +105,7 @@ class FeaturePipeline:
             ("technical", self._technical_features),
             ("earnings", self._earnings_features),
             ("sentiment", self._sentiment_features),
+            ("macro", self._macro_features),
         ]:
             try:
                 features.update(method(ticker, d))
@@ -716,6 +718,63 @@ class FeaturePipeline:
                 round(market_7d, 4) if market_7d is not None else None
             ),
         }
+
+    # ── Macro Features (6, Sprint 9.5b) ──────────────────────────────
+
+    _macro_cache: dict = {}
+
+    def _macro_features(self, ticker: str, d: date) -> dict:
+        """Market-wide macro features from FRED data.
+
+        These are the same for every ticker on a given day, so we cache
+        the result after the first call per target_date.
+        """
+        if d in self._macro_cache:
+            return self._macro_cache[d]
+
+        def _latest_value(series_id: str) -> float | None:
+            """Get the most recent observation for a series on or before d."""
+            val = self.session.execute(
+                select(MacroSeries.value)
+                .where(MacroSeries.series_id == series_id)
+                .where(MacroSeries.obs_date <= d)
+                .order_by(MacroSeries.obs_date.desc())
+                .limit(1)
+            ).scalar()
+            return float(val) if val is not None else None
+
+        dgs2 = _latest_value("DGS2")
+        dgs10 = _latest_value("DGS10")
+        vix = _latest_value("VIXCLS")
+        hy_spread = _latest_value("BAMLH0A0HYM2")
+        dollar = _latest_value("DTWEXBGS")
+        inflation = _latest_value("T10YIE")
+
+        # Derived: yield spread (10Y - 2Y), negative = inverted curve
+        yield_spread = None
+        if dgs10 is not None and dgs2 is not None:
+            yield_spread = round(dgs10 - dgs2, 4)
+
+        # Derived: VIX regime classification
+        vix_regime = None
+        if vix is not None:
+            if vix < 15:
+                vix_regime = 0  # low volatility
+            elif vix < 25:
+                vix_regime = 1  # medium
+            else:
+                vix_regime = 2  # high volatility
+
+        result = {
+            "macro_yield_spread": yield_spread,
+            "macro_vix": round(vix, 2) if vix is not None else None,
+            "macro_vix_regime": vix_regime,
+            "macro_hy_spread": round(hy_spread, 4) if hy_spread is not None else None,
+            "macro_dollar_index": round(dollar, 2) if dollar is not None else None,
+            "macro_inflation_expectation": round(inflation, 4) if inflation is not None else None,
+        }
+        self._macro_cache[d] = result
+        return result
 
     def _upsert(self, ticker: str, d: date, features: dict) -> None:
         """Insert or update a feature snapshot row."""

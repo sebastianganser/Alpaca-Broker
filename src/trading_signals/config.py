@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     # ── SEC EDGAR ─────────────────────────────────────────────────
     SEC_USER_AGENT: str = "TradingSignals/1.0 (sebastian.ganser@hotmail.com)"
 
+    # ── FRED (St. Louis Fed) ─────────────────────────────────────
+    FRED_API_KEY: str = ""
+
     # ── Logging ───────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
 

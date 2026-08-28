@@ -645,6 +645,30 @@ def run_sentiment_computer() -> None:
                 logger.error(f"{collector_name}_job: Failed to write error log")
 
 
+def run_fred_collector() -> None:
+    """Daily FRED macro indicator collection.
+
+    Scheduled for 04:15 Europe/Berlin (FRED updates ~22:00 ET = 04:00 CET).
+    Fetches 6 macro series: VIX, Treasury yields, HY spread,
+    Dollar index, Breakeven Inflation.
+    Very lightweight: 6 API calls, ~2 seconds total.
+    """
+    from trading_signals.collectors.fred_collector import FredCollector
+
+    logger.info("Scheduler triggered: fred_collector_job")
+
+    try:
+        collector = FredCollector()
+        log = collector.run()
+        logger.info(
+            f"fred_collector_job finished: status={log.status}, "
+            f"written={log.records_written}"
+        )
+    except ValueError as e:
+        # FRED_API_KEY not configured
+        logger.warning(f"fred_collector_job skipped: {e}")
+
+
 # ── Log Retention ────────────────────────────────────────────────────────
 
 LOG_RETENTION_DAYS = 90

@@ -36,6 +36,7 @@ from trading_signals.scheduler.jobs import (
     run_feature_pipeline,
     run_form4_collector,
     run_form13f_collector,
+    run_fred_collector,
     run_fundamentals_collector,
     run_index_sync,
     run_log_retention,
@@ -194,6 +195,15 @@ def create_scheduler() -> BackgroundScheduler:
         CronTrigger(hour=3, minute=30),
         id="log_retention",
         name="Daily Log Retention (90 days)",
+    )
+
+    # ── FRED Macro: Daily at 04:15 (Sprint 9.5b) ──
+    # FRED updates ~22:00 ET = 04:00 CET. 6 series, ~2s total.
+    scheduler.add_job(
+        run_fred_collector,
+        CronTrigger(hour=4, minute=15),
+        id="fred_collector",
+        name="Daily FRED Macro Indicators (VIX, Yields, HY, Dollar, Inflation)",
     )
 
     # ── Feature Analysis: Monthly 1st at 05:00 (after index sync) ──

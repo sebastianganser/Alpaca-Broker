@@ -148,6 +148,14 @@ class FeatureSnapshot(Base):
     sentiment_article_count_7d: Mapped[int | None] = mapped_column(Integer)
     market_sentiment_7d: Mapped[float | None] = mapped_column(Numeric(6, 4))
 
+    # ── Macro Features (market-wide, Sprint 9.5b) ────────────────────
+    macro_yield_spread: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    macro_vix: Mapped[float | None] = mapped_column(Numeric(10, 2))
+    macro_vix_regime: Mapped[int | None] = mapped_column(Integer)
+    macro_hy_spread: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    macro_dollar_index: Mapped[float | None] = mapped_column(Numeric(10, 2))
+    macro_inflation_expectation: Mapped[float | None] = mapped_column(Numeric(10, 4))
+
     # ── Target Variables (backfilled retrospectively) ────────────────
     return_1d: Mapped[float | None] = mapped_column(Numeric(10, 6))
     return_5d: Mapped[float | None] = mapped_column(Numeric(10, 6))
