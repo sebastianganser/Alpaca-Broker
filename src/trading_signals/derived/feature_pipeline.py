@@ -298,6 +298,47 @@ class FeaturePipeline:
             "cluster_count_60d": c60 or None,
             "cluster_score_sum_60d": float(score_sum) if score_sum else None,
             "days_since_last_cluster": days_since,
+            **self._insider_ratio_features(ticker, d),
+        }
+
+    # ── Insider Ratio (Sprint 9.5b E2) ───────────────────────────────
+
+    def _insider_ratio_features(self, ticker: str, d: date) -> dict:
+        """Continuous insider buy ratio: buy_volume / (buy + sell volume).
+
+        Volume-weighted over 30d and 90d windows.
+        Values close to 1.0 = mostly buying, close to 0.0 = mostly selling.
+        All queries use filing_date <= d for point-in-time correctness.
+        """
+        def _buy_ratio(days: int) -> float | None:
+            since = d - timedelta(days=days)
+            buy_vol = self.session.execute(
+                select(func.sum(InsiderTrade.total_value))
+                .where(InsiderTrade.ticker == ticker)
+                .where(InsiderTrade.transaction_type == "P")
+                .where(InsiderTrade.is_derivative.is_(False))
+                .where(InsiderTrade.transaction_date.between(since, d))
+                .where(InsiderTrade.filing_date <= d)
+            ).scalar()
+            sell_vol = self.session.execute(
+                select(func.sum(InsiderTrade.total_value))
+                .where(InsiderTrade.ticker == ticker)
+                .where(InsiderTrade.transaction_type == "S")
+                .where(InsiderTrade.is_derivative.is_(False))
+                .where(InsiderTrade.transaction_date.between(since, d))
+                .where(InsiderTrade.filing_date <= d)
+            ).scalar()
+
+            buy_f = float(buy_vol) if buy_vol else 0
+            sell_f = float(sell_vol) if sell_vol else 0
+            total = buy_f + sell_f
+            if total > 0:
+                return round(buy_f / total, 4)
+            return None
+
+        return {
+            "insider_buy_ratio_30d": _buy_ratio(30),
+            "insider_buy_ratio_90d": _buy_ratio(90),
         }
 
     # ── Analyst Features (7) ─────────────────────────────────────────
@@ -455,6 +496,8 @@ class FeaturePipeline:
         ).scalar()
 
         new_positions = 0
+        exited_positions = 0
+        holder_delta_qoq = None
         if prev_period:
             current_filers = set(r[0] for r in self.session.execute(
                 select(Form13FHolding.filer_cik)
@@ -469,10 +512,20 @@ class FeaturePipeline:
                 .where(Form13FHolding.filing_date <= d)
             ).all())
             new_positions = len(current_filers - prev_filers)
+            exited_positions = len(prev_filers - current_filers)
+
+            # E1 Sprint 9.5b: Net holder change QoQ
+            prev_count = len(prev_filers)
+            if prev_count > 0:
+                holder_delta_qoq = round(
+                    (len(current_filers) - prev_count) / prev_count, 4
+                )
 
         return {
             "form13f_top_holder_count": top_holders or None,
             "form13f_new_positions_count": new_positions or None,
+            "form13f_exited_positions_count": exited_positions or None,
+            "form13f_holder_delta_qoq": holder_delta_qoq,
         }
 
     # ── Fundamentals Features (8) ────────────────────────────────────

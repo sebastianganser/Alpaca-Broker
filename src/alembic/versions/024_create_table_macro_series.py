@@ -59,6 +59,12 @@ def upgrade() -> None:
         # E4: Liquidity
         ("dollar_volume_20d", sa.Numeric(20, 0)),
         ("amihud_illiquidity_20d", sa.Numeric(16, 6)),
+        # E2: Insider buy ratio
+        ("insider_buy_ratio_30d", sa.Numeric(6, 4)),
+        ("insider_buy_ratio_90d", sa.Numeric(6, 4)),
+        # E1: 13F deltas
+        ("form13f_exited_positions_count", sa.Integer),
+        ("form13f_holder_delta_qoq", sa.Numeric(10, 4)),
     ]
     for col_name, col_type in new_columns:
         op.add_column(
@@ -71,6 +77,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Drop new columns from feature_snapshots
     for col_name in [
+        "form13f_holder_delta_qoq", "form13f_exited_positions_count",
+        "insider_buy_ratio_90d", "insider_buy_ratio_30d",
         "amihud_illiquidity_20d", "dollar_volume_20d",
         "news_volume_ratio_7d",
         "days_since_last_earnings", "sue_last",

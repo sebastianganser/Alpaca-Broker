@@ -81,6 +81,8 @@ class FeatureSnapshot(Base):
     cluster_count_60d: Mapped[int | None] = mapped_column(Integer)
     cluster_score_sum_60d: Mapped[float | None] = mapped_column(Numeric(10, 4))
     days_since_last_cluster: Mapped[int | None] = mapped_column(Integer)
+    insider_buy_ratio_30d: Mapped[float | None] = mapped_column(Numeric(6, 4))  # Sprint 9.5b E2
+    insider_buy_ratio_90d: Mapped[float | None] = mapped_column(Numeric(6, 4))  # Sprint 9.5b E2
 
     # ── Analyst Features (point-in-time) ─────────────────────────────
     analyst_rating_score: Mapped[float | None] = mapped_column(Numeric(10, 4))
@@ -114,6 +116,8 @@ class FeatureSnapshot(Base):
     # ── 13F Features ─────────────────────────────────────────────────
     form13f_top_holder_count: Mapped[int | None] = mapped_column(Integer)
     form13f_new_positions_count: Mapped[int | None] = mapped_column(Integer)
+    form13f_exited_positions_count: Mapped[int | None] = mapped_column(Integer)  # Sprint 9.5b E1
+    form13f_holder_delta_qoq: Mapped[float | None] = mapped_column(Numeric(10, 4))  # Sprint 9.5b E1
 
     # ── Fundamentals (point-in-time) ─────────────────────────────────
     pe_ratio: Mapped[float | None] = mapped_column(Numeric(16, 4))
