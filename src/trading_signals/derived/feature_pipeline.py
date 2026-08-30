@@ -941,65 +941,75 @@ class FeaturePipeline:
         Same for every ticker on a given day, cached after first call.
         - advance_decline_ratio: advances / (advances + declines) on day d
         - pct_above_sma50: % of universe tickers with close > SMA50
-        - breadth_thrust_5d: 5-day SMA of advance_decline_ratio
+
+        Uses a SAVEPOINT so that SQL errors don't poison the outer transaction.
         """
         if d in self._breadth_cache:
             return self._breadth_cache[d]
 
-        from sqlalchemy import case, literal_column
         from sqlalchemy.sql import text
 
-        # Advance/Decline: count tickers with positive vs negative daily return
-        prev_day = d - timedelta(days=5)  # lookback for prev close
-        ad_query = text("""
-            WITH daily_returns AS (
-                SELECT ticker,
-                       close,
-                       LAG(close) OVER (PARTITION BY ticker ORDER BY trade_date) AS prev_close
-                FROM signals.prices_daily
-                WHERE trade_date BETWEEN :prev_day AND :d
-            )
-            SELECT
-                SUM(CASE WHEN close > prev_close THEN 1 ELSE 0 END) AS advances,
-                SUM(CASE WHEN close < prev_close THEN 1 ELSE 0 END) AS declines
-            FROM daily_returns
-            WHERE prev_close IS NOT NULL
-              AND close IS NOT NULL
-        """)
-        ad_result = self.session.execute(
-            ad_query, {"prev_day": prev_day, "d": d}
-        ).first()
-
         ad_ratio = None
-        if ad_result and ad_result[0] is not None:
-            advances = int(ad_result[0])
-            declines = int(ad_result[1])
-            total = advances + declines
-            if total > 0:
-                ad_ratio = round(advances / total, 4)
-
-        # % above SMA50: use technical_indicators table
-        above_sma50_query = text("""
-            SELECT
-                COUNT(*) FILTER (WHERE p.close > t.sma_50) AS above,
-                COUNT(*) AS total
-            FROM signals.technical_indicators t
-            JOIN signals.prices_daily p
-              ON t.ticker = p.ticker AND t.indicator_date = p.trade_date
-            WHERE t.indicator_date = (
-                SELECT MAX(indicator_date)
-                FROM signals.technical_indicators
-                WHERE indicator_date <= :d
-            )
-            AND t.sma_50 IS NOT NULL
-        """)
-        sma_result = self.session.execute(
-            above_sma50_query, {"d": d}
-        ).first()
-
         pct_above = None
-        if sma_result and sma_result[1] and int(sma_result[1]) > 0:
-            pct_above = round(int(sma_result[0]) / int(sma_result[1]), 4)
+
+        try:
+            # Use nested transaction (SAVEPOINT) so errors don't kill the session
+            nested = self.session.begin_nested()
+
+            # Advance/Decline: count tickers with positive vs negative daily return
+            prev_day = d - timedelta(days=5)  # lookback for prev close
+            ad_query = text("""
+                WITH daily_returns AS (
+                    SELECT ticker,
+                           close,
+                           LAG(close) OVER (PARTITION BY ticker ORDER BY trade_date) AS prev_close
+                    FROM signals.prices_daily
+                    WHERE trade_date BETWEEN :prev_day AND :target_date
+                )
+                SELECT
+                    SUM(CASE WHEN close > prev_close THEN 1 ELSE 0 END) AS advances,
+                    SUM(CASE WHEN close < prev_close THEN 1 ELSE 0 END) AS declines
+                FROM daily_returns
+                WHERE prev_close IS NOT NULL
+                  AND close IS NOT NULL
+            """)
+            ad_result = self.session.execute(
+                ad_query, {"prev_day": prev_day, "target_date": d}
+            ).first()
+
+            if ad_result and ad_result[0] is not None:
+                advances = int(ad_result[0])
+                declines = int(ad_result[1])
+                total = advances + declines
+                if total > 0:
+                    ad_ratio = round(advances / total, 4)
+
+            # % above SMA50: use technical_indicators table
+            above_sma50_query = text("""
+                SELECT
+                    COUNT(*) FILTER (WHERE p.close > t.sma_50) AS above,
+                    COUNT(*) AS total
+                FROM signals.technical_indicators t
+                JOIN signals.prices_daily p
+                  ON t.ticker = p.ticker AND t.indicator_date = p.trade_date
+                WHERE t.indicator_date = (
+                    SELECT MAX(indicator_date)
+                    FROM signals.technical_indicators
+                    WHERE indicator_date <= :target_date
+                )
+                AND t.sma_50 IS NOT NULL
+            """)
+            sma_result = self.session.execute(
+                above_sma50_query, {"target_date": d}
+            ).first()
+
+            if sma_result and sma_result[1] and int(sma_result[1]) > 0:
+                pct_above = round(int(sma_result[0]) / int(sma_result[1]), 4)
+
+            nested.commit()
+        except Exception as e:
+            nested.rollback()
+            logger.warning(f"[feature_pipeline] breadth query failed: {e}")
 
         result = {
             "breadth_advance_decline": ad_ratio,
