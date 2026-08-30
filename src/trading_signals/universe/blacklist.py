@@ -25,9 +25,27 @@ from trading_signals.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Benchmark tickers that must NEVER be blacklisted.
-# These are needed as reference instruments (e.g. relative strength vs SPY)
-# even though they are ETFs and not equities.
-BENCHMARK_TICKERS = {"SPY", "QQQ"}
+# These are needed as reference instruments (e.g. relative strength vs SPY,
+# sector-relative performance via GICS SPDR ETFs) even though they are ETFs.
+# Sprint 9.5b B3: Extended from {SPY, QQQ} to include IWM + 11 GICS sectors.
+BENCHMARK_TICKERS = {
+    # Market benchmarks
+    "SPY",   # S&P 500
+    "QQQ",   # Nasdaq 100
+    "IWM",   # Russell 2000 (small-cap)
+    # GICS Sector SPDRs (11 sectors)
+    "XLB",   # Materials
+    "XLC",   # Communication Services
+    "XLE",   # Energy
+    "XLF",   # Financials
+    "XLI",   # Industrials
+    "XLK",   # Technology
+    "XLP",   # Consumer Staples
+    "XLRE",  # Real Estate
+    "XLU",   # Utilities
+    "XLV",   # Health Care
+    "XLY",   # Consumer Discretionary
+}
 
 
 def is_blacklisted(session: Session, ticker: str) -> bool:

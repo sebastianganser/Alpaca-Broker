@@ -168,6 +168,85 @@ def start_sector_enrichment():
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
+# ── Benchmark ETF Seeding (Sprint 9.5b B3) ──────────────────────────────
+
+@router.post("/seed/benchmark-etfs", response_model=TriggerResponse)
+def seed_benchmark_etfs(db: Session = Depends(get_db)):
+    """Seed benchmark and sector ETFs into the universe.
+
+    Adds all BENCHMARK_TICKERS (SPY, QQQ, IWM + 11 GICS sector SPDRs)
+    to the universe table, removes them from the blacklist if present,
+    and triggers a price backfill for any newly added tickers.
+
+    Idempotent: safe to run multiple times.
+    """
+    from datetime import date
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from trading_signals.db.models.blacklist import TickerBlacklist
+    from trading_signals.db.models.universe import Universe
+    from trading_signals.universe.blacklist import BENCHMARK_TICKERS
+
+    # ETF metadata (name, sector mapping)
+    etf_info = {
+        "SPY": ("SPDR S&P 500 ETF Trust", "Benchmark"),
+        "QQQ": ("Invesco QQQ Trust", "Benchmark"),
+        "IWM": ("iShares Russell 2000 ETF", "Benchmark"),
+        "XLB": ("Materials Select Sector SPDR", "Materials"),
+        "XLC": ("Communication Services Select Sector SPDR", "Communication Services"),
+        "XLE": ("Energy Select Sector SPDR", "Energy"),
+        "XLF": ("Financial Select Sector SPDR", "Financials"),
+        "XLI": ("Industrial Select Sector SPDR", "Industrials"),
+        "XLK": ("Technology Select Sector SPDR", "Information Technology"),
+        "XLP": ("Consumer Staples Select Sector SPDR", "Consumer Staples"),
+        "XLRE": ("Real Estate Select Sector SPDR", "Real Estate"),
+        "XLU": ("Utilities Select Sector SPDR", "Utilities"),
+        "XLV": ("Health Care Select Sector SPDR", "Health Care"),
+        "XLY": ("Consumer Discretionary Select Sector SPDR", "Consumer Discretionary"),
+    }
+
+    added = []
+    for ticker in sorted(BENCHMARK_TICKERS):
+        name, sector = etf_info.get(ticker, (ticker, "Unknown"))
+
+        # Remove from blacklist if present
+        db.execute(
+            TickerBlacklist.__table__.delete().where(
+                TickerBlacklist.ticker == ticker
+            )
+        )
+
+        # Upsert into universe
+        stmt = (
+            pg_insert(Universe)
+            .values(
+                ticker=ticker,
+                company_name=name,
+                sector=sector,
+                added_date=date.today(),
+                added_by="seed_benchmark_etfs",
+                is_active=True,
+            )
+            .on_conflict_do_update(
+                index_elements=["ticker"],
+                set_={"is_active": True, "company_name": name, "sector": sector},
+            )
+        )
+        result = db.execute(stmt)
+        if result.rowcount > 0:
+            added.append(ticker)
+
+    db.commit()
+
+    msg = f"Seeded {len(added)} benchmark ETFs"
+    if added:
+        msg += f": {', '.join(added)}. Run /backfill/prices to backfill historical data."
+    else:
+        msg += " (all already present)"
+
+    return TriggerResponse(success=True, message=msg)
+
 
 # ── Index Membership Seeding ─────────────────────────────────────────────
 
