@@ -991,11 +991,11 @@ class FeaturePipeline:
                     COUNT(*) AS total
                 FROM signals.technical_indicators t
                 JOIN signals.prices_daily p
-                  ON t.ticker = p.ticker AND t.indicator_date = p.trade_date
-                WHERE t.indicator_date = (
-                    SELECT MAX(indicator_date)
+                  ON t.ticker = p.ticker AND t.trade_date = p.trade_date
+                WHERE t.trade_date = (
+                    SELECT MAX(trade_date)
                     FROM signals.technical_indicators
-                    WHERE indicator_date <= :target_date
+                    WHERE trade_date <= :target_date
                 )
                 AND t.sma_50 IS NOT NULL
             """)
