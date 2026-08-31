@@ -120,9 +120,10 @@ class OptionsIVCollector(BaseCollector):
         if not expirations:
             return None
 
-        # Find 30d expiry (20-45 days out) and 60d expiry (50-80 days out)
-        exp_30d = self._find_expiry(expirations, today, 20, 45)
-        exp_60d = self._find_expiry(expirations, today, 50, 80)
+        # Find 30d expiry (14-50 days out) and 60d expiry (45-100 days out)
+        # Ranges are wide to reliably capture monthly expirations (3rd Friday)
+        exp_30d = self._find_expiry(expirations, today, 14, 50)
+        exp_60d = self._find_expiry(expirations, today, 45, 100)
 
         if not exp_30d:
             return None
