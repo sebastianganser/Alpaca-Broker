@@ -15,7 +15,6 @@ Rate limit: 200 requests/minute on free tier
 
 from __future__ import annotations
 
-import math
 from datetime import date, timedelta
 
 import httpx
@@ -95,14 +94,11 @@ class OptionsIVCollector(BaseCollector):
 
         return results
 
-    @retry(max_retries=2, base_delay=1.0)
+    @retry(max_attempts=2, base_delay=1.0)
     def _fetch_ticker_iv(self, ticker: str, today: date) -> dict | None:
         """Fetch options chain for one ticker and extract ATM IV metrics."""
         import time
         time.sleep(BATCH_PAUSE_SECS)
-
-        # Get current stock price for ATM determination
-        from trading_signals.db.models.prices import PriceDaily
 
         url = f"{DATA_BASE_URL}/v1beta1/options/snapshots/{ticker}"
 
