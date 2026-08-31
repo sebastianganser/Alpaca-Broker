@@ -162,30 +162,55 @@
   - Note: Politician features already correct (dual disclosure/transaction date)
 - [x] **C4:** Validate `adjustment=all` against known stock splits ✅ (AMZN, GOOGL, SHOP, NVDA, CMG — all smooth)
 
-### Sprint 9.5b – Data Extension (New Sources + Derived Features) 🔴 Open
+### Sprint 9.5b – Data Extension (New Sources + Derived Features) ✅ Complete
 *New data dimensions identified by Opus 5 to close the biggest feature gaps.*
-- [ ] **D1:** FRED Macro Regime Collector (`DGS2/10`, HY Spread, VIX, Dollar Index, Inflation Expectation)
-- [ ] **B3:** Benchmark ETFs in `prices_daily` (SPY, QQQ, IWM + 11 GICS Sector ETFs)
-- [ ] **B2:** Earnings Surprise / SUE calculation (extends existing `earnings_calendar`)
-- [ ] **B5:** Short Interest Collector (Massive Free Tier primary, yfinance fallback)
-- [ ] **D3:** Options IV Collector (Alpaca `/v1beta1/options/snapshots`, start early for IV-Rank buildup)
-- [ ] **E1-E4:** Derived features from existing data:
-  - [ ] 13F Deltas (analog to `ark_deltas`)
-  - [ ] Continuous Insider Ratio (volume-weighted, 10b5-1 filtered)
-  - [ ] Sentiment Momentum (7d/30d delta, news volume vs. average)
-  - [ ] Liquidity measures (Dollar Volume 20d, Amihud Illiquidity)
-- [ ] **D2:** Market Breadth (computed from `prices_daily`, no new collector)
-- [ ] **B4:** Sector-neutralization in Feature Pipeline (universe.sector already populated)
+*19 new feature columns → ~77 total. 2 new collectors (FRED, Options IV).*
+- [x] **D1:** FRED Macro Regime Collector ✅ `00cb112`
+  - 6 macro features: VIX, DGS2, DGS10, HY Spread, Dollar Index, Inflation Expectation
+  - Scheduled daily at 04:15 CET
+- [x] **B3:** Benchmark & Sector ETFs ✅ `d0c1c37`
+  - 14 ETFs (SPY, QQQ, IWM + 11 GICS Sector SPDRs) in universe
+  - Seed endpoint `POST /ops/seed/benchmark-etfs`
+- [x] **B2:** Earnings Surprise / SUE ✅ `2da97a1`
+  - `sue_last`, `days_since_last_earnings`
+- [x] **E3:** Sentiment Momentum ✅ `2da97a1`
+  - `news_volume_ratio_7d`
+- [x] **E4:** Liquidity Measures ✅ `2da97a1`
+  - `dollar_volume_20d`, `amihud_illiquidity_20d`
+- [x] **E2:** Continuous Insider Ratio ✅ `18141d8`
+  - `insider_buy_ratio_30d`, `insider_buy_ratio_90d`
+- [x] **E1:** 13F Deltas ✅ `18141d8`
+  - `form13f_exited_positions_count`, `form13f_holder_delta_qoq`
+- [x] **D2:** Market Breadth ✅ `80b9a40` + fixes `72eedd5` `f3232f7`
+  - `breadth_advance_decline`, `breadth_pct_above_sma50`
+- [x] **B4:** Sector-Neutralization ✅ `81446a4` + migration `32168a0`
+  - `sector_relative_return_20d`, `sector_relative_momentum`
+  - Note: `sector_relative_momentum` needs ~50 trading days ETF SMA50 data (retest Nov 2026)
+- [x] **D3:** Options IV Collector ✅ `74d06ab` + fixes `aaff609` `4051994` `90f0538` `24a777d` `664ed77`
+  - ATM IV 30d/60d, 25d Skew, Term Structure, Put/Call OI
+  - Source: yfinance (Alpaca free tier lacks Greeks/IV)
+  - Scheduled daily at 04:30 CET. IV-Rank needs ~1 year buildup (usable ~Sept 2027)
+  - NYSE trading day check + zero-data warning on trading days
+- [ ] **B5:** Short Interest Collector — *deferred, needs Massive/Polygon API key (free registration)*
 
 ### Sprint 9.5c – Candidate Pipeline MVP 🔴 Open
 *Minimum viable candidate selection and Context Pack generation.*
+*Phase 1 (jetzt): Datenqualität + Context Pack Infrastruktur.*
+*Phase 2 (ab Okt): Feature-Analyse-Update → Composite Score mit datengestützten Gewichten.*
+
+**Phase 1 — Sofort umsetzbar (Sept 2026):**
 - [ ] **C1-C3:** Data quality fixes (Politician lag weighting, ticker parser, party mapping)
-- [ ] **F1:** Rule-based Composite Score + Guardrails (UI-configurable):
-  - [ ] Min. liquidity, max 2/sector, pairwise correlation, churn lock, min-score
-  - [ ] `candidate_selections` + `candidate_rejections` tables
 - [ ] **F2:** Context Pack MVP (Candidates + Top Features + Market Context, YAML frontmatter)
   - [ ] Output to configurable Unraid path (`CONTEXT_PACK_PATH` env var)
   - [ ] Daily overview + per-candidate Markdown
+
+**Phase 2 — Nach Feature-Analyse-Update (ab Okt 2026):**
+- [ ] **R1:** Feature Analysis Re-Run (Sprint 9 ML-Analyse aktualisieren mit 19 neuen Features)
+  - Automatisch am 1. Okt via `feature_analysis` Job, oder manuell triggern
+  - Mindestens 4 Wochen Daten für neue Features nötig (akkumuliert seit 31. Aug)
+- [ ] **F1:** Rule-based Composite Score + Guardrails (gewichtet nach aktualisierten ML-Importance-Werten):
+  - [ ] Min. liquidity, max 2/sector, pairwise correlation, churn lock, min-score
+  - [ ] `candidate_selections` + `candidate_rejections` tables
 
 ### Sprint 10 – Signal Scoring
 - Weighted scoring model, optional LASSO/gradient boosting
@@ -209,7 +234,7 @@
 - Docker Compose via Compose Manager
 - PostgreSQL 18 external (`postgresql18-alpaca`, port 5435)
 - Alembic migrations run automatically via `entrypoint.sh`
-- 15 scheduler jobs active (9 daily, 4 weekly, 1 monthly, 1 maintenance)
+- 16 scheduler jobs active (10 daily, 4 weekly, 1 monthly, 1 maintenance)
 
 **Update workflow:**
 1. `git push` from Windows
