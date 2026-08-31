@@ -177,7 +177,7 @@ class OptionsIVCollector(BaseCollector):
             put_call_oi = round(total_oi_put / total_oi_call, 4)
 
         # Skip if we got nothing useful
-        if atm_iv_30d is None and total_oi_call is None:
+        if atm_iv_30d is None and not total_oi_call:
             return None
 
         return {
@@ -273,17 +273,30 @@ class OptionsIVCollector(BaseCollector):
         """Upsert IV snapshots. Returns (fetched, written)."""
         written = 0
         for record in records:
-            stmt = (
-                pg_insert(OptionsIVSnapshot)
-                .values(**record)
-                .on_conflict_do_update(
-                    index_elements=["ticker", "snapshot_date"],
-                    set_={
-                        k: v for k, v in record.items()
-                        if k not in ("ticker", "snapshot_date") and v is not None
-                    },
+            update_fields = {
+                k: v for k, v in record.items()
+                if k not in ("ticker", "snapshot_date") and v is not None
+            }
+
+            if update_fields:
+                stmt = (
+                    pg_insert(OptionsIVSnapshot)
+                    .values(**record)
+                    .on_conflict_do_update(
+                        index_elements=["ticker", "snapshot_date"],
+                        set_=update_fields,
+                    )
                 )
-            )
+            else:
+                # All optional fields are None — just insert, skip on conflict
+                stmt = (
+                    pg_insert(OptionsIVSnapshot)
+                    .values(**record)
+                    .on_conflict_do_nothing(
+                        index_elements=["ticker", "snapshot_date"],
+                    )
+                )
+
             session.execute(stmt)
             written += 1
 
