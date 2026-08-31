@@ -10,6 +10,7 @@ from trading_signals.db.models.form13f import Form13FHolding
 from trading_signals.db.models.index_membership import IndexMembership
 from trading_signals.db.models.macro_series import MacroSeries
 from trading_signals.db.models.news import NewsArticle, NewsSentiment
+from trading_signals.db.models.options_iv import OptionsIVSnapshot
 from trading_signals.db.models.fundamentals import (
     AnalystRating,
     EarningsCalendar,
@@ -38,6 +39,7 @@ __all__ = [
     "MacroSeries",
     "NewsArticle",
     "NewsSentiment",
+    "OptionsIVSnapshot",
     "PoliticianTrade",
     "PriceDaily",
     "TechnicalIndicator",

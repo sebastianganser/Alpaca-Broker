@@ -41,6 +41,7 @@ from trading_signals.scheduler.jobs import (
     run_index_sync,
     run_log_retention,
     run_news_collector,
+    run_options_iv_collector,
     run_politician_trades_collector,
     run_price_collector,
     run_sentiment_computer,
@@ -204,6 +205,16 @@ def create_scheduler() -> BackgroundScheduler:
         CronTrigger(hour=4, minute=15),
         id="fred_collector",
         name="Daily FRED Macro Indicators (VIX, Yields, HY, Dollar, Inflation)",
+    )
+
+    # ── Options IV: Daily at 04:30 (Sprint 9.5b D3) ──
+    # After FRED. ATM IV, skew, term structure for all tickers.
+    # ~750 tickers, rate-limited ~170 req/min → ~5-6 min.
+    scheduler.add_job(
+        run_options_iv_collector,
+        CronTrigger(hour=4, minute=30),
+        id="options_iv_collector",
+        name="Daily Options IV Snapshots (ATM IV, Skew, Term Structure)",
     )
 
     # ── Feature Analysis: Monthly 1st at 05:00 (after index sync) ──

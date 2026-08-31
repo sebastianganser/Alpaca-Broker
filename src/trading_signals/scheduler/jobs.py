@@ -669,6 +669,33 @@ def run_fred_collector() -> None:
         logger.warning(f"fred_collector_job skipped: {e}")
 
 
+# ── Options IV (Sprint 9.5b D3) ─────────────────────────────────────────
+
+def run_options_iv_collector() -> None:
+    """Daily options IV snapshot collection.
+
+    Scheduled for 04:30 Europe/Berlin (after market close + FRED).
+    Fetches ATM implied volatility, skew, term structure, and OI
+    for all universe tickers via Alpaca Options API.
+
+    Rate-limited: ~170 req/min, ~750 tickers ≈ 5-6 minutes.
+    IV-Rank needs ~1 year of daily data to be meaningful.
+    """
+    from trading_signals.collectors.options_iv_collector import OptionsIVCollector
+
+    logger.info("Scheduler triggered: options_iv_collector_job")
+
+    try:
+        collector = OptionsIVCollector()
+        log = collector.run()
+        logger.info(
+            f"options_iv_collector_job finished: status={log.status}, "
+            f"written={log.records_written}"
+        )
+    except ValueError as e:
+        logger.warning(f"options_iv_collector_job skipped: {e}")
+
+
 # ── Log Retention ────────────────────────────────────────────────────────
 
 LOG_RETENTION_DAYS = 90
