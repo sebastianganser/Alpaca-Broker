@@ -171,6 +171,10 @@ class FeatureSnapshot(Base):
     breadth_advance_decline: Mapped[float | None] = mapped_column(Numeric(6, 4))
     breadth_pct_above_sma50: Mapped[float | None] = mapped_column(Numeric(6, 4))
 
+    # ── Sector-Relative Features (Sprint 9.5b B4) ────────────────────
+    sector_relative_return_20d: Mapped[float | None] = mapped_column(Numeric(10, 6))
+    sector_relative_momentum: Mapped[float | None] = mapped_column(Numeric(10, 6))
+
     # ── Target Variables (backfilled retrospectively) ────────────────
     return_1d: Mapped[float | None] = mapped_column(Numeric(10, 6))
     return_5d: Mapped[float | None] = mapped_column(Numeric(10, 6))

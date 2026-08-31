@@ -68,6 +68,9 @@ def upgrade() -> None:
         # D2: Market breadth
         ("breadth_advance_decline", sa.Numeric(6, 4)),
         ("breadth_pct_above_sma50", sa.Numeric(6, 4)),
+        # B4: Sector-relative
+        ("sector_relative_return_20d", sa.Numeric(10, 6)),
+        ("sector_relative_momentum", sa.Numeric(10, 6)),
     ]
     for col_name, col_type in new_columns:
         op.add_column(
@@ -80,6 +83,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Drop new columns from feature_snapshots
     for col_name in [
+        "sector_relative_momentum", "sector_relative_return_20d",
         "breadth_pct_above_sma50", "breadth_advance_decline",
         "form13f_holder_delta_qoq", "form13f_exited_positions_count",
         "insider_buy_ratio_90d", "insider_buy_ratio_30d",

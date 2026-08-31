@@ -50,6 +50,30 @@ _RATING_SCORES = {
     "up": 1.0, "main": 0.5, "reit": 0.3, "init": 0.0, "down": -1.0,
 }
 
+# B4 Sprint 9.5b: yfinance sector name -> GICS Sector SPDR ETF ticker
+# Maps the sector names from Universe.sector (populated by yfinance/sector
+# enrichment) to the corresponding Select Sector SPDR ETFs (from B3).
+_SECTOR_ETF_MAP = {
+    "Technology": "XLK",
+    "Healthcare": "XLV",
+    "Financial Services": "XLF",
+    "Industrials": "XLI",
+    "Consumer Cyclical": "XLY",
+    "Consumer Defensive": "XLP",
+    "Communication Services": "XLC",
+    "Real Estate": "XLRE",
+    "Utilities": "XLU",
+    "Basic Materials": "XLB",
+    "Energy": "XLE",
+    # GICS names (from seed_benchmark_etfs, edge cases)
+    "Information Technology": "XLK",
+    "Health Care": "XLV",
+    "Financials": "XLF",
+    "Consumer Staples": "XLP",
+    "Consumer Discretionary": "XLY",
+    "Materials": "XLB",
+}
+
 
 class FeaturePipeline:
     """Compute daily feature snapshots for all active tickers."""
@@ -109,6 +133,7 @@ class FeaturePipeline:
             ("sentiment", self._sentiment_features),
             ("macro", self._macro_features),
             ("breadth", self._breadth_features),
+            ("sector", self._sector_features),
         ]:
             try:
                 features.update(method(ticker, d))
@@ -930,6 +955,127 @@ class FeaturePipeline:
         }
         self._macro_cache[d] = result
         return result
+
+    # ── Sector-Relative Features (B4, Sprint 9.5b) ───────────────────
+
+    _sector_etf_cache: dict = {}  # (etf_ticker, date) -> {return_20d, pct_sma50}
+
+    def _sector_features(self, ticker: str, d: date) -> dict:
+        """Sector-relative features for stock-vs-sector neutralization.
+
+        - sector_relative_return_20d: stock 20d return minus sector ETF 20d return
+        - sector_relative_momentum: stock price_vs_sma50 minus sector ETF's
+
+        Returns empty dict for benchmark ETFs or stocks without sector mapping.
+        """
+        # Get the stock's sector from Universe
+        uni = self.session.execute(
+            select(Universe.sector).where(Universe.ticker == ticker)
+        ).scalar()
+
+        if not uni or uni == "Benchmark":
+            return {}
+
+        etf_ticker = _SECTOR_ETF_MAP.get(uni)
+        if not etf_ticker:
+            return {}
+
+        # Get sector ETF data (cached per ETF+date)
+        cache_key = (etf_ticker, d)
+        if cache_key not in self._sector_etf_cache:
+            self._sector_etf_cache[cache_key] = self._get_etf_metrics(
+                etf_ticker, d
+            )
+
+        etf_data = self._sector_etf_cache[cache_key]
+        if not etf_data:
+            return {}
+
+        result = {}
+
+        # Sector-relative return: stock 20d return minus ETF 20d return
+        stock_price = self.session.execute(
+            select(PriceDaily.close)
+            .where(PriceDaily.ticker == ticker)
+            .where(PriceDaily.trade_date <= d)
+            .order_by(PriceDaily.trade_date.desc())
+            .limit(1)
+        ).scalar()
+
+        stock_price_20d = self.session.execute(
+            select(PriceDaily.close)
+            .where(PriceDaily.ticker == ticker)
+            .where(PriceDaily.trade_date <= d - timedelta(days=28))
+            .order_by(PriceDaily.trade_date.desc())
+            .limit(1)
+        ).scalar()
+
+        if stock_price and stock_price_20d and float(stock_price_20d) > 0:
+            stock_ret = (float(stock_price) - float(stock_price_20d)) / float(
+                stock_price_20d
+            )
+            if etf_data.get("return_20d") is not None:
+                result["sector_relative_return_20d"] = round(
+                    stock_ret - etf_data["return_20d"], 6
+                )
+
+        # Sector-relative momentum: stock price_vs_sma50 minus ETF's
+        ti = self.session.execute(
+            select(TechnicalIndicator.sma_50)
+            .where(TechnicalIndicator.ticker == ticker)
+            .where(TechnicalIndicator.trade_date <= d)
+            .order_by(TechnicalIndicator.trade_date.desc())
+            .limit(1)
+        ).scalar()
+
+        if stock_price and ti and float(ti) > 0:
+            stock_vs_sma50 = (float(stock_price) - float(ti)) / float(ti)
+            if etf_data.get("pct_vs_sma50") is not None:
+                result["sector_relative_momentum"] = round(
+                    stock_vs_sma50 - etf_data["pct_vs_sma50"], 6
+                )
+
+        return result
+
+    def _get_etf_metrics(self, etf_ticker: str, d: date) -> dict | None:
+        """Compute return_20d and pct_vs_sma50 for a sector ETF."""
+        price = self.session.execute(
+            select(PriceDaily.close)
+            .where(PriceDaily.ticker == etf_ticker)
+            .where(PriceDaily.trade_date <= d)
+            .order_by(PriceDaily.trade_date.desc())
+            .limit(1)
+        ).scalar()
+
+        if not price:
+            return None
+
+        price_20d = self.session.execute(
+            select(PriceDaily.close)
+            .where(PriceDaily.ticker == etf_ticker)
+            .where(PriceDaily.trade_date <= d - timedelta(days=28))
+            .order_by(PriceDaily.trade_date.desc())
+            .limit(1)
+        ).scalar()
+
+        sma50 = self.session.execute(
+            select(TechnicalIndicator.sma_50)
+            .where(TechnicalIndicator.ticker == etf_ticker)
+            .where(TechnicalIndicator.trade_date <= d)
+            .order_by(TechnicalIndicator.trade_date.desc())
+            .limit(1)
+        ).scalar()
+
+        result = {}
+        if price_20d and float(price_20d) > 0:
+            result["return_20d"] = (float(price) - float(price_20d)) / float(
+                price_20d
+            )
+        if sma50 and float(sma50) > 0:
+            result["pct_vs_sma50"] = (float(price) - float(sma50)) / float(
+                sma50
+            )
+        return result if result else None
 
     # ── Market Breadth Features (3, Sprint 9.5b D2) ──────────────────
 
