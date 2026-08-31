@@ -1,58 +1,62 @@
-"""Options IV Collector — daily ATM implied volatility from Alpaca.
+"""Options IV Collector — daily ATM implied volatility via yfinance.
 
-Fetches the options chain snapshot for each active ticker, extracts
+Fetches the options chain for each active ticker, extracts
 ATM (at-the-money) implied volatility for near-term (~30d) and
-next-term (~60d) expirations, computes 25-delta skew, term structure
-slope, and put/call open interest ratio.
+next-term (~60d) expirations, computes 25-delta skew (approximated
+via OTM put vs call IV), term structure slope, and put/call OI ratio.
 
 Sprint 9.5b D3.
 
-API: GET https://data.alpaca.markets/v1beta1/options/snapshots/{ticker}
-Auth: APCA-API-KEY-ID + APCA-API-SECRET-KEY headers
-Feed: 'indicative' (free tier, delayed)
-Rate limit: 200 requests/minute on free tier
+Data source: Yahoo Finance (free, via yfinance library).
+Alpaca's free 'indicative' feed was tested but does NOT provide
+Greeks, IV, OI, or volume — only bid/ask quotes. OPRA requires
+a paid subscription. yfinance provides IV, OI, and volume for free.
+
+Rate limiting: ~2 req/s to avoid Yahoo throttling.
 """
 
 from __future__ import annotations
 
+import time
 from datetime import date, timedelta
 
-import httpx
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from trading_signals.collectors.base import BaseCollector
-from trading_signals.config import get_settings
 from trading_signals.db.models.options_iv import OptionsIVSnapshot
 from trading_signals.db.models.universe import Universe
 from trading_signals.utils.logging import get_logger
-from trading_signals.utils.retry import retry
 
 logger = get_logger(__name__)
 
-DATA_BASE_URL = "https://data.alpaca.markets"
-
-# Batch size for rate limit management (200 req/min)
-BATCH_PAUSE_SECS = 0.35  # ~170 req/min, safe margin
+# Rate limit: pause between tickers
+TICKER_PAUSE_SECS = 0.5
 
 
 class OptionsIVCollector(BaseCollector):
-    """Collect daily ATM implied volatility snapshots from Alpaca Options API."""
+    """Collect daily ATM implied volatility snapshots via yfinance."""
 
     name = "options_iv_collector"
 
-    def __init__(self) -> None:
-        settings = get_settings()
-        if not settings.ALPACA_API_KEY or not settings.ALPACA_SECRET_KEY:
-            raise ValueError("ALPACA_API_KEY and ALPACA_SECRET_KEY required")
-        self._headers = {
-            "APCA-API-KEY-ID": settings.ALPACA_API_KEY,
-            "APCA-API-SECRET-KEY": settings.ALPACA_SECRET_KEY,
-        }
-
     def fetch(self, session: Session) -> list[dict]:
         """Fetch ATM IV for all active tickers."""
-        import time
+        import pandas as pd
+        import pandas_market_calendars as mcal
+
+        today = date.today()
+
+        # Skip weekends + NYSE holidays
+        nyse = mcal.get_calendar("NYSE")
+        schedule = nyse.schedule(
+            start_date=pd.Timestamp(today),
+            end_date=pd.Timestamp(today),
+        )
+        if len(schedule) == 0:
+            logger.info(
+                f"[{self.name}] {today} is not a NYSE trading day — skipping"
+            )
+            return []
 
         tickers = [
             r[0]
@@ -64,136 +68,117 @@ class OptionsIVCollector(BaseCollector):
             ).all()
         ]
 
-        # Filter out ETFs/benchmarks that may not have options
-        from trading_signals.universe.blacklist import BENCHMARK_TICKERS
-        # Include benchmarks too — SPY, QQQ have very liquid options
-        today = date.today()
-
         results = []
         errors = 0
+        no_options = 0
 
         for i, ticker in enumerate(tickers):
             try:
                 snapshot = self._fetch_ticker_iv(ticker, today)
                 if snapshot:
                     results.append(snapshot)
+                else:
+                    no_options += 1
             except Exception as e:
                 errors += 1
                 if errors <= 5:
-                    logger.warning(
-                        f"[{self.name}] {ticker} failed: {e}"
-                    )
-            # Rate limit pause
-            if (i + 1) % 10 == 0:
-                time.sleep(BATCH_PAUSE_SECS * 3)  # ~1s pause every 10
+                    logger.warning(f"[{self.name}] {ticker} failed: {e}")
+            # Rate limit
+            time.sleep(TICKER_PAUSE_SECS)
 
         if errors > 5:
             logger.warning(
                 f"[{self.name}] {errors} total errors (showing first 5)"
             )
 
+        # Alert if trading day but no data collected
+        if len(results) == 0:
+            logger.warning(
+                f"[{self.name}] Trading day {today} but 0 IV snapshots "
+                f"collected from {len(tickers)} tickers — possible API issue"
+            )
+        else:
+            logger.info(
+                f"[{self.name}] Collected {len(results)}/{len(tickers)} "
+                f"IV snapshots ({no_options} no options, {errors} errors)"
+            )
+
         return results
 
-    @retry(max_attempts=2, base_delay=1.0)
     def _fetch_ticker_iv(self, ticker: str, today: date) -> dict | None:
-        """Fetch options chain for one ticker and extract ATM IV metrics."""
-        import time
-        time.sleep(BATCH_PAUSE_SECS)
+        """Fetch options chain for one ticker via yfinance."""
+        import yfinance as yf
 
-        url = f"{DATA_BASE_URL}/v1beta1/options/snapshots/{ticker}"
+        yticker = yf.Ticker(ticker)
 
-        # Filter: only standard monthly options, near-term
-        # Look for expirations 20-45 days out (30d) and 50-80 days (60d)
-        exp_min_30 = today + timedelta(days=20)
-        exp_max_30 = today + timedelta(days=45)
-        exp_min_60 = today + timedelta(days=50)
-        exp_max_60 = today + timedelta(days=80)
-
-        params = {
-            "feed": "indicative",
-            "limit": 500,
-            "expiration_date_gte": exp_min_30.isoformat(),
-            "expiration_date_lte": exp_max_60.isoformat(),
-        }
-
-        with httpx.Client(timeout=15.0) as client:
-            resp = client.get(url, headers=self._headers, params=params)
-
-        if resp.status_code == 404:
-            return None  # No options for this ticker
-        if resp.status_code == 422:
-            return None  # Invalid/delisted ticker
-        resp.raise_for_status()
-
-        data = resp.json()
-        snapshots = data.get("snapshots", {})
-        if not snapshots:
+        # Get available expiration dates
+        try:
+            expirations = yticker.options
+        except Exception:
             return None
 
-        # Parse contracts into structured data
-        contracts = []
-        for symbol, snap in snapshots.items():
-            greeks = snap.get("greeks", {})
-            iv = greeks.get("implied_volatility")
-            delta = greeks.get("delta")
-            if iv is None or delta is None:
-                continue
+        if not expirations:
+            return None
 
-            # Parse expiration from contract symbol
-            # Format: AAPL250919C00230000
+        # Find 30d expiry (20-45 days out) and 60d expiry (50-80 days out)
+        exp_30d = self._find_expiry(expirations, today, 20, 45)
+        exp_60d = self._find_expiry(expirations, today, 50, 80)
+
+        if not exp_30d:
+            return None
+
+        # Get 30d chain
+        try:
+            chain_30d = yticker.option_chain(exp_30d)
+        except Exception:
+            return None
+
+        calls_30d = chain_30d.calls
+        puts_30d = chain_30d.puts
+
+        if calls_30d.empty and puts_30d.empty:
+            return None
+
+        # Get current price for ATM determination
+        info = yticker.fast_info
+        current_price = getattr(info, "last_price", None)
+        if not current_price:
+            # Fallback: use most recent close
+            current_price = getattr(info, "previous_close", None)
+        if not current_price:
+            return None
+
+        # Extract ATM IV from 30d chain
+        atm_iv_30d = self._extract_atm_iv(calls_30d, current_price)
+
+        # Extract ATM IV from 60d chain
+        atm_iv_60d = None
+        if exp_60d:
             try:
-                exp_str = symbol[len(ticker):][:6]
-                exp_date = date(
-                    2000 + int(exp_str[:2]),
-                    int(exp_str[2:4]),
-                    int(exp_str[4:6]),
-                )
-            except (ValueError, IndexError):
-                continue
+                chain_60d = yticker.option_chain(exp_60d)
+                atm_iv_60d = self._extract_atm_iv(chain_60d.calls, current_price)
+            except Exception:
+                pass
 
-            is_call = "C" in symbol[len(ticker) + 6:]
-            oi = snap.get("latestQuote", {}).get("open_interest") or 0
-
-            contracts.append({
-                "symbol": symbol,
-                "expiration": exp_date,
-                "is_call": is_call,
-                "delta": float(delta),
-                "iv": float(iv),
-                "oi": int(oi) if oi else 0,
-            })
-
-        if not contracts:
-            return None
-
-        # Split into 30d and 60d buckets
-        contracts_30d = [
-            c for c in contracts
-            if exp_min_30 <= c["expiration"] <= exp_max_30
-        ]
-        contracts_60d = [
-            c for c in contracts
-            if exp_min_60 <= c["expiration"] <= exp_max_60
-        ]
-
-        # Extract ATM IV (contracts closest to delta 0.50 for calls)
-        atm_iv_30d = self._extract_atm_iv(contracts_30d)
-        atm_iv_60d = self._extract_atm_iv(contracts_60d)
-
-        # 25-delta skew: IV of 25d put minus IV of 25d call
-        skew = self._extract_skew(contracts_30d)
+        # Skew: OTM put IV vs OTM call IV (approximation of 25-delta skew)
+        skew = self._extract_skew(calls_30d, puts_30d, current_price)
 
         # Term structure slope
         term_slope = None
         if atm_iv_30d is not None and atm_iv_60d is not None:
             term_slope = round(atm_iv_60d - atm_iv_30d, 4)
 
-        # Open interest
-        total_oi_call = sum(c["oi"] for c in contracts if c["is_call"])
-        total_oi_put = sum(c["oi"] for c in contracts if not c["is_call"])
+        # Open interest totals (from 30d chain)
+        total_oi_call = int(calls_30d["openInterest"].sum()) if "openInterest" in calls_30d else None
+        total_oi_put = int(puts_30d["openInterest"].sum()) if "openInterest" in puts_30d else None
+
         put_call_oi = None
-        if total_oi_call > 0:
+        if total_oi_call and total_oi_call > 0 and total_oi_put is not None:
             put_call_oi = round(total_oi_put / total_oi_call, 4)
+
+        # Skip if we got nothing useful
+        if atm_iv_30d is None and total_oi_call is None:
+            return None
 
         return {
             "ticker": ticker,
@@ -202,41 +187,87 @@ class OptionsIVCollector(BaseCollector):
             "atm_iv_60d": atm_iv_60d,
             "skew_25d": skew,
             "term_slope": term_slope,
-            "total_oi_call": total_oi_call if total_oi_call > 0 else None,
-            "total_oi_put": total_oi_put if total_oi_put > 0 else None,
+            "total_oi_call": total_oi_call if total_oi_call else None,
+            "total_oi_put": total_oi_put if total_oi_put else None,
             "put_call_oi": put_call_oi,
         }
 
-    def _extract_atm_iv(self, contracts: list[dict]) -> float | None:
-        """Find ATM IV: call with delta closest to 0.50."""
-        calls = [c for c in contracts if c["is_call"] and c["iv"] > 0]
-        if not calls:
+    def _find_expiry(
+        self, expirations: tuple[str, ...], today: date,
+        min_days: int, max_days: int
+    ) -> str | None:
+        """Find the best expiration within [min_days, max_days] from today."""
+        target_min = today + timedelta(days=min_days)
+        target_max = today + timedelta(days=max_days)
+        target_mid = today + timedelta(days=(min_days + max_days) // 2)
+
+        candidates = []
+        for exp_str in expirations:
+            exp_date = date.fromisoformat(exp_str)
+            if target_min <= exp_date <= target_max:
+                candidates.append(exp_str)
+
+        if not candidates:
             return None
 
-        atm = min(calls, key=lambda c: abs(c["delta"] - 0.50))
-        # Only accept if delta is reasonably close to ATM
-        if abs(atm["delta"] - 0.50) > 0.15:
-            return None
-        return round(atm["iv"], 4)
+        # Pick closest to midpoint
+        return min(
+            candidates,
+            key=lambda e: abs((date.fromisoformat(e) - target_mid).days)
+        )
 
-    def _extract_skew(self, contracts: list[dict]) -> float | None:
-        """Compute 25-delta skew: IV(put 25d) - IV(call 25d)."""
-        puts = [c for c in contracts if not c["is_call"] and c["iv"] > 0]
-        calls = [c for c in contracts if c["is_call"] and c["iv"] > 0]
-
-        if not puts or not calls:
+    def _extract_atm_iv(self, calls, current_price: float) -> float | None:
+        """Find ATM implied volatility from calls dataframe."""
+        if calls.empty or "impliedVolatility" not in calls.columns:
             return None
 
-        # Find 25-delta put (delta ~ -0.25)
-        put_25 = min(puts, key=lambda c: abs(c["delta"] + 0.25))
-        # Find 25-delta call (delta ~ 0.25)
-        call_25 = min(calls, key=lambda c: abs(c["delta"] - 0.25))
-
-        # Only if deltas are reasonable
-        if abs(put_25["delta"] + 0.25) > 0.10 or abs(call_25["delta"] - 0.25) > 0.10:
+        # Filter for valid IV
+        valid = calls[calls["impliedVolatility"] > 0.001]
+        if valid.empty:
             return None
 
-        return round(put_25["iv"] - call_25["iv"], 4)
+        # Find strike closest to current price
+        atm_idx = (valid["strike"] - current_price).abs().idxmin()
+        atm_row = valid.loc[atm_idx]
+
+        # Only accept if strike is within 5% of current price
+        if abs(atm_row["strike"] - current_price) / current_price > 0.05:
+            return None
+
+        iv = float(atm_row["impliedVolatility"])
+        return round(iv, 4) if iv > 0.001 else None
+
+    def _extract_skew(self, calls, puts, current_price: float) -> float | None:
+        """Compute skew: OTM put IV minus OTM call IV.
+
+        Uses ~5% OTM strikes as approximation of 25-delta skew.
+        Positive = puts more expensive (hedging demand).
+        """
+        if calls.empty or puts.empty:
+            return None
+        if "impliedVolatility" not in calls.columns:
+            return None
+
+        # OTM call: strike ~5% above current price
+        otm_call_strike = current_price * 1.05
+        valid_calls = calls[calls["impliedVolatility"] > 0.001]
+        if valid_calls.empty:
+            return None
+        call_idx = (valid_calls["strike"] - otm_call_strike).abs().idxmin()
+        call_iv = float(valid_calls.loc[call_idx, "impliedVolatility"])
+
+        # OTM put: strike ~5% below current price
+        otm_put_strike = current_price * 0.95
+        valid_puts = puts[puts["impliedVolatility"] > 0.001]
+        if valid_puts.empty:
+            return None
+        put_idx = (valid_puts["strike"] - otm_put_strike).abs().idxmin()
+        put_iv = float(valid_puts.loc[put_idx, "impliedVolatility"])
+
+        if call_iv < 0.001 or put_iv < 0.001:
+            return None
+
+        return round(put_iv - call_iv, 4)
 
     def store(self, session: Session, records: list[dict]) -> tuple[int, int]:
         """Upsert IV snapshots. Returns (fetched, written)."""
