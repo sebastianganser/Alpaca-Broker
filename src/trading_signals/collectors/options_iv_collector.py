@@ -238,8 +238,8 @@ class OptionsIVCollector(BaseCollector):
 
         return round(put_25["iv"] - call_25["iv"], 4)
 
-    def store(self, session: Session, records: list[dict]) -> int:
-        """Upsert IV snapshots."""
+    def store(self, session: Session, records: list[dict]) -> tuple[int, int]:
+        """Upsert IV snapshots. Returns (fetched, written)."""
         written = 0
         for record in records:
             stmt = (
@@ -257,4 +257,4 @@ class OptionsIVCollector(BaseCollector):
             written += 1
 
         session.flush()
-        return written
+        return len(records), written
