@@ -39,6 +39,8 @@ services:
     ports:
       - "8090:8090"
     restart: unless-stopped
+    volumes:
+      - /mnt/user/Workfiles/AlpacaBroker:/mnt/user/Workfiles/AlpacaBroker
     logging:
       driver: "json-file"
       options:

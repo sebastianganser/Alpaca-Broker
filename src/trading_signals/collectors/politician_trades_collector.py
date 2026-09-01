@@ -15,6 +15,7 @@ Schedule: Weekly Sunday 11:00 MEZ (trades are 30-45 days delayed anyway)
 
 from datetime import date, timedelta
 from typing import Any
+import re
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
@@ -104,7 +105,7 @@ class PoliticianTradesCollector(BaseCollector):
                 trade = {
                     "politician_name": politician_name,
                     "chamber": "Senate",
-                    "party": None,  # Not available from eFD search results
+                    "party": None,  # Enriched below via congress_members lookup
                     "state": self._extract_state(filing.get("office", "")),
                     "ticker": txn.get("ticker", ""),
                     "transaction_date": txn.get("transaction_date"),
@@ -122,9 +123,26 @@ class PoliticianTradesCollector(BaseCollector):
                     },
                 }
 
-                # Only include trades with a valid ticker
-                if trade["ticker"] and len(trade["ticker"]) <= 10:
+                # C3: Enrich with party affiliation from lookup
+                from trading_signals.data.congress_members import lookup_member
+                member_info = lookup_member(politician_name)
+                if member_info:
+                    trade["party"] = member_info.get("party")
+                    # Also update state if lookup has better data
+                    if member_info.get("state"):
+                        trade["state"] = member_info["state"]
+
+                # C2: Validate ticker format (1-5 uppercase letters, optional dot class)
+                # Rejects malformed tickers like "--", "123", empty strings
+                if trade["ticker"] and re.match(
+                    r"^[A-Z]{1,5}(\.[A-Z])?$", trade["ticker"]
+                ):
                     all_trades.append(trade)
+                elif trade["ticker"]:
+                    logger.info(
+                        f"[{self.name}] Skipped malformed ticker: "
+                        f"{trade['ticker']!r} from {politician_name}"
+                    )
 
         logger.info(
             f"[{self.name}] Senate: processed {filings_processed}/{len(filings)} "

@@ -175,6 +175,11 @@ class FeatureSnapshot(Base):
     sector_relative_return_20d: Mapped[float | None] = mapped_column(Numeric(10, 6))
     sector_relative_momentum: Mapped[float | None] = mapped_column(Numeric(10, 6))
 
+    # ── Short Interest Features (Sprint 9.5c B5) ─────────────────────
+    short_volume_ratio_5d: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    short_volume_ratio_20d: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    short_volume_change_20d: Mapped[float | None] = mapped_column(Numeric(10, 4))
+
     # ── Target Variables (backfilled retrospectively) ────────────────
     return_1d: Mapped[float | None] = mapped_column(Numeric(10, 6))
     return_5d: Mapped[float | None] = mapped_column(Numeric(10, 6))

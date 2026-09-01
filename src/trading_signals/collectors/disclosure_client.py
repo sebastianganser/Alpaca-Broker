@@ -510,14 +510,16 @@ def _parse_date(date_str: str) -> date | None:
 def _normalize_ticker(ticker: str) -> str:
     """Normalize a ticker symbol from disclosure filings.
 
-    Handles edge cases like ticker annotations, whitespace, etc.
+    Handles edge cases like ticker annotations, whitespace,
+    leading/trailing dashes (C2 Sprint 9.5c fix).
     """
     # Remove common annotations
     ticker = ticker.strip().upper()
     # Remove parenthetical notes like "(Common Stock)"
     ticker = re.sub(r"\s*\(.*?\)\s*", "", ticker)
-    # Remove trailing dots or dashes
-    ticker = ticker.rstrip(".-")
+    # C2: Strip leading AND trailing non-alphanumeric characters
+    # Fixes cases like "--AMCR", "..AAPL", "-META-"
+    ticker = re.sub(r"^[^A-Z0-9]+|[^A-Z0-9]+$", "", ticker)
     return ticker
 
 

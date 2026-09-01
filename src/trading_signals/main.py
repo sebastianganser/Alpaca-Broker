@@ -47,6 +47,8 @@ from trading_signals.scheduler.jobs import (
     run_sentiment_computer,
     run_target_backfill,
     run_technical_indicators_computer,
+    run_context_pack_generator,
+    run_short_interest_collector,
 )
 from trading_signals.utils.logging import get_logger, setup_logging
 
@@ -174,6 +176,14 @@ def create_scheduler() -> BackgroundScheduler:
         name="Daily Feature Pipeline (Snapshot Computation)",
     )
 
+    # ── Context Pack: Daily at 02:30 (after Feature Pipeline, Sprint 9.5c F2) ──
+    scheduler.add_job(
+        run_context_pack_generator,
+        CronTrigger(hour=2, minute=30),
+        id="context_pack_generator",
+        name="Daily Context Pack (Top Candidates + Features)",
+    )
+
     # ── Target Backfill: Daily at 02:15 (after feature pipeline) ──
     scheduler.add_job(
         run_target_backfill,
@@ -215,6 +225,16 @@ def create_scheduler() -> BackgroundScheduler:
         CronTrigger(hour=4, minute=30),
         id="options_iv_collector",
         name="Daily Options IV Snapshots (ATM IV, Skew, Term Structure)",
+    )
+
+    # ── Short Interest: Daily at 04:45 (Sprint 9.5c B5) ──
+    # After Options IV. Short volume for all tickers via Massive API.
+    # ~750 tickers, rate-limited 5 req/min → ~2.5 hours.
+    scheduler.add_job(
+        run_short_interest_collector,
+        CronTrigger(hour=4, minute=45),
+        id="short_interest_collector",
+        name="Daily Short Interest/Volume (Massive API)",
     )
 
     # ── Feature Analysis: Monthly 1st at 05:00 (after index sync) ──

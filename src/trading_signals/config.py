@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     # ── FRED (St. Louis Fed) ─────────────────────────────────────
     FRED_API_KEY: str = ""
 
+    # ── Polygon / Massive (Short Interest) ───────────────────────
+    POLYGON_API_KEY: str = ""
+
+    # ── Context Pack Output ──────────────────────────────────────
+    CONTEXT_PACK_PATH: str = "/mnt/user/Workfiles/AlpacaBroker/context_packs"
+
     # ── Logging ───────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
 

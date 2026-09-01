@@ -695,6 +695,20 @@ def run_options_iv_collector() -> None:
     except ValueError as e:
         logger.warning(f"options_iv_collector_job skipped: {e}")
 
+def run_short_interest_collector() -> None:
+    """Daily short interest/volume collection via Massive API.
+    Scheduled for 04:45 Europe/Berlin (after Options IV at 04:30).
+    Rate-limited to 5 req/min — expect ~2.5 hours for ~750 tickers.
+    """
+    from trading_signals.collectors.short_interest_collector import ShortInterestCollector
+    logger.info("Scheduler triggered: short_interest_collector_job")
+    collector = ShortInterestCollector()
+    log = collector.run()
+    logger.info(
+        f"short_interest_collector_job finished: status={log.status}, "
+        f"written={log.records_written}"
+    )
+
 
 # ── Log Retention ────────────────────────────────────────────────────────
 
@@ -812,3 +826,69 @@ def run_feature_analysis() -> None:
             except Exception:
                 logger.error(f"{collector_name}_job: Failed to write error log")
 
+
+def run_context_pack_generator() -> None:
+    """Daily Context Pack generation for top candidates.
+
+    Scheduled for 02:30 Europe/Berlin (after Feature Pipeline at 02:00).
+    Generates Markdown reports with YAML frontmatter for the top 5
+    candidates based on preliminary scoring.
+
+    Sprint 9.5c F2.
+    """
+    from datetime import date, timedelta
+    from datetime import datetime
+
+    from trading_signals.utils.logging import CollectorLogCapture
+    from trading_signals.db.models.collection_log import CollectionLog
+    from trading_signals.db.session import get_session
+    from trading_signals.derived.context_pack_generator import ContextPackGenerator
+
+    collector_name = "context_pack_generator"
+    logger.info(f"Scheduler triggered: {collector_name}_job")
+
+    started_at = datetime.now()
+    target_date = date.today() - timedelta(days=1)
+
+    with CollectorLogCapture(collector_name) as log_capture:
+        try:
+            with get_session() as session:
+                generator = ContextPackGenerator(session)
+                written = generator.generate_daily(target_date)
+
+                log_entry = CollectionLog(
+                    collector_name=collector_name,
+                    started_at=started_at,
+                    finished_at=datetime.now(),
+                    status="success",
+                    records_fetched=written,
+                    records_written=written,
+                    gaps_detected=0,
+                    log_lines=log_capture.get_lines(),
+                )
+                session.add(log_entry)
+                session.commit()
+
+            logger.info(
+                f"{collector_name}_job finished: "
+                f"{written} candidate files generated for {target_date}"
+            )
+        except Exception as e:
+            logger.error(f"{collector_name}_job FAILED: {e}")
+            try:
+                with get_session() as session:
+                    log_entry = CollectionLog(
+                        collector_name=collector_name,
+                        started_at=started_at,
+                        finished_at=datetime.now(),
+                        status="error",
+                        records_fetched=0,
+                        records_written=0,
+                        gaps_detected=0,
+                        notes=str(e)[:2000],
+                        log_lines=log_capture.get_lines(),
+                    )
+                    session.add(log_entry)
+                    session.commit()
+            except Exception:
+                logger.error(f"{collector_name}_job: Failed to write error log")

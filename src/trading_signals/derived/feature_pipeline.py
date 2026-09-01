@@ -134,6 +134,7 @@ class FeaturePipeline:
             ("macro", self._macro_features),
             ("breadth", self._breadth_features),
             ("sector", self._sector_features),
+            ("short_interest", self._short_interest_features),
         ]:
             try:
                 features.update(method(ticker, d))
@@ -461,8 +462,24 @@ class FeaturePipeline:
     # ── Politician Features (4) ──────────────────────────────────────
 
     def _politician_features(self, ticker: str, d: date) -> dict:
+        """Politician trade features with STOCK Act lag filter.
+        
+        C1 Sprint 9.5c: Only count trades where disclosure_lag <= 45 days.
+        Trades with extreme delays (e.g. 800+ days) are noise, not signal.
+        """
         since_60 = d - timedelta(days=60)
         since_90 = d - timedelta(days=90)
+        max_lag_days = 45  # STOCK Act maximum reporting deadline
+
+        def _lag_filter():
+            """Filter: disclosure_date - transaction_date <= 45 days."""
+            return and_(
+                PoliticianTrade.transaction_date.isnot(None),
+                PoliticianTrade.disclosure_date.isnot(None),
+                PoliticianTrade.transaction_date >= (
+                    PoliticianTrade.disclosure_date - timedelta(days=max_lag_days)
+                ),
+            )
 
         def _count(date_col, since, txn_type="Purchase"):
             return self.session.execute(
@@ -470,6 +487,7 @@ class FeaturePipeline:
                 .where(PoliticianTrade.ticker == ticker)
                 .where(PoliticianTrade.transaction_type == txn_type)
                 .where(date_col.between(since, d))
+                .where(_lag_filter())  # C1: STOCK Act lag filter
             ).scalar() or 0
 
         def _distinct(date_col, since):
@@ -477,6 +495,7 @@ class FeaturePipeline:
                 select(func.count(func.distinct(PoliticianTrade.politician_name)))
                 .where(PoliticianTrade.ticker == ticker)
                 .where(date_col.between(since, d))
+                .where(_lag_filter())  # C1: STOCK Act lag filter
             ).scalar() or 0
 
         bc_disc = _count(PoliticianTrade.disclosure_date, since_60)
@@ -1163,6 +1182,52 @@ class FeaturePipeline:
         }
         self._breadth_cache[d] = result
         return result
+
+    def _short_interest_features(self, ticker: str, d: date) -> dict:
+        """Short interest features from daily short volume data.
+        
+        - short_volume_ratio_5d: 5-day average of short_volume / total_volume
+        - short_volume_ratio_20d: 20-day average
+        - short_volume_change_20d: change in 20d ratio vs previous 20d period (momentum)
+        """
+        from trading_signals.db.models.short_interest import ShortVolume
+        
+        since_20 = d - timedelta(days=30)  # calendar days for ~20 trading days
+        since_5 = d - timedelta(days=8)
+        since_40 = d - timedelta(days=60)  # for previous 20d period
+        
+        # Get short volume ratios for last 60 calendar days
+        rows = list(self.session.execute(
+            select(ShortVolume.trade_date, ShortVolume.short_volume_ratio)
+            .where(ShortVolume.ticker == ticker)
+            .where(ShortVolume.trade_date.between(since_40, d))
+            .where(ShortVolume.short_volume_ratio.isnot(None))
+            .order_by(ShortVolume.trade_date)
+        ).all())
+        
+        if not rows:
+            return {}
+            
+        from datetime import datetime
+        
+        # Split into recent 5d, recent 20d, and previous 20d
+        ratios_5d = [float(r[1]) for r in rows if r[0] >= (since_5.date() if isinstance(since_5, datetime) else since_5)]
+        ratios_20d = [float(r[1]) for r in rows if r[0] >= (since_20.date() if isinstance(since_20, datetime) else since_20)]
+        ratios_prev_20d = [float(r[1]) for r in rows if r[0] < (since_20.date() if isinstance(since_20, datetime) else since_20)]
+        
+        avg_5d = round(sum(ratios_5d) / len(ratios_5d), 4) if ratios_5d else None
+        avg_20d = round(sum(ratios_20d) / len(ratios_20d), 4) if ratios_20d else None
+        avg_prev_20d = round(sum(ratios_prev_20d) / len(ratios_prev_20d), 4) if ratios_prev_20d else None
+        
+        change = None
+        if avg_20d is not None and avg_prev_20d is not None:
+            change = round(avg_20d - avg_prev_20d, 4)
+            
+        return {
+            "short_volume_ratio_5d": avg_5d,
+            "short_volume_ratio_20d": avg_20d,
+            "short_volume_change_20d": change,
+        }
 
     def _upsert(self, ticker: str, d: date, features: dict) -> None:
         """Insert or update a feature snapshot row."""
