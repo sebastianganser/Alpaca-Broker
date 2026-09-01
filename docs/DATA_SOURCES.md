@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** May 2026
+**Last updated:** September 2026
 
 ---
 
@@ -24,6 +24,9 @@
 | **yfinance – Ratings** | Analyst Upgrades/Downgrades | Free | Daily | ~ | 5 | ✅ Active |
 | **yfinance – Earnings** | Earnings Dates + Surprises | Free | Weekly | ~ | 5 | ✅ Active |
 | **ProsusAI/finbert** | NLP Sentiment Scoring | Free (local) | Daily | <1 min | 8c | ✅ Active |
+| **FRED (St. Louis Fed)** | Macro Indicators | Free | Daily | ~6h after US close | 9.5b | ✅ Active |
+| **yfinance – Options** | Implied Volatility | Free | Daily | ~20 min EOD | 9.5b | ✅ Active |
+| **Massive (ex Polygon)** | Short Interest / Volume | Free | Daily | T+1 | 9.5c | ✅ Active |
 
 ---
 
@@ -272,7 +275,41 @@ Sentiment scores for financial news headlines:
 
 ---
 
-## 10. Not Yet Implemented – Ideas for Later
+## 10. Massive API – Short Interest / Volume (Sprint 9.5c)
+
+**Category:** Short selling data (FINRA reported)
+**API Endpoint:** `https://api.massive.com/stocks/v1/short-volume`
+**Docs:** https://massive.com/docs (formerly https://polygon.io/docs)
+**Status:** ✅ Implemented (Sprint 9.5c)
+
+> **Note:** Polygon.io rebranded to Massive in October 2025. The old `api.polygon.io` base URL still works in parallel, but new implementations should use `api.massive.com`.
+
+### What It Delivers
+Daily short volume data per ticker from FINRA:
+- `short_volume` – shares sold short that day
+- `total_volume` – total consolidated volume
+- `short_volume_ratio` – short_volume / total_volume
+
+### Configuration
+- **API Key:** Free tier at https://massive.com (registration required)
+- **Rate Limit:** 5 requests/minute (free tier) → 12s between tickers
+- **~765 tickers in ~2.5 hours** per daily run
+- **Schedule:** Daily 04:45 CET (after Options IV)
+- **Auth:** API key as query parameter `apiKey={key}`
+
+### Feature Signals
+- `short_volume_ratio_5d` – 5-day average short volume ratio
+- `short_volume_ratio_20d` – 20-day average short volume ratio
+- `short_volume_change_20d` – 20-day momentum change in short ratio
+
+### Limitations
+- **Free tier rate limit** makes full universe scan slow (~2.5h)
+- **T+1 delay** – data available next trading day
+- **Short volume ≠ short interest** – volume is daily flow, interest is outstanding positions (bi-monthly FINRA data, separate endpoint)
+
+---
+
+## 11. Not Yet Implemented – Ideas for Later
 
 - **OpenInsider** – Aggregated Form 4 data with pre-filtered cluster buys
 - **Finviz** – Insider screener, news aggregation (scraping gray area)
@@ -304,6 +341,7 @@ All data in the system is bounded by `DATA_START_DATE = 2021-01-01` (defined in 
 | `scripts/sprint8_readiness.py` | Data depth + coverage validation (all tables) | Before starting Sprint 8 |
 | `scripts/sprint9_readiness.py` | Feature snapshot + target fill readiness check | Periodic during wait phase |
 | `scripts/diag_insider.py` | Quick insider trade diagnostics | Ad-hoc debugging |
+| `scripts/backfill_party_mapping.py` | Backfill party affiliation for politician_trades | One-time after C3 deploy |
 
 ---
 

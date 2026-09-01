@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** May 2026
+**Last updated:** September 2026
 
 ---
 
@@ -372,6 +372,47 @@ CREATE TABLE signals.news_sentiment (
 
 CREATE INDEX idx_sentiment_ticker_date ON signals.news_sentiment(ticker, scored_at);
 CREATE INDEX idx_sentiment_model ON signals.news_sentiment(model_version);
+```
+
+---
+
+### `signals.short_volume` (Sprint 9.5c B5)
+Daily short volume data from FINRA via Massive API (formerly Polygon).
+
+```sql
+CREATE TABLE signals.short_volume (
+  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  ticker          VARCHAR(20) NOT NULL,
+  trade_date      DATE NOT NULL,
+  short_volume    BIGINT,           -- shares sold short that day
+  total_volume    BIGINT,           -- total consolidated volume
+  short_volume_ratio NUMERIC(6,4), -- short_volume / total_volume
+  source          VARCHAR(50) DEFAULT 'massive',
+  fetched_at      TIMESTAMP DEFAULT NOW(),
+  UNIQUE (ticker, trade_date)
+);
+
+CREATE INDEX idx_short_volume_ticker ON signals.short_volume(ticker);
+CREATE INDEX idx_short_volume_date ON signals.short_volume(trade_date);
+```
+
+### `signals.short_interest` (Sprint 9.5c B5)
+Bi-monthly FINRA short interest settlement data.
+
+```sql
+CREATE TABLE signals.short_interest (
+  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  ticker          VARCHAR(20) NOT NULL,
+  settlement_date DATE NOT NULL,
+  short_interest  BIGINT,           -- total shares short
+  avg_daily_volume BIGINT,
+  days_to_cover   NUMERIC(10,4),
+  source          VARCHAR(50) DEFAULT 'massive',
+  fetched_at      TIMESTAMP DEFAULT NOW(),
+  UNIQUE (ticker, settlement_date, source)
+);
+
+CREATE INDEX idx_short_interest_ticker ON signals.short_interest(ticker);
 ```
 
 ---

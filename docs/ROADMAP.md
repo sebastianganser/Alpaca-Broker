@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** May 2026
+**Last updated:** September 2026
 
 ---
 
@@ -25,7 +25,7 @@
 | 8c | News Sentiment Pipeline | 🟢 Done | May 2026 |
 | **⏸ Wait** | **2–3 months data collection** | **–** | **–** |
 | 9 | Exploratory Analysis (Jupyter) | 🟢 Done | Aug 2026 |
-| 9.5| Data Hardening & Extension | 🔴 Open | Aug 2026 |
+| 9.5| Data Hardening & Extension | 🟡 In Progress | Aug–Sept 2026 |
 | 10 | Signal Scoring Models | 🔴 Open | Nov 2026 |
 | 11 | Backtest Framework | 🔴 Open | – |
 | 12 | Paper Trading Integration | 🔴 Open | – |
@@ -191,28 +191,33 @@
   - Source: yfinance (Alpaca free tier lacks Greeks/IV)
   - Scheduled daily at 04:30 CET. IV-Rank needs ~1 year buildup (usable ~Sept 2027)
   - NYSE trading day check + zero-data warning on trading days
-- [ ] **B5:** Short Interest Collector — *deferred, needs Massive/Polygon API key (free registration)*
+- [x] **B5:** Short Interest Collector ✅ `f721720` — *completed in 9.5c Phase 1 (Sept 2026)*
 
-### Sprint 9.5c – Candidate Pipeline MVP 🔴 Open
+### Sprint 9.5c – Candidate Pipeline MVP 🟡 In Progress
 *Minimum viable candidate selection and Context Pack generation.*
 *Phase 1 (Sept): Datenqualität + letzte Datenquellen + Context Pack.*
 *Phase 2 (ab Okt): ML-Analyse-Update mit allen neuen Features → Composite Score.*
 
-**Phase 1 — Sept 2026:**
-- [ ] **B5:** Short Interest Collector *(requires free Massive/Polygon API key registration)*
-  - Must be completed early September so data accumulates before R1 in October
-  - User action required: register at https://massive.io or https://polygon.io
-- [ ] **C1-C3:** Data quality fixes (Politician lag weighting, ticker parser, party mapping)
-- [ ] **F2:** Context Pack MVP (Candidates + Top Features + Market Context, YAML frontmatter)
-  - [ ] Output to configurable Unraid path (`CONTEXT_PACK_PATH` env var)
-  - [ ] Daily overview + per-candidate Markdown
+**Phase 1 — Sept 2026:** ✅ Complete (`f721720`, `c309f7d`)
+- [x] **B5:** Short Interest Collector (Massive/Polygon API, 757/765 Ticker, 0 Errors)
+  - Scheduled daily at 04:45 CET (~2.5h runtime at free tier 5 req/min)
+  - 3 new features: `short_volume_ratio_5d`, `short_volume_ratio_20d`, `short_volume_change_20d`
+- [x] **C1:** Politician Trades Lag Filter (max 45 days, STOCK Act compliance)
+- [x] **C2:** Ticker Parser Fix (leading/trailing strip + regex validation)
+- [x] **C3:** Party Mapping (116 Congress Members dict + auto-enrichment + eFD name aliases)
+  - Backfill: 853/1.220 historical rows enriched (remaining are non-senators)
+- [x] **F2:** Context Pack MVP (daily Markdown reports with YAML frontmatter)
+  - [x] Output to `CONTEXT_PACK_PATH` on Unraid (`/mnt/user/Workfiles/AlpacaBroker/context_packs`)
+  - [x] Daily overview (`00_uebersicht.md`) + per-candidate files
+  - [x] Preliminary scoring based on Sprint 9 ML importance weights
+  - Scheduled daily at 02:30 CET (after Feature Pipeline)
 
 **Phase 2 — Ab Okt 2026 (nach ≥4 Wochen Datenakkumulation):**
 - [ ] **R1:** Feature Analysis Re-Run — Sprint 9 ML-Analyse aktualisieren
   - Correlations + Feature Importance neu berechnen mit **allen** neuen Features:
     - 9.5b: 19 Features (Macro, SUE, Breadth, Sector, Insider, 13F, Liquidity, Sentiment)
     - 9.5b: Options IV (ATM IV, Skew, Term Slope, Put/Call OI)
-    - 9.5c: Short Interest (B5, sofern bis dahin aktiv)
+    - 9.5c: Short Interest (B5, 3 Features)
   - Automatisch am 1. Okt via `feature_analysis` Job, oder manuell triggern
   - Ergebnis: aktualisierte Importance-Rankings für alle ~80 Features
 - [ ] **F1:** Rule-based Composite Score + Guardrails (gewichtet nach aktualisierten ML-Importance-Werten):
@@ -241,7 +246,8 @@
 - Docker Compose via Compose Manager
 - PostgreSQL 18 external (`postgresql18-alpaca`, port 5435)
 - Alembic migrations run automatically via `entrypoint.sh`
-- 16 scheduler jobs active (10 daily, 4 weekly, 1 monthly, 1 maintenance)
+- 21 scheduler jobs active (12 daily, 4 weekly, 1 monthly, 1 maintenance, 1 analysis, 2 new in 9.5c)
+- Volume mount: `/mnt/user/Workfiles/AlpacaBroker` for Context Pack output
 
 **Update workflow:**
 1. `git push` from Windows

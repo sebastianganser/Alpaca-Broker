@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** May 2026
+**Last updated:** September 2026
 
 ---
 
@@ -19,7 +19,16 @@
 | 01:30 | `estimates_collector` | EPS/Revenue consensus + revisions via yfinance (rolling 90-day window) | 9.5a ✅ |
 | 02:00 | `feature_pipeline` | Compute daily feature snapshots (after all collectors) | 8 ✅ |
 | 02:15 | `target_backfill` | Backfill return targets for older snapshots | 8 ✅ |
+| 02:30 | `context_pack_generator` | Daily Context Pack (Top Candidates + Features → Markdown) | 9.5c ✅ |
 | 03:30 | `log_retention` | Delete collection_logs older than 90 days | 8c ✅ |
+
+## Daily – Early Morning Slot (04:00–07:30 CET)
+
+| Time (CET) | Job | Description | Sprint |
+|---|---|---|---|
+| 04:15 | `fred_collector` | FRED macro indicators (VIX, Yields, HY Spread, Dollar, Inflation) ~11s | 9.5b ✅ |
+| 04:30 | `options_iv_collector` | Options IV snapshots (ATM IV, Skew, Term Structure) ~20 min | 9.5b ✅ |
+| 04:45 | `short_interest_collector` | Short volume via Massive API (5 req/min) ~2.5h | 9.5c ✅ |
 
 ## Daily – Evening Slot (after US EOD)
 
@@ -45,6 +54,7 @@
 | Time (CET) | Job | Description | Sprint |
 |---|---|---|---|
 | 03:00 | `index_sync` | S&P 500 / Nasdaq 100 membership update + **sector enrichment** for new tickers | 7+ ✅ |
+| 05:00 | `feature_analysis` | Correlations + ML Feature Importance (RF, LASSO) + hypothesis tests | 9 ✅ |
 
 ## Manual (via UI)
 

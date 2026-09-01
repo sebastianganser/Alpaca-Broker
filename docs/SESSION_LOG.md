@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ROADMAP.md](ROADMAP.md)
 
-**Last updated:** May 2026
+**Last updated:** September 2026
 
 ---
 
@@ -248,3 +248,26 @@
   - Found via user report: Hickenlooper LBRDK trade showed "—" instead of "351d"
 - **Documentation:** LEARNINGS.md updated (new finding + meta-learning on endpoint parity)
 
+### Session 23 – 1 September 2026 – Sprint 9.5c Phase 1 (Short Interest + Data Quality + Context Pack)
+- **B5: Short Interest Collector** (`f721720`)
+  - ORM Models: `ShortVolume` + `ShortInterest` tables (migration 027)
+  - `ShortInterestCollector` via Massive API (formerly Polygon), 5 req/min rate limit
+  - First run: 757/765 tickers collected, 0 errors, 2h 34min runtime
+  - 3 new features: `short_volume_ratio_5d`, `short_volume_ratio_20d`, `short_volume_change_20d`
+  - Scheduled daily at 04:45 CET
+- **C1: Lag-Gewichtung** – STOCK Act 45-day filter in `_politician_features()`
+- **C2: Ticker Parser** – `_normalize_ticker()` leading/trailing strip + regex validation `^[A-Z]{1,5}(\.[A-Z])?$`
+- **C3: Party Mapping** (`f721720`, `c309f7d`)
+  - `congress_members.py`: 116 members (119th Congress + historical + eFD aliases)
+  - `lookup_member()` with suffix stripping (Jr., II, IV) and trailing comma handling
+  - Auto-enrichment in `PoliticianTradesCollector.fetch()`
+  - Backfill: 853/1.220 historical rows mapped (remaining `Alan Armstrong` = non-senator)
+- **F2: Context Pack MVP** (`f721720`)
+  - `ContextPackGenerator` (376 lines): preliminary scoring, YAML frontmatter, daily overview
+  - Output to `/mnt/user/Workfiles/AlpacaBroker/context_packs` via `CONTEXT_PACK_PATH`
+  - Docker Compose volume mount added
+  - Scheduled daily at 02:30 CET (after Feature Pipeline)
+- **Config:** `POLYGON_API_KEY` + `CONTEXT_PACK_PATH` in Settings + `.env.example`
+- **Scheduler:** 21 jobs total (12 daily, 4 weekly, 1 monthly, 1 maintenance, 1 analysis, 2 new)
+- **Tests:** 358 passed, 0 failed (no regressions)
+- **Documentation:** ROADMAP.md, SCHEDULER.md, DATABASE.md, DATA_SOURCES.md, SESSION_LOG.md updated
