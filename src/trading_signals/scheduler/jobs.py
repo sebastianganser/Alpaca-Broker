@@ -768,12 +768,17 @@ def run_feature_analysis() -> None:
                 engine = FeatureAnalysisEngine(session)
                 report = engine.run()
 
+                # Extract values while still in session context
+                snap_count = report.snapshot_count
+                tick_count = report.ticker_count
+                comp_time = report.computation_time_seconds
+
                 log_entry = CollectionLog(
                     collector_name=collector_name,
                     started_at=started_at,
                     finished_at=datetime.now(),
                     status="success",
-                    records_fetched=report.snapshot_count,
+                    records_fetched=snap_count,
                     records_written=1,
                     gaps_detected=0,
                     log_lines=log_capture.get_lines(),
@@ -783,9 +788,9 @@ def run_feature_analysis() -> None:
 
             logger.info(
                 f"{collector_name}_job finished: "
-                f"{report.snapshot_count} snapshots analyzed, "
-                f"{report.ticker_count} tickers, "
-                f"{report.computation_time_seconds:.0f}s"
+                f"{snap_count} snapshots analyzed, "
+                f"{tick_count} tickers, "
+                f"{comp_time:.0f}s"
             )
         except Exception as e:
             logger.error(f"{collector_name}_job FAILED: {e}")
