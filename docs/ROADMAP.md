@@ -195,19 +195,26 @@
 
 ### Sprint 9.5c – Candidate Pipeline MVP 🔴 Open
 *Minimum viable candidate selection and Context Pack generation.*
-*Phase 1 (jetzt): Datenqualität + Context Pack Infrastruktur.*
-*Phase 2 (ab Okt): Feature-Analyse-Update → Composite Score mit datengestützten Gewichten.*
+*Phase 1 (Sept): Datenqualität + letzte Datenquellen + Context Pack.*
+*Phase 2 (ab Okt): ML-Analyse-Update mit allen neuen Features → Composite Score.*
 
-**Phase 1 — Sofort umsetzbar (Sept 2026):**
+**Phase 1 — Sept 2026:**
+- [ ] **B5:** Short Interest Collector *(requires free Massive/Polygon API key registration)*
+  - Must be completed early September so data accumulates before R1 in October
+  - User action required: register at https://massive.io or https://polygon.io
 - [ ] **C1-C3:** Data quality fixes (Politician lag weighting, ticker parser, party mapping)
 - [ ] **F2:** Context Pack MVP (Candidates + Top Features + Market Context, YAML frontmatter)
   - [ ] Output to configurable Unraid path (`CONTEXT_PACK_PATH` env var)
   - [ ] Daily overview + per-candidate Markdown
 
-**Phase 2 — Nach Feature-Analyse-Update (ab Okt 2026):**
-- [ ] **R1:** Feature Analysis Re-Run (Sprint 9 ML-Analyse aktualisieren mit 19 neuen Features)
+**Phase 2 — Ab Okt 2026 (nach ≥4 Wochen Datenakkumulation):**
+- [ ] **R1:** Feature Analysis Re-Run — Sprint 9 ML-Analyse aktualisieren
+  - Correlations + Feature Importance neu berechnen mit **allen** neuen Features:
+    - 9.5b: 19 Features (Macro, SUE, Breadth, Sector, Insider, 13F, Liquidity, Sentiment)
+    - 9.5b: Options IV (ATM IV, Skew, Term Slope, Put/Call OI)
+    - 9.5c: Short Interest (B5, sofern bis dahin aktiv)
   - Automatisch am 1. Okt via `feature_analysis` Job, oder manuell triggern
-  - Mindestens 4 Wochen Daten für neue Features nötig (akkumuliert seit 31. Aug)
+  - Ergebnis: aktualisierte Importance-Rankings für alle ~80 Features
 - [ ] **F1:** Rule-based Composite Score + Guardrails (gewichtet nach aktualisierten ML-Importance-Werten):
   - [ ] Min. liquidity, max 2/sector, pairwise correlation, churn lock, min-score
   - [ ] `candidate_selections` + `candidate_rejections` tables
