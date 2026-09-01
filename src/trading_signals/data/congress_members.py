@@ -127,26 +127,58 @@ CONGRESS_MEMBERS: dict[str, dict[str, str]] = {
     "TOM CARPER": {"party": "D", "state": "DE", "chamber": "Senate"},
     "DEBBIE STABENOW": {"party": "D", "state": "MI", "chamber": "Senate"},
     "LAPHONZA BUTLER": {"party": "D", "state": "CA", "chamber": "Senate"},
+    # ── eFD name aliases (Sprint 9.5c C3 backfill findings) ──────────
+    # Senate eFD uses formal legal names with suffixes that differ from
+    # the canonical names above. These aliases ensure matching.
+    "ANGUS S KING, JR.": {"party": "I", "state": "ME", "chamber": "Senate"},
+    "A. MITCHELL MCCONNELL, JR.": {"party": "R", "state": "KY", "chamber": "Senate"},
+    "JAMES CONLEY JUSTICE, II": {"party": "R", "state": "WV", "chamber": "Senate"},
+    "WILLIAM F HAGERTY, IV": {"party": "R", "state": "TN", "chamber": "Senate"},
+    "JERRY MORAN,": {"party": "R", "state": "KS", "chamber": "Senate"},
 }
+
+# Suffixes to strip when normalizing names for fallback matching
+_SUFFIXES = {", JR.", ", JR", " JR.", " JR", ", II", ", III", ", IV", " II", " III", " IV"}
+
+
+def _normalize_name(name: str) -> str:
+    """Strip suffixes, trailing commas, and extra whitespace."""
+    name = name.strip().upper().rstrip(",").strip()
+    for suffix in _SUFFIXES:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)].strip()
+            break
+    return name
+
 
 def lookup_member(politician_name: str) -> dict[str, str]:
     """Look up a Congress member by name.
-    
-    Handles common name variations (middle initials, suffixes).
-    Returns empty dict if not found, and logs for manual review.
+
+    Handles common name variations: middle initials, suffixes
+    (Jr., II, IV), trailing commas, and formal legal names.
+    Returns empty dict if not found.
     """
     key = politician_name.strip().upper()
+
+    # 1. Exact match
     result = CONGRESS_MEMBERS.get(key)
     if result:
         return result
-    
-    # Fallback: try matching last name only (handles middle names)
-    last_name = key.split()[-1] if key else ""
+
+    # 2. Try normalized (without suffix/comma)
+    normalized = _normalize_name(key)
+    result = CONGRESS_MEMBERS.get(normalized)
+    if result:
+        return result
+
+    # 3. Fallback: match last name only (after stripping suffixes)
+    last_name = normalized.split()[-1] if normalized else ""
     matches = [
-        (name, info) for name, info in CONGRESS_MEMBERS.items()
+        (name, info)
+        for name, info in CONGRESS_MEMBERS.items()
         if name.split()[-1] == last_name
     ]
     if len(matches) == 1:
         return matches[0][1]
-    
+
     return {}
