@@ -782,10 +782,28 @@ def run_feature_analysis() -> None:
                 engine = FeatureAnalysisEngine(session)
                 report = engine.run()
 
+                if report is None:
+                    logger.warning(
+                        f"{collector_name}_job: insufficient data (<30 dates), skipped"
+                    )
+                    log_entry = CollectionLog(
+                        collector_name=collector_name,
+                        started_at=started_at,
+                        finished_at=datetime.now(),
+                        status="skipped",
+                        records_fetched=0,
+                        records_written=0,
+                        gaps_detected=0,
+                        notes="Insufficient snapshot data (<30 distinct dates)",
+                        log_lines=log_capture.get_lines(),
+                    )
+                    session.add(log_entry)
+                    return
+
                 # Extract values while still in session context
                 snap_count = report.snapshot_count
                 tick_count = report.ticker_count
-                comp_time = report.computation_time_seconds
+                comp_time = report.computation_time_seconds or 0.0
 
                 log_entry = CollectionLog(
                     collector_name=collector_name,
@@ -798,7 +816,7 @@ def run_feature_analysis() -> None:
                     log_lines=log_capture.get_lines(),
                 )
                 session.add(log_entry)
-                session.commit()
+                # Note: no explicit commit needed — get_session() auto-commits
 
             logger.info(
                 f"{collector_name}_job finished: "
