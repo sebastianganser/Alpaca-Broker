@@ -276,7 +276,7 @@ class ContextPackGenerator:
         ])
 
         filepath = day_dir / "00_uebersicht.md"
-        filepath.write_text("\n".join(lines), encoding="utf-8")
+        filepath.write_text("\n".join(lines), encoding="utf-8-sig")
 
     def _write_candidate(self, day_dir, target_date, rank, candidate, pctiles, universe_size):
         """Write a single candidate Markdown file with YAML frontmatter."""
@@ -372,4 +372,4 @@ class ContextPackGenerator:
 
         filename = f"{rank:02d}_{ticker}.md"
         filepath = day_dir / filename
-        filepath.write_text("\n".join(frontmatter + body), encoding="utf-8")
+        filepath.write_text("\n".join(frontmatter + body), encoding="utf-8-sig")
