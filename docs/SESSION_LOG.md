@@ -271,3 +271,22 @@
 - **Scheduler:** 21 jobs total (12 daily, 4 weekly, 1 monthly, 1 maintenance, 1 analysis, 2 new)
 - **Tests:** 358 passed, 0 failed (no regressions)
 - **Documentation:** ROADMAP.md, SCHEDULER.md, DATABASE.md, DATA_SOURCES.md, SESSION_LOG.md updated
+
+### Session 24 – 2 September 2026 – Bugfixes + A1 Stufe 2/3 (Survivorship Bias)
+- **Nachtlauf 01./02.09. verifiziert:** Alle 14 Jobs fehlerfrei, beide neuen Jobs (B5 + F2) im Regelbetrieb
+- **Context Pack Fix:** (`a11e3cd`)
+  - Encoding: utf-8 -> utf-8-sig (BOM) fuer Windows-Kompatibilitaet
+  - Volume-Mount fehlte im Compose Manager (nur im Git-Repo, nicht im Stack)
+  - Verifiziert: 6 Markdown-Files korrekt geschrieben
+- **Feature Analysis Bugfix:** (`9191f47`)
+  - `expire_on_commit=False` in SessionFactory (verhindert DetachedInstanceError global)
+  - None-Guard fuer `engine.run()` Return (insufficient data case)
+  - Doppelten `session.commit()` entfernt (Context Manager committed bereits)
+- **A1 Stufe 2: Delisted Ticker Backfill** (`64524ef`)
+  - 34 delistete Nasdaq 100 Ticker identifiziert (via `index_membership.valid_to`)
+  - 22 Universe-Eintraege erstellt (`is_active=False`)
+  - 23.110 Price Bars von Alpaca geladen (23 Ticker, 2021-01-01 bis Delisting-Datum)
+- **A1 Stufe 3: Feature Recompute Script** (`64524ef`)
+  - `scripts/recompute_features.py` erstellt (112 historische Tage, ~30-60 Min Laufzeit)
+  - Ausfuehrung auf Unraid via `docker exec`
+- **Tests:** 358 passed, 0 failed

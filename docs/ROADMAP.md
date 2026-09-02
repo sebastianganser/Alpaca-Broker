@@ -151,10 +151,11 @@
   - [x] `IndexSyncer` maintains ongoing intervals automatically
   - [x] Manual seeding endpoint `POST /ops/seed/index-membership`
   - ~~Alpaca Assets `asof` parameter~~ *(does not exist — corrected from Opus 5 concept)*
-- [ ] **A1 (Stufe 2/3):** *(Follow-up, planned for later sprint)*
-  - [ ] Backfill price data for delisted tickers (via Alpaca historical bars)
-  - [ ] Full feature computation for delisted tickers
-  - [ ] Manual "Recompute History" button in Settings UI
+- [x] **A1 (Stufe 2/3):** ✅ `64524ef`
+  - [x] Backfill price data for delisted tickers (23 tickers, 23.110 bars via Alpaca)
+  - [x] 22 universe entries created (`is_active=False`)
+  - [x] `scripts/recompute_features.py` — re-runs FeaturePipeline for 112 historical dates
+  - [ ] Manual "Recompute History" button in Settings UI *(deferred — script-based for now)*
 - [x] **A2:** Lookahead Bias Prevention in Feature Pipeline ✅
   - [x] 13F features: `filing_date <= d` statt `report_period <= d` (45-day fix)
   - [x] Insider features: `filing_date <= d` guard auf alle Trade-Queries (2-10 day fix)
