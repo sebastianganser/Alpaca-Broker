@@ -1,7 +1,7 @@
 """FeatureSnapshot ORM model – daily feature vector per ticker.
 
 The heart of the project. Aggregates all raw and derived signal data
-into a single wide table (~77 columns) for ML training. Each row
+into a single wide table (~86 columns) for ML training. Each row
 represents one ticker on one trading day with all available features.
 
 All feature columns are nullable – features self-activate when
@@ -17,6 +17,8 @@ Feature groups:
   - Technical: Point-in-time (6) = 6 features
   - Earnings: Context (3) = 3 features
   - Sentiment: News-based (6) = 6 features
+  - Options IV: point-in-time (4) = 4 features
+  - Estimates: revision signals (5) = 5 features
   - Targets: Forward returns (4) = 4 target variables
 """
 
@@ -179,6 +181,19 @@ class FeatureSnapshot(Base):
     short_volume_ratio_5d: Mapped[float | None] = mapped_column(Numeric(10, 4))
     short_volume_ratio_20d: Mapped[float | None] = mapped_column(Numeric(10, 4))
     short_volume_change_20d: Mapped[float | None] = mapped_column(Numeric(10, 4))
+
+    # ── Options IV Features (Sprint 9.5b D3 → feature integration) ────
+    options_iv_atm_30d: Mapped[float | None] = mapped_column(Numeric(8, 4))
+    options_iv_skew_25d: Mapped[float | None] = mapped_column(Numeric(8, 4))
+    options_iv_term_slope: Mapped[float | None] = mapped_column(Numeric(8, 4))
+    options_iv_put_call_oi: Mapped[float | None] = mapped_column(Numeric(8, 4))
+
+    # ── Estimates Features (Sprint 9.5a B1 → feature integration) ─────
+    eps_revision_pct_30d: Mapped[float | None] = mapped_column(Numeric(10, 6))
+    eps_revision_pct_90d: Mapped[float | None] = mapped_column(Numeric(10, 6))
+    revenue_revision_pct_30d: Mapped[float | None] = mapped_column(Numeric(10, 6))
+    eps_revisions_net_7d: Mapped[int | None] = mapped_column(Integer)
+    eps_revisions_net_30d: Mapped[int | None] = mapped_column(Integer)
 
     # ── Target Variables (backfilled retrospectively) ────────────────
     return_1d: Mapped[float | None] = mapped_column(Numeric(10, 6))

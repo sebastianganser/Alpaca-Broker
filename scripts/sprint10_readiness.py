@@ -4,8 +4,23 @@ Sprint 10 Readiness Check
 Evaluates whether the data is mature enough to build a
 reliable Signal Scoring model (Sprint 10).
 
-Run locally:  DATABASE_URL=postgresql://... python notebooks/sprint10_readiness.py
-Run in container:  python -m trading_signals.analysis.sprint10_readiness
+Checks:
+  1. Data Volume (dates, snapshots, tickers)
+  2. Target Return Coverage (1d, 5d, 20d, 60d fill rates)
+  3. Feature Group Coverage (15 groups, ~86 features)
+  4. Earnings Cycle Coverage (distinct quarters)
+  5. Market Regime Diversity (SPY monthly returns)
+  6. Correlation Stability (across monthly analysis reports)
+  7. ML Training Data Sufficiency
+  8. Data Source Maturity (per-source historical depth)
+
+Updated Sept 2026 for Sprint 9.5 extensions:
+  - New groups: Macro, Breadth, Sector, Liquidity, Short Interest,
+    13F, Options IV, Estimates
+  - Total feature columns: ~86 (up from ~55 in Sprint 8c)
+
+Run locally:  DATABASE_URL=postgresql://... python scripts/sprint10_readiness.py
+Run in container:  docker exec -it alpaca-broker uv run python scripts/sprint10_readiness.py
 """
 
 # %% ── Setup ────────────────────────────────────────────────────────────
@@ -29,7 +44,7 @@ engine = create_engine(settings.database_url)
 
 THRESHOLDS = {
     "min_distinct_dates": 120,       # ~6 months of trading days
-    "min_snapshots": 80_000,         # total rows
+    "min_snapshots": 100_000,        # total rows (~86 features per ticker per day)
     "min_tickers": 600,              # active universe
     "min_return_20d_pct": 65.0,      # % of rows with return_20d filled
     "min_return_60d_pct": 35.0,      # % of rows with return_60d filled
@@ -123,26 +138,50 @@ print("  3. FEATURE GROUP COVERAGE (latest date)")
 print("─" * 72)
 
 FEATURE_GROUPS = {
+    # ── Core groups (pre-Sprint 9.5) ────────────────────────────────
     "ARK": ["ark_in_etf_count", "ark_total_weight", "ark_conviction_score",
             "ark_multi_etf_signal", "ark_conviction_streak"],
     "Insider": ["insider_cluster_score", "insider_cluster_active",
-                "cluster_count_30d", "days_since_last_cluster"],
+                "cluster_count_30d", "days_since_last_cluster",
+                "insider_buy_ratio_30d", "insider_buy_ratio_90d"],
     "Analyst": ["analyst_rating_score", "analyst_price_target_upside",
                 "analyst_net_sentiment_30d"],
     "Politician": ["politician_buy_count_60d_disclosure",
                    "politician_buy_count_60d_transaction"],
     "Fundamentals": ["pe_ratio", "forward_pe", "profit_margin", "debt_to_equity"],
-    "Technical": ["price_vs_sma50", "rsi_14", "relative_strength_spy"],
-    "Earnings": ["earnings_days_until", "consecutive_beats"],
-    "Sentiment": ["sentiment_avg_7d", "sentiment_avg_30d", "sentiment_momentum"],
+    "Technical": ["price_vs_sma50", "rsi_14", "relative_strength_spy",
+                  "volume_ratio_20d", "atr_14_pct"],
+    "Earnings": ["earnings_days_until", "consecutive_beats",
+                 "sue_last", "days_since_last_earnings"],
+    "Sentiment": ["sentiment_avg_7d", "sentiment_avg_30d", "sentiment_momentum",
+                  "news_volume_ratio_7d"],
+    # ── Sprint 9.5 additions ────────────────────────────────────────
+    "13F": ["form13f_exited_positions_count", "form13f_holder_delta_qoq"],
+    "Macro": ["macro_vix", "macro_yield_spread", "macro_hy_spread",
+              "macro_dollar_index", "macro_inflation_expectation",
+              "macro_vix_regime"],
+    "Breadth": ["breadth_advance_decline", "breadth_pct_above_sma50"],
+    "Sector": ["sector_relative_return_20d", "sector_relative_momentum"],
+    "Liquidity": ["dollar_volume_20d", "amihud_illiquidity_20d"],
+    "Short Interest": ["short_volume_ratio_5d", "short_volume_ratio_20d",
+                       "short_volume_change_20d"],
+    "Options IV": ["options_iv_atm_30d", "options_iv_skew_25d",
+                   "options_iv_term_slope", "options_iv_put_call_oi"],
+    "Estimates": ["eps_revision_pct_30d", "eps_revision_pct_90d",
+                  "revenue_revision_pct_30d", "eps_revisions_net_7d",
+                  "eps_revisions_net_30d"],
 }
 
 # Sparse signal groups have structurally low coverage (not every ticker
-# is in ARK ETFs, has insider trades, or politician activity).
+# is in ARK ETFs, has insider trades, politician activity, or 13F filings).
 FEATURE_GROUP_THRESHOLDS = {
     "ARK": 15.0,
     "Insider": 20.0,
     "Politician": 20.0,
+    "13F": 10.0,              # Only fills during quarterly filing windows
+    "Short Interest": 50.0,   # Needs 20+ trading days to compute 20d averages
+    "Options IV": 40.0,       # Not all tickers have liquid options
+    "Estimates": 30.0,        # Some tickers have no analyst coverage
 }
 FEATURE_GROUP_DEFAULT_THRESHOLD = 50.0
 
@@ -290,6 +329,72 @@ if "return_20d" in df.columns:
 else:
     print("  ❌ return_20d column missing")
     results.extend([False, False])
+
+# %% ── Check 8: Data Source Maturity ───────────────────────────────────
+
+print("\n" + "─" * 72)
+print("  8. DATA SOURCE MATURITY (per-source historical depth)")
+print("─" * 72)
+
+# Each data source needs a minimum number of distinct dates to produce
+# reliable features. Newer sources (Short Interest, Options IV) need
+# less history but enough for rolling averages (5d, 20d).
+SOURCE_MATURITY = {
+    "Options IV": {
+        "query": "SELECT COUNT(DISTINCT snapshot_date) FROM signals.options_iv_snapshot",
+        "min_days": 60,
+        "note": "Needed for stable IV baselines; IV-Rank needs 252d (tracked separately)",
+    },
+    "Short Volume": {
+        "query": "SELECT COUNT(DISTINCT trade_date) FROM signals.short_volume",
+        "min_days": 30,
+        "note": "Minimum for 20d rolling averages + change metric",
+    },
+    "Estimates": {
+        "query": "SELECT COUNT(DISTINCT as_of) FROM signals.estimates_snapshot",
+        "min_days": 60,
+        "note": "Revision momentum needs 90d; 60d minimum for 30d revision %",
+    },
+    "FRED Macro": {
+        "query": "SELECT COUNT(DISTINCT obs_date) FROM signals.fred_observations WHERE obs_date >= CURRENT_DATE - INTERVAL '6 months'",
+        "min_days": 60,
+        "note": "Macro features are market-wide; need regime variation",
+    },
+    "News Sentiment": {
+        "query": "SELECT COUNT(DISTINCT published_at::date) FROM signals.news_articles",
+        "min_days": 90,
+        "note": "Sentiment features use 7d/30d windows; 90d for baseline",
+    },
+}
+
+maturity_ok = True
+for source_name, cfg in SOURCE_MATURITY.items():
+    try:
+        days = pd.read_sql(text(cfg["query"]), engine).iloc[0, 0]
+        ok = days >= cfg["min_days"]
+        if not ok:
+            maturity_ok = False
+        icon = "✅" if ok else "❌"
+        print(f"  {source_name:>16}:  {days:>4} days  (min: {cfg['min_days']})  {icon}")
+        if not ok:
+            print(f"                     ↳ {cfg['note']}")
+    except Exception as e:
+        maturity_ok = False
+        print(f"  {source_name:>16}:  QUERY FAILED ({e})  ❌")
+
+results.append(maturity_ok)
+
+# Check IV-Rank readiness separately (informational, not blocking)
+try:
+    iv_days = pd.read_sql(
+        text("SELECT COUNT(DISTINCT snapshot_date) FROM signals.options_iv_snapshot"),
+        engine,
+    ).iloc[0, 0]
+    iv_rank_ready = iv_days >= 252
+    print(f"\n  IV-Rank (252d):     {iv_days:>4} days  (need: 252)  {'✅' if iv_rank_ready else '⏳ ' + str(252 - iv_days) + ' days remaining'}")
+    print(f"                     ↳ Informational only – not blocking Sprint 10")
+except Exception:
+    pass
 
 # %% ── VERDICT ──────────────────────────────────────────────────────────
 

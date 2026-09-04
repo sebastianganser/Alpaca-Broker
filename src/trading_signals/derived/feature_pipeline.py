@@ -1,7 +1,7 @@
 """Feature Pipeline – aggregates raw signals into daily feature vectors.
 
 The heart of the ML data preparation. For each active ticker on a given
-trading day, computes ~70 features across 11 signal groups and stores
+trading day, computes ~80 features across 13 signal groups and stores
 them in the feature_snapshots table via UPSERT.
 
 Feature Groups:
@@ -16,6 +16,8 @@ Feature Groups:
   - Earnings (5): Days until, beats, surprise trend, SUE, PEAD (Sprint 9.5b B2)
   - Sentiment (7): News sentiment, momentum, attention, volume ratio (Sprint 9.5b E3)
   - Macro (6): VIX, yields, HY spread, dollar, inflation (Sprint 9.5b D1)
+  - Options IV (4): ATM IV, skew, term slope, put/call OI (Sprint 9.5b D3)
+  - Estimates (5): EPS/revenue revision %, net revision counts (Sprint 9.5a B1)
 """
 
 from __future__ import annotations
@@ -41,6 +43,8 @@ from trading_signals.db.models.politicians import PoliticianTrade
 from trading_signals.db.models.prices import PriceDaily
 from trading_signals.db.models.technical_indicators import TechnicalIndicator
 from trading_signals.db.models.universe import Universe
+from trading_signals.db.models.options_iv import OptionsIVSnapshot
+from trading_signals.db.models.estimates import EstimatesSnapshot
 from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -135,6 +139,8 @@ class FeaturePipeline:
             ("breadth", self._breadth_features),
             ("sector", self._sector_features),
             ("short_interest", self._short_interest_features),
+            ("options_iv", self._options_iv_features),
+            ("estimates", self._estimates_features),
         ]:
             try:
                 features.update(method(ticker, d))
@@ -1228,6 +1234,98 @@ class FeaturePipeline:
             "short_volume_ratio_20d": avg_20d,
             "short_volume_change_20d": change,
         }
+
+    def _options_iv_features(self, ticker: str, d: date) -> dict:
+        """Options implied volatility features from daily IV snapshots.
+
+        Returns the latest available IV snapshot on or before d.
+        IV-Rank requires ~1 year of data and will be added later.
+        """
+        row = self.session.execute(
+            select(
+                OptionsIVSnapshot.atm_iv_30d,
+                OptionsIVSnapshot.skew_25d,
+                OptionsIVSnapshot.term_slope,
+                OptionsIVSnapshot.put_call_oi,
+            )
+            .where(OptionsIVSnapshot.ticker == ticker)
+            .where(OptionsIVSnapshot.snapshot_date <= d)
+            .order_by(OptionsIVSnapshot.snapshot_date.desc())
+            .limit(1)
+        ).first()
+
+        if not row:
+            return {}
+
+        return {
+            "options_iv_atm_30d": float(row[0]) if row[0] is not None else None,
+            "options_iv_skew_25d": float(row[1]) if row[1] is not None else None,
+            "options_iv_term_slope": float(row[2]) if row[2] is not None else None,
+            "options_iv_put_call_oi": float(row[3]) if row[3] is not None else None,
+        }
+
+    def _estimates_features(self, ticker: str, d: date) -> dict:
+        """Analyst estimates revision features.
+
+        Measures the direction and magnitude of EPS/revenue consensus revisions.
+        Revisions Momentum is one of the strongest short-term predictive signals.
+
+        Uses current-quarter ('0q') estimates as the primary signal.
+        """
+        # Get latest estimate snapshot for current quarter on or before d
+        row = self.session.execute(
+            select(EstimatesSnapshot)
+            .where(EstimatesSnapshot.ticker == ticker)
+            .where(EstimatesSnapshot.period == "0q")
+            .where(EstimatesSnapshot.as_of <= d)
+            .order_by(EstimatesSnapshot.as_of.desc())
+            .limit(1)
+        ).scalar()
+
+        if not row:
+            return {}
+
+        result = {}
+
+        # EPS revision %: (current - N_days_ago) / abs(N_days_ago)
+        if row.eps_current is not None and row.eps_30d_ago is not None:
+            base = abs(float(row.eps_30d_ago))
+            if base > 0.001:  # avoid division by near-zero
+                result["eps_revision_pct_30d"] = round(
+                    (float(row.eps_current) - float(row.eps_30d_ago)) / base, 6
+                )
+
+        if row.eps_current is not None and row.eps_90d_ago is not None:
+            base = abs(float(row.eps_90d_ago))
+            if base > 0.001:
+                result["eps_revision_pct_90d"] = round(
+                    (float(row.eps_current) - float(row.eps_90d_ago)) / base, 6
+                )
+
+        # Revenue revision %: compare latest revenue_avg with a 30d-ago snapshot
+        if row.revenue_avg is not None:
+            older = self.session.execute(
+                select(EstimatesSnapshot.revenue_avg)
+                .where(EstimatesSnapshot.ticker == ticker)
+                .where(EstimatesSnapshot.period == "0q")
+                .where(EstimatesSnapshot.as_of <= d - timedelta(days=30))
+                .order_by(EstimatesSnapshot.as_of.desc())
+                .limit(1)
+            ).scalar()
+            if older is not None:
+                base = abs(float(older))
+                if base > 1.0:  # revenue in absolute $, threshold higher
+                    result["revenue_revision_pct_30d"] = round(
+                        (float(row.revenue_avg) - float(older)) / base, 6
+                    )
+
+        # Net revision counts (up - down)
+        if row.rev_up_7d is not None and row.rev_down_7d is not None:
+            result["eps_revisions_net_7d"] = row.rev_up_7d - row.rev_down_7d
+        if row.rev_up_30d is not None and row.rev_down_30d is not None:
+            result["eps_revisions_net_30d"] = row.rev_up_30d - row.rev_down_30d
+
+        return result
 
     def _upsert(self, ticker: str, d: date, features: dict) -> None:
         """Insert or update a feature snapshot row."""
