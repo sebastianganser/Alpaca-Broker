@@ -307,16 +307,23 @@ class FeatureCoverageItem(BaseModel):
     """Coverage per ticker across feature groups (for heatmap)."""
     ticker: str
     ark: int = 0           # filled columns out of 11
-    insider: int = 0       # filled columns out of 8
+    insider: int = 0       # filled columns out of 10
     analyst: int = 0       # filled columns out of 7
     politician: int = 0    # filled columns out of 4
-    form13f: int = 0       # filled columns out of 2
+    form13f: int = 0       # filled columns out of 4
     fundamentals: int = 0  # filled columns out of 8
     technical: int = 0     # filled columns out of 6
-    earnings: int = 0      # filled columns out of 3
-    sentiment: int = 0     # filled columns out of 6
+    earnings: int = 0      # filled columns out of 5
+    sentiment: int = 0     # filled columns out of 7
+    liquidity: int = 0     # filled columns out of 2
+    macro: int = 0         # filled columns out of 6
+    breadth: int = 0       # filled columns out of 2
+    sector: int = 0        # filled columns out of 2
+    short_interest: int = 0  # filled columns out of 3
+    options_iv: int = 0    # filled columns out of 4
+    estimates: int = 0     # filled columns out of 5
     total_filled: int = 0  # sum of all filled features
-    total_possible: int = 55  # total feature columns (49 + 6 sentiment)
+    total_possible: int = 86  # total feature columns
 
 
 class FeatureCoverageResponse(BaseModel):
@@ -378,7 +385,7 @@ class TickerFeatureDetail(BaseModel):
     snapshot_date: date | None = None
     groups: list[FeatureGroupDetail] = []
     total_filled: int = 0
-    total_possible: int = 55
+    total_possible: int = 86
     # Target variables
     return_1d: float | None = None
     return_5d: float | None = None

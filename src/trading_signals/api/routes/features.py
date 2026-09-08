@@ -37,6 +37,7 @@ FEATURE_GROUPS = {
         "insider_cluster_active", "insider_cluster_score",
         "cluster_count_30d", "cluster_count_60d",
         "cluster_score_sum_60d", "days_since_last_cluster",
+        "insider_buy_ratio_30d", "insider_buy_ratio_90d",
     ],
     "Analyst": [
         "analyst_rating_score", "analyst_upgrades_30d",
@@ -52,6 +53,7 @@ FEATURE_GROUPS = {
     ],
     "13F": [
         "form13f_top_holder_count", "form13f_new_positions_count",
+        "form13f_exited_positions_count", "form13f_holder_delta_qoq",
     ],
     "Fundamentals": [
         "pe_ratio", "forward_pe", "ps_ratio", "revenue_growth_yoy",
@@ -63,11 +65,38 @@ FEATURE_GROUPS = {
     ],
     "Earnings": [
         "earnings_days_until", "consecutive_beats", "surprise_trend_3q",
+        "sue_last", "days_since_last_earnings",
     ],
     "Sentiment": [
         "sentiment_avg_7d", "sentiment_avg_30d", "sentiment_momentum",
         "sentiment_neg_count_7d", "sentiment_article_count_7d",
-        "market_sentiment_7d",
+        "market_sentiment_7d", "news_volume_ratio_7d",
+    ],
+    "Liquidity": [
+        "dollar_volume_20d", "amihud_illiquidity_20d",
+    ],
+    "Macro": [
+        "macro_yield_spread", "macro_vix", "macro_vix_regime",
+        "macro_hy_spread", "macro_dollar_index", "macro_inflation_expectation",
+    ],
+    "Breadth": [
+        "breadth_advance_decline", "breadth_pct_above_sma50",
+    ],
+    "Sector": [
+        "sector_relative_return_20d", "sector_relative_momentum",
+    ],
+    "Short Interest": [
+        "short_volume_ratio_5d", "short_volume_ratio_20d",
+        "short_volume_change_20d",
+    ],
+    "Options IV": [
+        "options_iv_atm_30d", "options_iv_skew_25d",
+        "options_iv_term_slope", "options_iv_put_call_oi",
+    ],
+    "Estimates": [
+        "eps_revision_pct_30d", "eps_revision_pct_90d",
+        "revenue_revision_pct_30d", "eps_revisions_net_7d",
+        "eps_revisions_net_30d",
     ],
 }
 
@@ -85,6 +114,13 @@ SOURCE_INDICATORS = {
     "Technical": "rsi_14",
     "Earnings": "earnings_days_until",
     "Sentiment": "sentiment_avg_7d",
+    "Liquidity": "dollar_volume_20d",
+    "Macro": "macro_vix",
+    "Breadth": "breadth_advance_decline",
+    "Sector": "sector_relative_return_20d",
+    "Short Interest": "short_volume_ratio_5d",
+    "Options IV": "options_iv_atm_30d",
+    "Estimates": "eps_revision_pct_30d",
 }
 
 
@@ -128,8 +164,17 @@ def get_feature_coverage(db: Session = Depends(get_db)):
         technical = _count_filled(row, FEATURE_GROUPS["Technical"])
         earnings = _count_filled(row, FEATURE_GROUPS["Earnings"])
         sentiment = _count_filled(row, FEATURE_GROUPS["Sentiment"])
+        liquidity = _count_filled(row, FEATURE_GROUPS["Liquidity"])
+        macro = _count_filled(row, FEATURE_GROUPS["Macro"])
+        breadth = _count_filled(row, FEATURE_GROUPS["Breadth"])
+        sector = _count_filled(row, FEATURE_GROUPS["Sector"])
+        short_interest = _count_filled(row, FEATURE_GROUPS["Short Interest"])
+        options_iv = _count_filled(row, FEATURE_GROUPS["Options IV"])
+        estimates = _count_filled(row, FEATURE_GROUPS["Estimates"])
         total = (ark + insider + analyst + politician + form13f
-                 + fundamentals + technical + earnings + sentiment)
+                 + fundamentals + technical + earnings + sentiment
+                 + liquidity + macro + breadth + sector
+                 + short_interest + options_iv + estimates)
 
         items.append(FeatureCoverageItem(
             ticker=row.ticker,
@@ -142,6 +187,13 @@ def get_feature_coverage(db: Session = Depends(get_db)):
             technical=technical,
             earnings=earnings,
             sentiment=sentiment,
+            liquidity=liquidity,
+            macro=macro,
+            breadth=breadth,
+            sector=sector,
+            short_interest=short_interest,
+            options_iv=options_iv,
+            estimates=estimates,
             total_filled=total,
         ))
 
