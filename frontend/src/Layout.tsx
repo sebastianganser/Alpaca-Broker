@@ -136,7 +136,7 @@ export default function Layout() {
         <WorldClock />
         <div style={{ padding: '0 var(--space-lg)' }}>
           <div className="label-dim" style={{ fontSize: '0.6rem' }}>
-            v0.2.0 · Sprint 8
+            v0.9.5c · Sprint 9.5c
           </div>
         </div>
       </aside>
