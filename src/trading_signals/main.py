@@ -40,6 +40,7 @@ from trading_signals.scheduler.jobs import (
     run_fundamentals_collector,
     run_index_sync,
     run_log_retention,
+    run_data_retention,
     run_news_collector,
     run_options_iv_collector,
     run_politician_trades_collector,
@@ -206,6 +207,14 @@ def create_scheduler() -> BackgroundScheduler:
         CronTrigger(hour=3, minute=30),
         id="log_retention",
         name="Daily Log Retention (90 days)",
+    )
+
+    # ── Data Retention: Weekly Sunday 03:00 (cleanup old data, 20 quarters) ──
+    scheduler.add_job(
+        run_data_retention,
+        CronTrigger(day_of_week="sun", hour=3, minute=0),
+        id="data_retention",
+        name="Weekly Data Retention (20 quarters, excl. earnings_calendar)",
     )
 
     # ── FRED Macro: Daily at 04:15 (Sprint 9.5b) ──

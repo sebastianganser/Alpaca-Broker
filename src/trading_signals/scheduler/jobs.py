@@ -748,6 +748,127 @@ def run_log_retention() -> None:
         logger.error(f"log_retention_job FAILED: {e}")
 
 
+# ── Data Retention ───────────────────────────────────────────────────────
+
+DATA_RETENTION_QUARTERS = 20  # 20 quarters = 5 years
+
+
+def _quarter_cutoff(retention_quarters: int) -> "date":
+    """Compute the cutoff date: start of the quarter that is
+    `retention_quarters` quarters ago.
+
+    E.g. if today is 2026-09-22 (Q3 2026) and retention=20,
+    cutoff = start of Q3 2021 = 2021-07-01.
+    Data older than this date will be deleted.
+    """
+    from datetime import date
+
+    today = date.today()
+    current_q = (today.month - 1) // 3  # 0-based quarter index (0=Q1..3=Q4)
+    current_year = today.year
+
+    # Total quarters since epoch, minus retention
+    total_q = current_year * 4 + current_q - retention_quarters
+    cutoff_year = total_q // 4
+    cutoff_q = total_q % 4  # 0-based
+
+    cutoff_month = cutoff_q * 3 + 1  # 1=Jan, 4=Apr, 7=Jul, 10=Oct
+    return date(cutoff_year, cutoff_month, 1)
+
+
+def run_data_retention() -> None:
+    """Delete data older than DATA_RETENTION_QUARTERS from all tables.
+
+    Scheduled for Sunday 03:00 Europe/Berlin (weekly).
+    Excludes: earnings_calendar (historical value), collection_log
+    (has its own 90-day retention).
+
+    Uses quarter-based cutoff so boundaries align with calendar quarters.
+    """
+    from datetime import date, datetime
+
+    from sqlalchemy import delete
+
+    from trading_signals.db.models.ark import ArkDelta, ArkHolding
+    from trading_signals.db.models.analysis import AnalysisReport
+    from trading_signals.db.models.estimates import EstimatesSnapshot
+    from trading_signals.db.models.features import FeatureSnapshot
+    from trading_signals.db.models.form13f import Form13FHolding
+    from trading_signals.db.models.fundamentals import (
+        AnalystRating,
+        FundamentalsSnapshot,
+    )
+    from trading_signals.db.models.insider import InsiderCluster, InsiderTrade
+    from trading_signals.db.models.macro_series import MacroSeries
+    from trading_signals.db.models.news import NewsArticle, NewsSentiment
+    from trading_signals.db.models.options_iv import OptionsIVSnapshot
+    from trading_signals.db.models.politicians import PoliticianTrade
+    from trading_signals.db.models.prices import PriceDaily
+    from trading_signals.db.models.short_interest import ShortInterest, ShortVolume
+    from trading_signals.db.models.technical_indicators import TechnicalIndicator
+    from trading_signals.db.session import get_session
+
+    cutoff = _quarter_cutoff(DATA_RETENTION_QUARTERS)
+    logger.info(
+        f"Scheduler triggered: data_retention_job "
+        f"(cutoff={cutoff}, retention={DATA_RETENTION_QUARTERS} quarters)"
+    )
+
+    # Tables to prune: (Model, date_column, label)
+    # Order matters: news_sentiment must be deleted BEFORE news_articles (FK)
+    tables = [
+        (NewsSentiment, NewsSentiment.scored_at, "news_sentiment"),
+        (NewsArticle, NewsArticle.published_at, "news_articles"),
+        (PriceDaily, PriceDaily.trade_date, "prices_daily"),
+        (TechnicalIndicator, TechnicalIndicator.trade_date, "technical_indicators"),
+        (InsiderTrade, InsiderTrade.transaction_date, "insider_trades"),
+        (InsiderCluster, InsiderCluster.cluster_start, "insider_clusters"),
+        (AnalystRating, AnalystRating.rating_date, "analyst_ratings"),
+        (ArkHolding, ArkHolding.snapshot_date, "ark_holdings"),
+        (ArkDelta, ArkDelta.delta_date, "ark_deltas"),
+        (FundamentalsSnapshot, FundamentalsSnapshot.snapshot_date, "fundamentals_snapshot"),
+        (Form13FHolding, Form13FHolding.report_period, "form13f_holdings"),
+        (PoliticianTrade, PoliticianTrade.transaction_date, "politician_trades"),
+        (FeatureSnapshot, FeatureSnapshot.snapshot_date, "feature_snapshots"),
+        (OptionsIVSnapshot, OptionsIVSnapshot.snapshot_date, "options_iv_snapshot"),
+        (EstimatesSnapshot, EstimatesSnapshot.as_of, "estimates_snapshot"),
+        (ShortVolume, ShortVolume.trade_date, "short_volume"),
+        (ShortInterest, ShortInterest.settlement_date, "short_interest"),
+        (MacroSeries, MacroSeries.obs_date, "macro_series"),
+        (AnalysisReport, AnalysisReport.report_date, "analysis_reports"),
+    ]
+
+    total_deleted = 0
+    try:
+        with get_session() as session:
+            for model, date_col, label in tables:
+                try:
+                    result = session.execute(
+                        delete(model).where(date_col < cutoff)
+                    )
+                    count = result.rowcount
+                    if count > 0:
+                        logger.info(
+                            f"data_retention: {label} — {count} rows deleted "
+                            f"(older than {cutoff})"
+                        )
+                        total_deleted += count
+                except Exception as table_err:
+                    logger.warning(
+                        f"data_retention: {label} — skipped: {table_err}"
+                    )
+                    session.rollback()
+
+            session.commit()
+
+        logger.info(
+            f"data_retention_job finished: {total_deleted} total rows deleted "
+            f"across all tables (cutoff={cutoff})"
+        )
+    except Exception as e:
+        logger.error(f"data_retention_job FAILED: {e}")
+
+
 # ── Feature Analysis ─────────────────────────────────────────────────────
 
 
