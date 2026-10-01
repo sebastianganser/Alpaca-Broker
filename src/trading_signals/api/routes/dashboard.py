@@ -20,21 +20,30 @@ from trading_signals.api.schemas import (
     TableStats,
 )
 from trading_signals.db.models import (
+    AnalysisReport,
     AnalystRating,
     ARKDelta,
     ARKHolding,
     CollectionLog,
     EarningsCalendar,
+    EstimatesSnapshot,
     FeatureSnapshot,
     Form13FHolding,
     FundamentalsSnapshot,
+    IndexMembership,
     InsiderCluster,
     InsiderTrade,
+    MacroSeries,
+    NewsArticle,
+    NewsSentiment,
+    OptionsIVSnapshot,
     PoliticianTrade,
     PriceDaily,
     TechnicalIndicator,
+    TickerBlacklist,
     Universe,
 )
+from trading_signals.db.models.short_interest import ShortInterest, ShortVolume
 
 router = APIRouter(prefix="/dashboard")
 
@@ -43,19 +52,36 @@ _start_time = time.time()
 
 # Table models with display names
 _TABLE_MODELS = [
+    # ── Core ──
     ("universe", Universe, "ticker", None),
     ("prices_daily", PriceDaily, "trade_date", "trade_date"),
+    ("technical_indicators", TechnicalIndicator, "trade_date", "trade_date"),
+    # ── Fundamentals & Earnings ──
+    ("fundamentals_snapshot", FundamentalsSnapshot, "snapshot_date", "snapshot_date"),
+    ("analyst_ratings", AnalystRating, "rating_date", "rating_date"),
+    ("earnings_calendar", EarningsCalendar, "earnings_date", "earnings_date"),
+    ("estimates_snapshot", EstimatesSnapshot, "as_of", "as_of"),
+    # ── Alternative Data ──
     ("ark_holdings", ARKHolding, "snapshot_date", "snapshot_date"),
     ("ark_deltas", ARKDelta, "delta_date", "delta_date"),
     ("insider_trades", InsiderTrade, "transaction_date", "transaction_date"),
     ("insider_clusters", InsiderCluster, "cluster_start", "cluster_start"),
     ("form13f_holdings", Form13FHolding, "report_period", "report_period"),
     ("politician_trades", PoliticianTrade, "disclosure_date", "disclosure_date"),
-    ("fundamentals_snapshot", FundamentalsSnapshot, "snapshot_date", "snapshot_date"),
-    ("analyst_ratings", AnalystRating, "rating_date", "rating_date"),
-    ("earnings_calendar", EarningsCalendar, "earnings_date", "earnings_date"),
-    ("technical_indicators", TechnicalIndicator, "trade_date", "trade_date"),
+    # ── News & Sentiment ──
+    ("news_articles", NewsArticle, "published_at", "published_at"),
+    ("news_sentiment", NewsSentiment, "scored_at", "scored_at"),
+    # ── Market Microstructure ──
+    ("options_iv_snapshot", OptionsIVSnapshot, "snapshot_date", "snapshot_date"),
+    ("short_volume", ShortVolume, "trade_date", "trade_date"),
+    ("short_interest", ShortInterest, "settlement_date", "settlement_date"),
+    # ── Macro & Derived ──
+    ("macro_series", MacroSeries, "obs_date", "obs_date"),
     ("feature_snapshots", FeatureSnapshot, "snapshot_date", "snapshot_date"),
+    ("analysis_reports", AnalysisReport, "report_date", "report_date"),
+    # ── System ──
+    ("index_membership", IndexMembership, "valid_from", None),
+    ("ticker_blacklist", TickerBlacklist, "detected_at", None),
     ("collection_log", CollectionLog, "started_at", None),
 ]
 
