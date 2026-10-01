@@ -175,13 +175,13 @@ FEATURE_GROUPS = {
 # Sparse signal groups have structurally low coverage (not every ticker
 # is in ARK ETFs, has insider trades, politician activity, or 13F filings).
 FEATURE_GROUP_THRESHOLDS = {
-    "ARK": 15.0,
+    "ARK": 3.0,                # ARK holds ~30/750 tickers → max ~4% coverage
     "Insider": 20.0,
-    "Politician": 20.0,
-    "13F": 10.0,              # Only fills during quarterly filing windows
-    "Short Interest": 50.0,   # Needs 20+ trading days to compute 20d averages
-    "Options IV": 40.0,       # Not all tickers have liquid options
-    "Estimates": 30.0,        # Some tickers have no analyst coverage
+    "Politician": 5.0,         # Few tickers traded by politicians
+    "13F": 5.0,                # Only fills during quarterly filing windows (lag ~45d)
+    "Short Interest": 50.0,    # Needs 20+ trading days to compute 20d averages
+    "Options IV": 40.0,        # Not all tickers have liquid options
+    "Estimates": 30.0,         # Some tickers have no analyst coverage
 }
 FEATURE_GROUP_DEFAULT_THRESHOLD = 50.0
 
@@ -356,7 +356,7 @@ SOURCE_MATURITY = {
         "note": "Revision momentum needs 90d; 60d minimum for 30d revision %",
     },
     "FRED Macro": {
-        "query": "SELECT COUNT(DISTINCT obs_date) FROM signals.fred_observations WHERE obs_date >= CURRENT_DATE - INTERVAL '6 months'",
+        "query": "SELECT COUNT(DISTINCT obs_date) FROM signals.macro_series WHERE obs_date >= CURRENT_DATE - INTERVAL '6 months'",
         "min_days": 60,
         "note": "Macro features are market-wide; need regime variation",
     },
