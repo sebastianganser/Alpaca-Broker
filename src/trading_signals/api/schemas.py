@@ -5,8 +5,16 @@ clean boundaries between the database and API layers.
 """
 
 from datetime import date, datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
+
+from trading_signals.scheduler.registry import CHAIN_STEP_JOB_IDS, normalize_job_id
+
+
+def is_chain_step(job_id: str) -> bool:
+    """True for paused jobs that only run inside ``nightly_chain``."""
+    return normalize_job_id(job_id) in CHAIN_STEP_JOB_IDS
 
 # ── Dashboard Schemas ────────────────────────────────────────────────────
 
@@ -19,6 +27,12 @@ class CollectorStatus(BaseModel):
     records_written: int | None = None
     next_run: datetime | None = None
     is_running: bool = False
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def via_chain(self) -> bool:
+        """Paused job executed by ``nightly_chain`` (``next_run`` is null)."""
+        return is_chain_step(self.id)
 
 
 class TableStats(BaseModel):
@@ -60,6 +74,7 @@ class TickerSummary(BaseModel):
     index_membership: list[str] = Field(default_factory=list)
     last_price: float | None = None
     last_price_date: date | None = None
+    price_change_pct: float | None = None  # vs. previous trading day
 
 
 class UniverseResponse(BaseModel):
@@ -110,7 +125,7 @@ class ARKSummaryItem(BaseModel):
     n_etfs: int                    # Number of ETFs with activity
     n_days: int                    # Number of days with activity
     etfs: list[str]                # Which ETFs were involved
-    direction: str                 # 'increased', 'decreased', 'mixed'
+    direction: Literal["increased", "decreased", "mixed"]
     first_date: date
     last_date: date
 
@@ -140,15 +155,41 @@ class PoliticianTradeItem(BaseModel):
 
 
 class AnalystRatingItem(BaseModel):
-    """Analyst rating change."""
+    """Analyst rating change.
+
+    ``firm_target_new`` / ``firm_target_old`` are the price targets published
+    by this firm together with the rating change. ``consensus_target`` is the
+    median target across all analysts (latest fundamentals snapshot) and is
+    context only – it is NOT the firm's target.
+    """
     ticker: str
     firm: str | None = None
     rating_date: date | None = None
     rating_new: str | None = None
     rating_old: str | None = None
     action: str | None = None
-    price_target_new: float | None = None
-    price_target_old: float | None = None
+    firm_target_new: float | None = None
+    firm_target_old: float | None = None
+    consensus_target: float | None = None
+
+
+class TickerSignalCounts(BaseModel):
+    """Uncapped number of signal events per category in the lookback window."""
+    ark_deltas: int = 0
+    insider_clusters: int = 0
+    politician_trades: int = 0
+    analyst_ratings: int = 0
+
+
+class TickerSignals(BaseModel):
+    """All signal data for one ticker (lists may be capped, counts are not)."""
+    ticker: str
+    days: int
+    ark_deltas: list[ARKDeltaItem] = Field(default_factory=list)
+    insider_clusters: list[InsiderClusterItem] = Field(default_factory=list)
+    politician_trades: list[PoliticianTradeItem] = Field(default_factory=list)
+    analyst_ratings: list[AnalystRatingItem] = Field(default_factory=list)
+    counts: TickerSignalCounts = Field(default_factory=TickerSignalCounts)
 
 
 # ── Ticker Detail Schemas ────────────────────────────────────────────────
@@ -206,7 +247,7 @@ class FundamentalsData(BaseModel):
 class DataQualityDimension(BaseModel):
     """Single data quality dimension status for a ticker."""
     label: str
-    status: str  # "complete", "partial", "missing"
+    status: Literal["complete", "partial", "missing"]
     summary: str
     detail: str | None = None
 
@@ -229,6 +270,12 @@ class SchedulerJobInfo(BaseModel):
     pending: bool = False
     is_running: bool = False
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def via_chain(self) -> bool:
+        """Paused job executed by ``nightly_chain`` (``next_run`` is null)."""
+        return is_chain_step(self.id)
+
 
 class AlembicStatus(BaseModel):
     """Current Alembic migration status."""
@@ -241,7 +288,7 @@ class BackfillStatus(BaseModel):
     """Status of a running backfill operation."""
     task_id: str
     operation: str
-    status: str  # "idle", "running", "completed", "failed"
+    status: str  # "idle", "running", "completed", "partial", "failed"
     progress_pct: float = 0.0
     current_ticker: str | None = None
     started_at: datetime | None = None
@@ -303,33 +350,31 @@ class FeatureStats(BaseModel):
     total_snapshots: int = 0
 
 
+class FeatureGroupMeta(BaseModel):
+    """Metadata of one feature group (source of truth: api/routes/features.py)."""
+    key: str             # stable machine key, e.g. "ark", "short_interest"
+    label: str           # display label, e.g. "ARK", "Short Interest"
+    total: int           # number of feature columns in this group
+    market_wide: bool = False  # same value for every ticker (macro, breadth)
+
+
 class FeatureCoverageItem(BaseModel):
-    """Coverage per ticker across feature groups (for heatmap)."""
+    """Coverage per ticker across feature groups (for heatmap).
+
+    ``counts`` maps ``FeatureGroupMeta.key`` → number of filled columns.
+    """
     ticker: str
-    ark: int = 0           # filled columns out of 11
-    insider: int = 0       # filled columns out of 10
-    analyst: int = 0       # filled columns out of 7
-    politician: int = 0    # filled columns out of 4
-    form13f: int = 0       # filled columns out of 4
-    fundamentals: int = 0  # filled columns out of 8
-    technical: int = 0     # filled columns out of 6
-    earnings: int = 0      # filled columns out of 5
-    sentiment: int = 0     # filled columns out of 7
-    liquidity: int = 0     # filled columns out of 2
-    macro: int = 0         # filled columns out of 6
-    breadth: int = 0       # filled columns out of 2
-    sector: int = 0        # filled columns out of 2
-    short_interest: int = 0  # filled columns out of 3
-    options_iv: int = 0    # filled columns out of 4
-    estimates: int = 0     # filled columns out of 5
-    total_filled: int = 0  # sum of all filled features
-    total_possible: int = 86  # total feature columns
+    counts: dict[str, int] = Field(default_factory=dict)
+    total_filled: int = 0    # sum of all filled features
+    total_possible: int = 0  # total feature columns
 
 
 class FeatureCoverageResponse(BaseModel):
     """Coverage matrix for all tickers on a given date."""
     snapshot_date: date | None = None
-    items: list[FeatureCoverageItem] = []
+    groups: list[FeatureGroupMeta] = Field(default_factory=list)
+    total_possible: int = 0
+    items: list[FeatureCoverageItem] = Field(default_factory=list)
     ticker_count: int = 0
 
 
@@ -337,7 +382,7 @@ class SignalConvergenceItem(BaseModel):
     """Ticker with active signal source count (multi-source overlap)."""
     ticker: str
     active_sources: int = 0
-    source_names: list[str] = []
+    source_names: list[str] = Field(default_factory=list)
     # Key feature values for context
     ark_conviction_score: float | None = None
     insider_cluster_score: float | None = None
@@ -347,9 +392,17 @@ class SignalConvergenceItem(BaseModel):
 
 
 class SignalConvergenceResponse(BaseModel):
-    """Top tickers by signal convergence."""
+    """Top tickers by signal convergence.
+
+    ``max_sources`` is the number of ticker-specific groups that can count
+    as a source; market-wide groups (``excluded_groups``) are never counted
+    because they are identical for every ticker.
+    """
     snapshot_date: date | None = None
-    items: list[SignalConvergenceItem] = []
+    max_sources: int = 0
+    excluded_groups: list[str] = Field(default_factory=list)
+    total: int = 0  # tickers with ≥1 active source (before limit)
+    items: list[SignalConvergenceItem] = Field(default_factory=list)
 
 
 class HorizonStats(BaseModel):
@@ -373,8 +426,10 @@ class ReturnStatsResponse(BaseModel):
 
 class FeatureGroupDetail(BaseModel):
     """Feature values for a single group."""
-    group: str
-    features: dict[str, float | int | bool | None] = {}
+    group: str                 # display label
+    key: str = ""              # FeatureGroupMeta.key
+    market_wide: bool = False
+    features: dict[str, float | int | bool | None] = Field(default_factory=dict)
     filled: int = 0
     total: int = 0
 
@@ -383,9 +438,9 @@ class TickerFeatureDetail(BaseModel):
     """All features for a single ticker (latest snapshot)."""
     ticker: str
     snapshot_date: date | None = None
-    groups: list[FeatureGroupDetail] = []
+    groups: list[FeatureGroupDetail] = Field(default_factory=list)
     total_filled: int = 0
-    total_possible: int = 86
+    total_possible: int = 0
     # Target variables
     return_1d: float | None = None
     return_5d: float | None = None

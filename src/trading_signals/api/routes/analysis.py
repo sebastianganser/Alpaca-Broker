@@ -4,13 +4,14 @@ Provides endpoints to view analysis reports, trigger manual analysis runs,
 and list historical reports.
 """
 
-from datetime import date
+from datetime import UTC, date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from trading_signals.api.deps import get_db
+from trading_signals.api.deps import get_db, get_scheduler
+from trading_signals.api.job_tracker import job_tracker
 from trading_signals.api.schemas import (
     AnalysisReportItem,
     AnalysisReportListResponse,
@@ -19,6 +20,8 @@ from trading_signals.api.schemas import (
 from trading_signals.db.models.analysis import AnalysisReport
 
 router = APIRouter(prefix="/analysis")
+
+ANALYSIS_JOB_ID = "feature_analysis"
 
 
 @router.get("/latest")
@@ -53,7 +56,7 @@ def get_latest_report_html(db: Session = Depends(get_db)):
 
 @router.get("/list", response_model=AnalysisReportListResponse)
 def list_reports(
-    limit: int = 12,
+    limit: int = Query(12, ge=1, le=120),
     db: Session = Depends(get_db),
 ) -> AnalysisReportListResponse:
     """List all analysis reports (most recent first)."""
@@ -119,31 +122,27 @@ def get_report_html_by_date(
     return HTMLResponse(content=report.html_report)
 
 
-@router.post("/trigger", response_model=TriggerResponse)
-def trigger_analysis(db: Session = Depends(get_db)) -> TriggerResponse:
-    """Manually trigger a feature analysis run."""
-    try:
-        from trading_signals.analysis.feature_report import (
-            FeatureAnalysisEngine,
-        )
+@router.post("/trigger", response_model=TriggerResponse, status_code=202)
+def trigger_analysis(scheduler=Depends(get_scheduler)) -> TriggerResponse:
+    """Trigger a feature analysis run in the background (HTTP 202).
 
-        engine = FeatureAnalysisEngine(db)
-        report = engine.run()
-        if report is None:
-            return TriggerResponse(
-                success=False,
-                message="Analysis returned no results (insufficient data?)",
-            )
-        return TriggerResponse(
-            success=True,
-            message=(
-                f"Analysis completed: {report.snapshot_count} snapshots, "
-                f"{report.ticker_count} tickers, "
-                f"{report.computation_time_seconds:.0f}s"
-            ),
-        )
-    except Exception as e:
-        return TriggerResponse(success=False, message=f"Analysis failed: {e}")
+    The CPU-heavy RF + LASSO analysis runs as the ``feature_analysis``
+    scheduler job (max one instance), not inside the request. Poll
+    ``/analysis/latest`` or the logs for the result.
+    """
+    if not scheduler or not scheduler.running:
+        raise HTTPException(status_code=503, detail="Scheduler is not running")
+    if job_tracker.is_running(ANALYSIS_JOB_ID):
+        raise HTTPException(status_code=409, detail="Analyse läuft bereits")
+    job = scheduler.get_job(ANALYSIS_JOB_ID)
+    if job is None:
+        raise HTTPException(status_code=404, detail="feature_analysis job not found")
+
+    scheduler.modify_job(ANALYSIS_JOB_ID, next_run_time=datetime.now(UTC))
+    return TriggerResponse(
+        success=True,
+        message="Analyse gestartet (läuft im Hintergrund, ca. 2–5 Minuten)",
+    )
 
 
 def _report_to_dict(report: AnalysisReport) -> dict:

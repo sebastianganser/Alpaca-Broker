@@ -2,11 +2,14 @@
 
 Provides scheduler control, backfill management, DB maintenance,
 and system configuration endpoints.
+Mutating endpoints (POST) are protected by ``require_write_access``
+(applied at router include in ``main.py``).
 """
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -20,15 +23,31 @@ from trading_signals.api.schemas import (
     TriggerResponse,
 )
 from trading_signals.api.tasks import backfill_manager
+from trading_signals.scheduler.registry import MANUAL_SUFFIX
+from trading_signals.utils.retention import data_start_date
 
 router = APIRouter(prefix="/ops")
+
+#: Tables kept by the factory reset (ticker definitions + learned ETF filter).
+RESET_PRESERVED_TABLES = frozenset({"universe", "ticker_blacklist"})
+RESET_CONFIRMATION = "RESET"
+
+
+class ResetRequest(BaseModel):
+    """Optional JSON body for ``POST /ops/db/reset``."""
+
+    confirm: str | None = None
 
 
 # ── Scheduler ────────────────────────────────────────────────────────────
 
 @router.get("/scheduler", response_model=list[SchedulerJobInfo])
 def get_scheduler_jobs(scheduler=Depends(get_scheduler)):
-    """Get all scheduled jobs with their status and next run time."""
+    """Get all scheduled jobs with their status and next run time.
+
+    Chain steps (feature_pipeline, target_backfill, context_pack_generator)
+    are paused (``next_run`` = null) and run via ``nightly_chain``.
+    """
     if not scheduler or not scheduler.running:
         return []
 
@@ -42,6 +61,7 @@ def get_scheduler_jobs(scheduler=Depends(get_scheduler)):
             is_running=job_tracker.is_running(job.id),
         )
         for job in scheduler.get_jobs()
+        if not job.id.endswith(MANUAL_SUFFIX)
     ]
 
 
@@ -55,12 +75,24 @@ def trigger_job(job_id: str, scheduler=Depends(get_scheduler)):
     if not job:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
 
-    # Schedule job for immediate execution.
-    # APScheduler's CronTrigger will automatically recalculate
-    # the next regular run time after this execution completes.
-    # NOTE: next_run_time=None would PAUSE the job, not run it!
     now = datetime.now(timezone.utc)
-    scheduler.modify_job(job_id, next_run_time=now)
+    if job.next_run_time is None:
+        # Paused job (nightly-chain step): run a one-shot clone so the
+        # original stays paused and doesn't start firing on its cron.
+        scheduler.add_job(
+            job.func,
+            trigger="date",
+            run_date=now,
+            id=f"{job_id}{MANUAL_SUFFIX}",
+            name=f"{job.name} (manuell)",
+            replace_existing=True,
+        )
+    else:
+        # Schedule job for immediate execution.
+        # APScheduler's CronTrigger will automatically recalculate
+        # the next regular run time after this execution completes.
+        # NOTE: next_run_time=None would PAUSE the job, not run it!
+        scheduler.modify_job(job_id, next_run_time=now)
 
     return TriggerResponse(
         success=True,
@@ -95,7 +127,13 @@ def get_alembic_status(db: Session = Depends(get_db)):
 
 @router.post("/backfill/prices", response_model=TriggerResponse)
 def start_price_backfill(
-    start_date: str = Query("2021-01-01", description="Start date (ISO format)"),
+    start_date: str | None = Query(
+        None,
+        description=(
+            "Start date (ISO format). Default and minimum: start of the "
+            "rolling retention window (data_start_date())."
+        ),
+    ),
 ):
     """Start historical price backfill from Alpaca.
 
@@ -104,11 +142,16 @@ def start_price_backfill(
     """
     try:
         task_id = backfill_manager.start_price_backfill(start_date)
+        effective = max(
+            data_start_date().isoformat(), start_date or data_start_date().isoformat()
+        )
         return TriggerResponse(
             success=True,
-            message=f"Price backfill started from {start_date}",
+            message=f"Price backfill started from {effective}",
             task_id=task_id,
         )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid start_date: {e}")
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -241,7 +284,9 @@ def seed_benchmark_etfs(db: Session = Depends(get_db)):
 
     msg = f"Seeded {len(added)} benchmark ETFs"
     if added:
-        msg += f": {', '.join(added)}. Run /backfill/prices to backfill historical data."
+        msg += (
+            f": {', '.join(added)}. Run /backfill/prices to backfill historical data."
+        )
     else:
         msg += " (all already present)"
 
@@ -275,7 +320,7 @@ def seed_index_membership(db: Session = Depends(get_db)):
             generate_intervals_from_changes,
         )
         from trading_signals.db.models.index_membership import IndexMembership
-        from trading_signals.config import DATA_START_DATE
+        from trading_signals.utils.retention import data_start_date as _start
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         parser = WikipediaIndexHistoryParser()
@@ -310,7 +355,7 @@ def seed_index_membership(db: Session = Depends(get_db)):
 
         # 5. Generate intervals
         intervals = generate_intervals_from_changes(
-            all_changes, current_members, DATA_START_DATE
+            all_changes, current_members, _start()
         )
 
         # 6. Insert into database (idempotent)
@@ -409,52 +454,61 @@ def run_vacuum(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"VACUUM failed: {e}")
 
 
+def reset_table_names() -> list[str]:
+    """All ORM tables in the signals schema except the preserved ones.
+
+    Derived from SQLAlchemy metadata so new tables are never forgotten.
+    Ordered dependents-first.
+    """
+    import trading_signals.db.models  # noqa: F401  (register all models)
+    import trading_signals.db.models.short_interest  # noqa: F401  (not in __init__)
+    from trading_signals.db.base import SCHEMA_NAME, Base
+
+    return [
+        f"{t.schema}.{t.name}"
+        for t in reversed(Base.metadata.sorted_tables)
+        if t.schema == SCHEMA_NAME and t.name not in RESET_PRESERVED_TABLES
+    ]
+
+
 @router.post("/db/reset", response_model=TriggerResponse)
-def reset_database(db: Session = Depends(get_db)):
+def reset_database(
+    confirm: str | None = Query(None, description="Must be 'RESET'"),
+    body: ResetRequest | None = Body(None),
+    db: Session = Depends(get_db),
+):
     """Reset ALL data tables to empty state (factory reset).
 
     Truncates all data tables in the signals schema EXCEPT
-    the universe table (ticker definitions) and alembic_version.
+    the universe table (ticker definitions), the ticker blacklist
+    and alembic_version.
+    Requires ``?confirm=RESET`` or JSON body ``{"confirm": "RESET"}``.
     This is a destructive operation!
     """
-    try:
-        # Tables to truncate (order matters for FK constraints)
-        tables_to_reset = [
-            "signals.feature_snapshots",
-            "signals.news_sentiment",
-            "signals.news_articles",
-            "signals.technical_indicators",
-            "signals.analyst_ratings",
-            "signals.earnings_calendar",
-            "signals.fundamentals_snapshot",
-            "signals.politician_trades",
-            "signals.form13f_holdings",
-            "signals.insider_clusters",
-            "signals.insider_trades",
-            "signals.ark_deltas",
-            "signals.ark_holdings",
-            "signals.prices_daily",
-            "signals.collection_log",
-        ]
-
-        total_deleted = 0
-        for table in tables_to_reset:
-            result = db.execute(text(f"DELETE FROM {table}"))
-            total_deleted += result.rowcount
-
-        db.commit()
-
-        return TriggerResponse(
-            success=True,
-            message=(
-                f"Factory reset completed. {total_deleted} records deleted "
-                f"from {len(tables_to_reset)} tables. "
-                f"Universe ({len(tables_to_reset)} tables) preserved."
-            ),
+    if confirm != RESET_CONFIRMATION and (
+        body is None or body.confirm != RESET_CONFIRMATION
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Bestätigung fehlt: confirm=RESET erforderlich",
         )
+
+    tables_to_reset = reset_table_names()
+    try:
+        # One statement: atomic and FK-safe among the truncated tables
+        db.execute(text(f"TRUNCATE TABLE {', '.join(tables_to_reset)}"))
+        db.commit()
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Reset failed: {e}")
+
+    return TriggerResponse(
+        success=True,
+        message=(
+            f"Factory reset completed. {len(tables_to_reset)} tables truncated. "
+            f"Preserved: {', '.join(sorted(RESET_PRESERVED_TABLES))}, alembic_version."
+        ),
+    )
 
 
 def _format_bytes(size: int) -> str:

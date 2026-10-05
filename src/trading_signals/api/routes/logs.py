@@ -5,39 +5,52 @@ job executions, errors, and data quality issues.
 """
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from trading_signals.api.deps import get_db
 from trading_signals.api.schemas import CollectionLogItem, LogsResponse
 from trading_signals.db.models.collection_log import CollectionLog
+from trading_signals.scheduler.registry import get_collector_name
+from trading_signals.utils import job_status
 
 router = APIRouter(prefix="/logs")
+
+
+def _status_variants(status: str) -> list[str]:
+    """Canonical status plus legacy spellings that map to it."""
+    canonical = job_status.normalize(status)
+    return [canonical] + [
+        legacy for legacy, value in job_status.LEGACY_MAP.items() if value == canonical
+    ]
 
 
 @router.get("", response_model=LogsResponse)
 def get_logs(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=200, description="Items per page"),
-    collector: str | None = Query(None, description="Filter by collector name"),
+    collector: str | None = Query(
+        None, description="Filter by collector name (or scheduler job id)"
+    ),
     status: str | None = Query(None, description="Filter by status"),
     db: Session = Depends(get_db),
 ):
     """Get paginated collection logs, newest first.
 
-    Supports filtering by collector_name and status.
+    Supports filtering by collector_name and status. Legacy status values
+    ('error', 'complete') are reported as their canonical equivalents.
     """
     query = db.query(CollectionLog)
 
     if collector:
-        query = query.filter(CollectionLog.collector_name == collector)
+        query = query.filter(
+            CollectionLog.collector_name == get_collector_name(collector)
+        )
     if status:
-        query = query.filter(CollectionLog.status == status)
+        query = query.filter(CollectionLog.status.in_(_status_variants(status)))
 
     total = query.count()
     logs = (
-        query
-        .order_by(CollectionLog.started_at.desc())
+        query.order_by(CollectionLog.started_at.desc())
         .offset((page - 1) * limit)
         .limit(limit)
         .all()
@@ -55,7 +68,7 @@ def get_logs(
                 collector_name=log.collector_name,
                 started_at=log.started_at,
                 finished_at=log.finished_at,
-                status=log.status,
+                status=job_status.normalize(log.status),
                 records_fetched=log.records_fetched,
                 records_written=log.records_written,
                 gaps_detected=log.gaps_detected,

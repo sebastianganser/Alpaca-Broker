@@ -9,7 +9,7 @@ import {
   LockOpen,
   Lock,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -136,12 +136,14 @@ export default function Layout() {
         <WorldClock />
         <div style={{ padding: '0 var(--space-lg)' }}>
           <div className="label-dim" style={{ fontSize: '0.6rem' }}>
-            v0.9.5c · Sprint 9.5c
+            v{__APP_VERSION__}
           </div>
         </div>
       </aside>
       <main className="main-content fade-in">
-        <Outlet />
+        <Suspense fallback={<div className="loading-pulse text-dim" style={{ padding: 'var(--space-xl)' }}>Lade Seite…</div>}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

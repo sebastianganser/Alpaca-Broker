@@ -3,8 +3,8 @@
 Provides ticker listing with filtering, pagination, and detail views.
 """
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, or_
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import desc, func, or_
 from sqlalchemy.orm import Session
 
 from trading_signals.api.deps import get_db
@@ -30,7 +30,7 @@ def list_tickers(
     # Default: show only active tickers
     if active is None:
         query = query.filter(Universe.is_active.is_(True))
-    elif active is not None:
+    else:
         query = query.filter(Universe.is_active == active)
     if sector:
         query = query.filter(Universe.sector == sector)
@@ -76,6 +76,9 @@ def list_tickers(
                 index_membership=t.index_membership or [],
                 last_price=price_info.get("close"),
                 last_price_date=price_info.get("trade_date"),
+                price_change_pct=price_change_pct(
+                    price_info.get("close"), price_info.get("prev_close")
+                ),
             )
         )
 
@@ -87,7 +90,7 @@ def list_tickers(
     )
 
 
-@router.get("/sectors")
+@router.get("/sectors", response_model=list[str])
 def list_sectors(db: Session = Depends(get_db)):
     """Get all distinct sectors in the universe."""
     sectors = (
@@ -106,19 +109,11 @@ def get_ticker(ticker: str, db: Session = Depends(get_db)):
     """Get detailed information for a single ticker."""
     t = db.query(Universe).filter(Universe.ticker == ticker.upper()).first()
     if not t:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail=f"Ticker {ticker} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Ticker {ticker.upper()} not found"
+        )
 
     price_info = _get_latest_prices(db, [t.ticker]).get(t.ticker, {})
-
-    # Calculate daily price change
-    price_change_pct = None
-    if price_info.get("close") and price_info.get("prev_close"):
-        prev = price_info["prev_close"]
-        if prev and prev > 0:
-            price_change_pct = round(
-                (price_info["close"] - prev) / prev * 100, 2
-            )
 
     return TickerDetail(
         ticker=t.ticker,
@@ -132,8 +127,36 @@ def get_ticker(ticker: str, db: Session = Depends(get_db)):
         index_membership=t.index_membership or [],
         last_price=price_info.get("close"),
         last_price_date=price_info.get("trade_date"),
-        price_change_pct=price_change_pct,
+        price_change_pct=price_change_pct(
+            price_info.get("close"), price_info.get("prev_close")
+        ),
     )
+
+
+def price_change_pct(close: float | None, prev_close: float | None) -> float | None:
+    """Daily change in percent; ``None`` if either price is missing/invalid."""
+    if close is None or prev_close is None or prev_close <= 0:
+        return None
+    return round((close - prev_close) / prev_close * 100, 2)
+
+
+def build_price_map(rows) -> dict[str, dict]:
+    """Fold ``(ticker, close, trade_date, rn)`` rows into a price map.
+
+    ``rn`` = 1 is the latest trading day, ``rn`` = 2 the previous one.
+    """
+    result: dict[str, dict] = {}
+    for row in rows:
+        entry = result.setdefault(
+            row.ticker, {"close": None, "trade_date": None, "prev_close": None}
+        )
+        close = float(row.close) if row.close is not None else None
+        if row.rn == 1:
+            entry["close"] = close
+            entry["trade_date"] = row.trade_date
+        elif row.rn == 2:
+            entry["prev_close"] = close
+    return result
 
 
 def _get_latest_prices(
@@ -142,53 +165,30 @@ def _get_latest_prices(
     """Get the latest price for a list of tickers efficiently.
 
     Returns a dict: {ticker: {close, trade_date, prev_close}}
-    Uses a window function to get the two most recent prices.
+    Uses a single ROW_NUMBER() window query to get the two most recent
+    prices per ticker (no per-ticker follow-up queries).
     """
     if not tickers:
         return {}
 
-    from sqlalchemy import desc
-
-    # Get the latest 2 prices per ticker using a subquery
-    result = {}
-    # Batch query: latest price per ticker
-
-    latest_subq = (
+    rn = (
+        func.row_number()
+        .over(partition_by=PriceDaily.ticker, order_by=desc(PriceDaily.trade_date))
+        .label("rn")
+    )
+    ranked = (
         db.query(
-            PriceDaily.ticker,
-            func.max(PriceDaily.trade_date).label("max_date"),
+            PriceDaily.ticker.label("ticker"),
+            PriceDaily.close.label("close"),
+            PriceDaily.trade_date.label("trade_date"),
+            rn,
         )
         .filter(PriceDaily.ticker.in_(tickers))
-        .group_by(PriceDaily.ticker)
         .subquery()
     )
-
-    latest_prices = (
-        db.query(PriceDaily)
-        .join(
-            latest_subq,
-            (PriceDaily.ticker == latest_subq.c.ticker)
-            & (PriceDaily.trade_date == latest_subq.c.max_date),
-        )
+    rows = (
+        db.query(ranked.c.ticker, ranked.c.close, ranked.c.trade_date, ranked.c.rn)
+        .filter(ranked.c.rn <= 2)
         .all()
     )
-
-    for p in latest_prices:
-        # Get previous day's close for change calculation
-        prev = (
-            db.query(PriceDaily.close)
-            .filter(
-                PriceDaily.ticker == p.ticker,
-                PriceDaily.trade_date < p.trade_date,
-            )
-            .order_by(desc(PriceDaily.trade_date))
-            .first()
-        )
-
-        result[p.ticker] = {
-            "close": float(p.close) if p.close else None,
-            "trade_date": p.trade_date,
-            "prev_close": float(prev[0]) if prev and prev[0] else None,
-        }
-
-    return result
+    return build_price_map(rows)

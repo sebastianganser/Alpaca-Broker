@@ -1,35 +1,153 @@
 /**
  * API client for the Trading Signals backend.
  *
- * Wraps fetch() with base URL handling, error parsing,
- * and JSON response typing.
+ * Wraps fetch() with base URL handling, auth headers, error parsing
+ * (status + backend `detail`) and JSON response typing.
  */
 
 const API_BASE = '/api/v1';
+const API_KEY_STORAGE = 'apiKey';
+const TOTAL_COUNT_HEADER = 'X-Total-Count';
 
-async function request<T>(
-  endpoint: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const url = `${API_BASE}${endpoint}`;
-  const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-    ...options,
-  });
+export const AUTH_ERROR_MESSAGE =
+  'API-Schlüssel fehlt oder ist falsch – in den Einstellungen hinterlegen';
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || `API error: ${response.status}`);
+// ── Auth (API key in localStorage) ─────────────────────────────────────
+
+export function getApiKey(): string | null {
+  try {
+    return localStorage.getItem(API_KEY_STORAGE);
+  } catch {
+    return null;
+  }
+}
+
+export function setApiKey(key: string | null): void {
+  if (key && key.trim()) localStorage.setItem(API_KEY_STORAGE, key.trim());
+  else localStorage.removeItem(API_KEY_STORAGE);
+}
+
+// ── Errors ─────────────────────────────────────────────────────────────
+
+/** Error thrown for non-2xx responses; carries HTTP status and backend detail. */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly detail: string | null;
+
+  constructor(status: number, message: string, detail: string | null = null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.detail = detail;
   }
 
+  get isAuthError(): boolean {
+    return this.status === 401 || this.status === 403;
+  }
+
+  get isNotFound(): boolean {
+    return this.status === 404;
+  }
+}
+
+export function isApiError(e: unknown): e is ApiError {
+  return e instanceof ApiError;
+}
+
+/** Human-readable (German) message for any thrown value. */
+export function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
+
+function parseDetail(body: unknown): string | null {
+  if (!body || typeof body !== 'object' || !('detail' in body)) return null;
+  const detail = (body as { detail: unknown }).detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    // FastAPI validation errors: [{loc, msg, type}, ...]
+    return detail
+      .map((d) => (d && typeof d === 'object' && 'msg' in d ? String((d as { msg: unknown }).msg) : String(d)))
+      .join('; ');
+  }
+  return detail == null ? null : JSON.stringify(detail);
+}
+
+// ── Core request ───────────────────────────────────────────────────────
+
+async function rawRequest(endpoint: string, options: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(options.headers);
+  if (options.body != null && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  headers.set('X-Requested-With', 'XMLHttpRequest');
+  const key = getApiKey();
+  if (key) headers.set('X-API-Key', key);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
+  } catch {
+    throw new ApiError(0, 'Backend nicht erreichbar – läuft der Server?');
+  }
+
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null);
+    const detail = parseDetail(body);
+    const status = response.status;
+    let message: string;
+    if (status === 401 || status === 403) {
+      message = detail ? `${AUTH_ERROR_MESSAGE} (${detail})` : AUTH_ERROR_MESSAGE;
+    } else {
+      message = detail ?? `API-Fehler ${status}`;
+    }
+    throw new ApiError(status, message, detail);
+  }
+  return response;
+}
+
+async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const response = await rawRequest(endpoint, options);
   // Handle empty responses (204, etc.)
   if (response.status === 204) return {} as T;
-
-  return response.json();
+  return response.json() as Promise<T>;
 }
+
+/** List response with the uncapped total from the `X-Total-Count` header. */
+export interface ListResult<T> {
+  items: T[];
+  /** Total matching rows on the server; null if the endpoint doesn't report it. */
+  total: number | null;
+}
+
+async function requestList<T>(endpoint: string): Promise<ListResult<T>> {
+  const response = await rawRequest(endpoint);
+  const items = (await response.json()) as T[];
+  const header = response.headers.get(TOTAL_COUNT_HEADER);
+  const total = header != null && header !== '' ? Number(header) : null;
+  return { items, total: Number.isFinite(total) ? total : null };
+}
+
+type QueryValue = string | number | boolean | null | undefined;
+
+function qs(params: Record<string, QueryValue>): string {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') search.set(k, String(v));
+  });
+  const s = search.toString();
+  return s ? `?${s}` : '';
+}
+
+const seg = (s: string) => encodeURIComponent(s);
+
+// ── Shared literal types ───────────────────────────────────────────────
+
+export type Period = '1m' | '3m' | '6m' | '1y' | '5y' | 'all';
+export type DeltaType = 'new_position' | 'closed' | 'increased' | 'decreased' | 'unchanged';
+export type ArkDirection = 'increased' | 'decreased' | 'mixed';
+export type DataQualityStatus = 'complete' | 'partial' | 'missing';
+export type SentimentSort = 'most_negative' | 'most_positive' | 'most_articles';
 
 // ── Dashboard ─────────────────────────────────────────────────────────
 
@@ -41,6 +159,8 @@ export interface CollectorStatus {
   records_written: number | null;
   next_run: string | null;
   is_running: boolean;
+  /** Paused nightly-chain step: runs inside `nightly_chain`, `next_run` is null. */
+  via_chain: boolean;
 }
 
 export interface TableStats {
@@ -76,12 +196,15 @@ export interface TickerSummary {
   sector: string | null;
   industry: string | null;
   is_active: boolean;
+  added_date: string | null;
   added_by: string | null;
   index_membership: string[];
   last_price: number | null;
   last_price_date: string | null;
-  price_change_pct?: number | null;
+  price_change_pct: number | null;
 }
+
+export type TickerDetail = TickerSummary;
 
 export interface UniverseResponse {
   tickers: TickerSummary[];
@@ -90,19 +213,23 @@ export interface UniverseResponse {
   limit: number;
 }
 
-export const fetchUniverse = (params: Record<string, string | number>) => {
-  const qs = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
-  });
-  return request<UniverseResponse>(`/universe?${qs.toString()}`);
-};
+export interface UniverseParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  sector?: string;
+  index?: string;
+  active?: 'true' | 'false' | '';
+}
+
+export const fetchUniverse = (params: UniverseParams) =>
+  request<UniverseResponse>(`/universe${qs({ ...params })}`);
 
 export const fetchSectors = () =>
   request<string[]>('/universe/sectors');
 
 export const fetchTickerDetail = (ticker: string) =>
-  request<TickerSummary>(`/universe/${ticker}`);
+  request<TickerDetail>(`/universe/${seg(ticker)}`);
 
 // ── Signals ───────────────────────────────────────────────────────────
 
@@ -110,7 +237,7 @@ export interface ARKDelta {
   delta_date: string;
   etf_ticker: string;
   ticker: string;
-  delta_type: string;  // new_position, closed, increased, decreased
+  delta_type: DeltaType;
   shares_delta: number | null;
   shares_prev: number | null;
   shares_curr: number | null;
@@ -148,12 +275,12 @@ export interface AnalystRating {
   rating_new: string | null;
   rating_old: string | null;
   action: string | null;
-  price_target_new: number | null;
-  price_target_old: number | null;
+  /** Price target published by this firm with the rating change. */
+  firm_target_new: number | null;
+  firm_target_old: number | null;
+  /** Consensus median target (latest fundamentals snapshot) – context only. */
+  consensus_target: number | null;
 }
-
-export const fetchArkDeltas = (days = 7) =>
-  request<ARKDelta[]>(`/signals/ark?days=${days}`);
 
 export interface ARKSummary {
   ticker: string;
@@ -162,22 +289,31 @@ export interface ARKSummary {
   n_etfs: number;
   n_days: number;
   etfs: string[];
-  direction: string;  // 'increased', 'decreased', 'mixed'
+  direction: ArkDirection;
   first_date: string;
   last_date: string;
 }
 
-export const fetchArkSummary = (days = 5) =>
-  request<ARKSummary[]>(`/signals/ark/summary?days=${days}`);
+export interface SignalListParams {
+  days: number;
+  ticker?: string | null;
+  limit?: number;
+}
 
-export const fetchInsiderClusters = (days = 30) =>
-  request<InsiderCluster[]>(`/signals/insider?days=${days}`);
+export const fetchArkDeltas = ({ days, ticker, limit = 500 }: SignalListParams) =>
+  requestList<ARKDelta>(`/signals/ark${qs({ days, ticker, limit })}`);
 
-export const fetchPoliticianTrades = (days = 30) =>
-  request<PoliticianTrade[]>(`/signals/politicians?days=${days}`);
+export const fetchArkSummary = ({ days, ticker }: SignalListParams) =>
+  request<ARKSummary[]>(`/signals/ark/summary${qs({ days, ticker })}`);
 
-export const fetchAnalystRatings = (days = 7) =>
-  request<AnalystRating[]>(`/signals/ratings?days=${days}`);
+export const fetchInsiderClusters = ({ days, ticker, limit = 200 }: SignalListParams) =>
+  requestList<InsiderCluster>(`/signals/insider${qs({ days, ticker, limit })}`);
+
+export const fetchPoliticianTrades = ({ days, ticker, limit = 500 }: SignalListParams) =>
+  requestList<PoliticianTrade>(`/signals/politicians${qs({ days, ticker, limit })}`);
+
+export const fetchAnalystRatings = ({ days, ticker, limit = 500 }: SignalListParams) =>
+  requestList<AnalystRating>(`/signals/ratings${qs({ days, ticker, limit })}`);
 
 // ── Ticker Detail ─────────────────────────────────────────────────────
 
@@ -195,6 +331,8 @@ export interface IndicatorPoint {
   sma_20: number | null;
   sma_50: number | null;
   sma_200: number | null;
+  ema_12: number | null;
+  ema_26: number | null;
   rsi_14: number | null;
   macd: number | null;
   macd_signal: number | null;
@@ -202,6 +340,8 @@ export interface IndicatorPoint {
   bollinger_upper: number | null;
   bollinger_lower: number | null;
   atr_14: number | null;
+  volume_sma_20: number | null;
+  relative_strength_spy: number | null;
 }
 
 export interface FundamentalsData {
@@ -211,36 +351,56 @@ export interface FundamentalsData {
   forward_pe: number | null;
   ps_ratio: number | null;
   pb_ratio: number | null;
+  ev_ebitda: number | null;
   profit_margin: number | null;
   operating_margin: number | null;
+  return_on_equity: number | null;
   revenue_growth_yoy: number | null;
   eps_ttm: number | null;
+  debt_to_equity: number | null;
   dividend_yield: number | null;
   beta: number | null;
 }
 
-export const fetchPrices = (symbol: string, period = '3m') =>
-  request<PricePoint[]>(`/ticker/${symbol}/prices?period=${period}`);
+export interface TickerSignalCounts {
+  ark_deltas: number;
+  insider_clusters: number;
+  politician_trades: number;
+  analyst_ratings: number;
+}
 
-export const fetchIndicators = (symbol: string, period = '3m') =>
-  request<IndicatorPoint[]>(`/ticker/${symbol}/indicators?period=${period}`);
+/** Mirrors backend `TickerSignals` (lists capped by `limit`, counts uncapped). */
+export interface TickerSignals {
+  ticker: string;
+  days: number;
+  ark_deltas: ARKDelta[];
+  insider_clusters: InsiderCluster[];
+  politician_trades: PoliticianTrade[];
+  analyst_ratings: AnalystRating[];
+  counts: TickerSignalCounts;
+}
+
+export const PERIOD_DAYS: Record<Period, number> = {
+  '1m': 30, '3m': 90, '6m': 180, '1y': 365, '5y': 1825, all: 3650,
+};
+
+export const fetchPrices = (symbol: string, period: Period = '3m') =>
+  request<PricePoint[]>(`/ticker/${seg(symbol)}/prices${qs({ period })}`);
+
+export const fetchIndicators = (symbol: string, period: Period = '3m') =>
+  request<IndicatorPoint[]>(`/ticker/${seg(symbol)}/indicators${qs({ period })}`);
 
 export const fetchFundamentals = (symbol: string) =>
-  request<FundamentalsData | null>(`/ticker/${symbol}/fundamentals`);
+  request<FundamentalsData | null>(`/ticker/${seg(symbol)}/fundamentals`);
 
-export const fetchTickerSignals = (symbol: string, days = 30) =>
-  request<{
-    ark_deltas: ARKDelta[];
-    insider_clusters: InsiderCluster[];
-    politician_trades: PoliticianTrade[];
-    analyst_ratings: AnalystRating[];
-  }>(`/ticker/${symbol}/signals?days=${days}`);
+export const fetchTickerSignals = (symbol: string, days = 30, limit = 50) =>
+  request<TickerSignals>(`/ticker/${seg(symbol)}/signals${qs({ days, limit })}`);
 
 // ── Data Quality ──────────────────────────────────────────────────────
 
 export interface DataQualityDimension {
   label: string;
-  status: 'complete' | 'partial' | 'missing';
+  status: DataQualityStatus;
   summary: string;
   detail: string | null;
 }
@@ -252,7 +412,7 @@ export interface TickerDataQuality {
 }
 
 export const fetchDataQuality = (symbol: string) =>
-  request<TickerDataQuality>(`/ticker/${symbol}/data-quality`);
+  request<TickerDataQuality>(`/ticker/${seg(symbol)}/data-quality`);
 
 // ── Operations ────────────────────────────────────────────────────────
 
@@ -263,11 +423,14 @@ export interface SchedulerJob {
   next_run: string | null;
   pending: boolean;
   is_running: boolean;
+  /** Paused nightly-chain step: runs inside `nightly_chain`, `next_run` is null. */
+  via_chain: boolean;
 }
 
 export interface BackfillStatus {
   task_id: string;
   operation: string;
+  /** 'idle' | 'running' | 'completed' | 'partial' | 'failed' */
   status: string;
   progress_pct: number;
   current_ticker: string | null;
@@ -289,14 +452,22 @@ export interface TriggerResponse {
   task_id: string | null;
 }
 
+/** Rejects if the backend reports `success: false`, so the UI shows its message. */
+export async function ensureSuccess(p: Promise<TriggerResponse>): Promise<TriggerResponse> {
+  const res = await p;
+  if (!res.success) throw new Error(res.message || 'Aktion fehlgeschlagen');
+  return res;
+}
+
 export const fetchSchedulerJobs = () =>
   request<SchedulerJob[]>('/ops/scheduler');
 
 export const triggerJob = (jobId: string) =>
-  request<TriggerResponse>(`/ops/scheduler/${jobId}/trigger`, { method: 'POST' });
+  request<TriggerResponse>(`/ops/scheduler/${seg(jobId)}/trigger`, { method: 'POST' });
 
-export const startPriceBackfill = (startDate = '2021-01-01') =>
-  request<TriggerResponse>(`/ops/backfill/prices?start_date=${startDate}`, { method: 'POST' });
+/** Without `startDate` the backend uses its default lookback window. */
+export const startPriceBackfill = (startDate?: string) =>
+  request<TriggerResponse>(`/ops/backfill/prices${qs({ start_date: startDate })}`, { method: 'POST' });
 
 export const startIndicatorBackfill = () =>
   request<TriggerResponse>('/ops/backfill/indicators', { method: 'POST' });
@@ -313,10 +484,17 @@ export const fetchDbStats = () =>
 export const runVacuum = () =>
   request<TriggerResponse>('/ops/db/vacuum', { method: 'POST' });
 
+/** Destructive – only call after explicit UI confirmation. */
 export const resetDatabase = () =>
-  request<TriggerResponse>('/ops/db/reset', { method: 'POST' });
+  request<TriggerResponse>(`/ops/db/reset${qs({ confirm: 'RESET' })}`, { method: 'POST' });
 
 // ── Logs ──────────────────────────────────────────────────────────────
+
+export interface LogLine {
+  level: string;
+  ts: string;
+  msg: string;
+}
 
 export interface CollectionLogItem {
   id: number;
@@ -331,7 +509,7 @@ export interface CollectionLogItem {
   gaps_extrapolated: number;
   errors: Record<string, unknown> | null;
   notes: string | null;
-  log_lines: Array<{ level: string; ts: string; msg: string }> | null;
+  log_lines: LogLine[] | null;
   duration_seconds: number | null;
 }
 
@@ -342,13 +520,15 @@ export interface LogsResponse {
   limit: number;
 }
 
-export const fetchLogs = (params: Record<string, string | number> = {}) => {
-  const qs = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
-  });
-  return request<LogsResponse>(`/logs?${qs.toString()}`);
-};
+export interface LogsParams {
+  page?: number;
+  limit?: number;
+  collector?: string;
+  status?: string;
+}
+
+export const fetchLogs = (params: LogsParams = {}) =>
+  request<LogsResponse>(`/logs${qs({ ...params })}`);
 
 export const fetchCollectorNames = () =>
   request<string[]>('/logs/collectors');
@@ -363,23 +543,25 @@ export interface FeatureStats {
   total_snapshots: number;
 }
 
+export interface FeatureGroupMeta {
+  key: string;
+  label: string;
+  total: number;
+  market_wide: boolean;
+}
+
 export interface FeatureCoverageItem {
   ticker: string;
-  ark: number;
-  insider: number;
-  analyst: number;
-  politician: number;
-  form13f: number;
-  fundamentals: number;
-  technical: number;
-  earnings: number;
-  sentiment: number;
+  /** FeatureGroupMeta.key → filled column count */
+  counts: Record<string, number>;
   total_filled: number;
   total_possible: number;
 }
 
 export interface FeatureCoverageResponse {
   snapshot_date: string | null;
+  groups: FeatureGroupMeta[];
+  total_possible: number;
   items: FeatureCoverageItem[];
   ticker_count: number;
 }
@@ -397,6 +579,12 @@ export interface SignalConvergenceItem {
 
 export interface SignalConvergenceResponse {
   snapshot_date: string | null;
+  /** Number of ticker-specific groups that can count as a source. */
+  max_sources: number;
+  /** Market-wide groups that never count (e.g. Macro, Breadth). */
+  excluded_groups: string[];
+  /** Tickers with ≥1 active source (before limit). */
+  total: number;
   items: SignalConvergenceItem[];
 }
 
@@ -419,6 +607,8 @@ export interface ReturnStatsResponse {
 
 export interface FeatureGroupDetail {
   group: string;
+  key: string;
+  market_wide: boolean;
   features: Record<string, number | boolean | null>;
   filled: number;
   total: number;
@@ -443,13 +633,13 @@ export const fetchFeatureCoverage = () =>
   request<FeatureCoverageResponse>('/features/coverage');
 
 export const fetchSignalConvergence = (limit = 50) =>
-  request<SignalConvergenceResponse>(`/features/convergence?limit=${limit}`);
+  request<SignalConvergenceResponse>(`/features/convergence${qs({ limit })}`);
 
 export const fetchReturnStats = () =>
   request<ReturnStatsResponse>('/features/returns');
 
 export const fetchTickerFeatures = (symbol: string) =>
-  request<TickerFeatureDetail>(`/features/ticker/${symbol}`);
+  request<TickerFeatureDetail>(`/features/ticker/${seg(symbol)}`);
 
 // ── Sentiment ────────────────────────────────────────────────────────
 
@@ -477,11 +667,11 @@ export interface SentimentArticle {
   url: string | null;
 }
 
-export const fetchSentimentSummary = (days = 7) =>
-  request<SentimentSummary[]>(`/signals/sentiment/summary?days=${days}`);
+export const fetchSentimentSummary = (
+  { days, ticker, limit = 500 }: SignalListParams,
+  sort: SentimentSort = 'most_negative',
+) =>
+  requestList<SentimentSummary>(`/signals/sentiment/summary${qs({ days, ticker, sort, limit })}`);
 
-export const fetchSentimentArticles = (days = 7, ticker?: string) => {
-  const params = new URLSearchParams({ days: String(days) });
-  if (ticker) params.set('ticker', ticker);
-  return request<SentimentArticle[]>(`/signals/sentiment/articles?${params.toString()}`);
-};
+export const fetchSentimentArticles = ({ days, ticker, limit = 500 }: SignalListParams) =>
+  requestList<SentimentArticle>(`/signals/sentiment/articles${qs({ days, ticker, limit })}`);

@@ -4,7 +4,8 @@ Provides per-ticker data: prices, indicators, fundamentals,
 and all signals for a specific ticker.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, func
@@ -12,15 +13,22 @@ from sqlalchemy.orm import Session
 
 from trading_signals.api.deps import get_db, get_scheduler
 from trading_signals.api.schemas import (
-    AnalystRatingItem,
-    ARKDeltaItem,
     DataQualityDimension,
     FundamentalsData,
     IndicatorPoint,
-    InsiderClusterItem,
-    PoliticianTradeItem,
     PricePoint,
     TickerDataQuality,
+    TickerSignalCounts,
+    TickerSignals,
+)
+from trading_signals.api.serializers import (
+    analyst_rating_item,
+    ark_delta_item,
+    consensus_targets,
+    insider_cluster_item,
+    politician_trade_item,
+    to_float,
+    to_int,
 )
 from trading_signals.db.models import (
     AnalystRating,
@@ -33,8 +41,21 @@ from trading_signals.db.models import (
     TechnicalIndicator,
     Universe,
 )
+from trading_signals.scheduler.registry import get_collector_name
+from trading_signals.utils import job_status
 
 router = APIRouter(prefix="/ticker")
+
+Period = Literal["1m", "3m", "6m", "1y", "5y", "all"]
+
+PERIOD_DAYS: dict[str, int] = {
+    "1m": 30, "3m": 90, "6m": 180,
+    "1y": 365, "5y": 1825, "all": 9999,
+}
+
+#: Scheduler job id and collection_log.collector_name of the price collector.
+PRICE_JOB_ID = "price_collector"
+PRICE_COLLECTOR_NAME = get_collector_name(PRICE_JOB_ID)
 
 
 def _validate_ticker(ticker: str, db: Session) -> str:
@@ -50,18 +71,11 @@ def _validate_ticker(ticker: str, db: Session) -> str:
 def get_prices(
     symbol: str,
     db: Session = Depends(get_db),
-    period: str = Query("3m", description="Period: 1m, 3m, 6m, 1y, 5y, all"),
+    period: Period = Query("3m", description="Period: 1m, 3m, 6m, 1y, 5y, all"),
 ):
     """Get OHLCV price data for a ticker."""
     ticker = _validate_ticker(symbol, db)
-
-    # Calculate cutoff date based on period
-    period_map = {
-        "1m": 30, "3m": 90, "6m": 180,
-        "1y": 365, "5y": 1825, "all": 9999,
-    }
-    days = period_map.get(period, 90)
-    cutoff = date.today() - timedelta(days=days)
+    cutoff = date.today() - timedelta(days=PERIOD_DAYS[period])
 
     prices = (
         db.query(PriceDaily)
@@ -73,11 +87,11 @@ def get_prices(
     return [
         PricePoint(
             trade_date=p.trade_date,
-            open=float(p.open) if p.open else None,
-            high=float(p.high) if p.high else None,
-            low=float(p.low) if p.low else None,
-            close=float(p.close) if p.close else None,
-            volume=int(p.volume) if p.volume else None,
+            open=to_float(p.open),
+            high=to_float(p.high),
+            low=to_float(p.low),
+            close=to_float(p.close),
+            volume=to_int(p.volume),
         )
         for p in prices
     ]
@@ -87,17 +101,11 @@ def get_prices(
 def get_indicators(
     symbol: str,
     db: Session = Depends(get_db),
-    period: str = Query("3m", description="Period: 1m, 3m, 6m, 1y, all"),
+    period: Period = Query("3m", description="Period: 1m, 3m, 6m, 1y, 5y, all"),
 ):
     """Get technical indicators for a ticker."""
     ticker = _validate_ticker(symbol, db)
-
-    period_map = {
-        "1m": 30, "3m": 90, "6m": 180,
-        "1y": 365, "all": 9999,
-    }
-    days = period_map.get(period, 90)
-    cutoff = date.today() - timedelta(days=days)
+    cutoff = date.today() - timedelta(days=PERIOD_DAYS[period])
 
     indicators = (
         db.query(TechnicalIndicator)
@@ -112,22 +120,20 @@ def get_indicators(
     return [
         IndicatorPoint(
             trade_date=i.trade_date,
-            sma_20=float(i.sma_20) if i.sma_20 else None,
-            sma_50=float(i.sma_50) if i.sma_50 else None,
-            sma_200=float(i.sma_200) if i.sma_200 else None,
-            ema_12=float(i.ema_12) if i.ema_12 else None,
-            ema_26=float(i.ema_26) if i.ema_26 else None,
-            rsi_14=float(i.rsi_14) if i.rsi_14 else None,
-            macd=float(i.macd) if i.macd else None,
-            macd_signal=float(i.macd_signal) if i.macd_signal else None,
-            macd_histogram=float(i.macd_histogram) if i.macd_histogram else None,
-            bollinger_upper=float(i.bollinger_upper) if i.bollinger_upper else None,
-            bollinger_lower=float(i.bollinger_lower) if i.bollinger_lower else None,
-            atr_14=float(i.atr_14) if i.atr_14 else None,
-            volume_sma_20=float(i.volume_sma_20) if i.volume_sma_20 else None,
-            relative_strength_spy=(
-                float(i.relative_strength_spy) if i.relative_strength_spy else None
-            ),
+            sma_20=to_float(i.sma_20),
+            sma_50=to_float(i.sma_50),
+            sma_200=to_float(i.sma_200),
+            ema_12=to_float(i.ema_12),
+            ema_26=to_float(i.ema_26),
+            rsi_14=to_float(i.rsi_14),
+            macd=to_float(i.macd),
+            macd_signal=to_float(i.macd_signal),
+            macd_histogram=to_float(i.macd_histogram),
+            bollinger_upper=to_float(i.bollinger_upper),
+            bollinger_lower=to_float(i.bollinger_lower),
+            atr_14=to_float(i.atr_14),
+            volume_sma_20=to_float(i.volume_sma_20),
+            relative_strength_spy=to_float(i.relative_strength_spy),
         )
         for i in indicators
     ]
@@ -153,144 +159,110 @@ def get_fundamentals(
 
     return FundamentalsData(
         snapshot_date=f.snapshot_date,
-        market_cap=float(f.market_cap) if f.market_cap else None,
-        pe_ratio=float(f.pe_ratio) if f.pe_ratio else None,
-        forward_pe=float(f.forward_pe) if f.forward_pe else None,
-        ps_ratio=float(f.ps_ratio) if f.ps_ratio else None,
-        pb_ratio=float(f.pb_ratio) if f.pb_ratio else None,
-        ev_ebitda=float(f.ev_ebitda) if f.ev_ebitda else None,
-        profit_margin=float(f.profit_margin) if f.profit_margin else None,
-        operating_margin=float(f.operating_margin) if f.operating_margin else None,
-        return_on_equity=float(f.return_on_equity) if f.return_on_equity else None,
-        revenue_growth_yoy=(
-            float(f.revenue_growth_yoy) if f.revenue_growth_yoy else None
-        ),
-        eps_ttm=float(f.eps_ttm) if f.eps_ttm else None,
-        debt_to_equity=float(f.debt_to_equity) if f.debt_to_equity else None,
-        dividend_yield=float(f.dividend_yield) if f.dividend_yield else None,
-        beta=float(f.beta) if f.beta else None,
+        market_cap=to_float(f.market_cap),
+        pe_ratio=to_float(f.pe_ratio),
+        forward_pe=to_float(f.forward_pe),
+        ps_ratio=to_float(f.ps_ratio),
+        pb_ratio=to_float(f.pb_ratio),
+        ev_ebitda=to_float(f.ev_ebitda),
+        profit_margin=to_float(f.profit_margin),
+        operating_margin=to_float(f.operating_margin),
+        return_on_equity=to_float(f.return_on_equity),
+        revenue_growth_yoy=to_float(f.revenue_growth_yoy),
+        eps_ttm=to_float(f.eps_ttm),
+        debt_to_equity=to_float(f.debt_to_equity),
+        dividend_yield=to_float(f.dividend_yield),
+        beta=to_float(f.beta),
     )
 
 
-@router.get("/{symbol}/signals")
+@router.get("/{symbol}/signals", response_model=TickerSignals)
 def get_ticker_signals(
     symbol: str,
     db: Session = Depends(get_db),
-    days: int = Query(30, ge=1, le=365),
+    days: int = Query(30, ge=1, le=3650),
+    limit: int = Query(50, ge=1, le=500, description="Max items per category"),
 ):
-    """Get all signal data for a specific ticker."""
+    """Get all signal data for a specific ticker.
+
+    Lists are capped at ``limit`` per category; ``counts`` holds the real
+    (uncapped) number of events in the lookback window.
+    """
     ticker = _validate_ticker(symbol, db)
     cutoff = date.today() - timedelta(days=days)
 
-    # ARK Deltas
-    ark_deltas = (
-        db.query(ARKDelta)
-        .filter(
-            ARKDelta.ticker == ticker,
-            ARKDelta.delta_date >= cutoff,
-            ARKDelta.delta_type != "unchanged",
-        )
-        .order_by(desc(ARKDelta.delta_date))
-        .limit(20)
-        .all()
+    ark_q = db.query(ARKDelta).filter(
+        ARKDelta.ticker == ticker,
+        ARKDelta.delta_date >= cutoff,
+        ARKDelta.delta_type != "unchanged",
+    )
+    cluster_q = db.query(InsiderCluster).filter(
+        InsiderCluster.ticker == ticker, InsiderCluster.cluster_end >= cutoff,
+    )
+    pol_q = db.query(PoliticianTrade).filter(
+        PoliticianTrade.ticker == ticker,
+        PoliticianTrade.disclosure_date >= cutoff,
+    )
+    rating_q = db.query(AnalystRating).filter(
+        AnalystRating.ticker == ticker, AnalystRating.rating_date >= cutoff,
     )
 
-    # Insider Clusters
-    clusters = (
-        db.query(InsiderCluster)
-        .filter(InsiderCluster.ticker == ticker, InsiderCluster.cluster_end >= cutoff)
-        .order_by(desc(InsiderCluster.cluster_score))
-        .limit(10)
-        .all()
-    )
-
-    # Politician Trades
+    ark_deltas = ark_q.order_by(desc(ARKDelta.delta_date)).limit(limit).all()
+    clusters = cluster_q.order_by(desc(InsiderCluster.cluster_score)).limit(limit).all()
     pol_trades = (
-        db.query(PoliticianTrade)
-        .filter(
-            PoliticianTrade.ticker == ticker,
-            PoliticianTrade.disclosure_date >= cutoff,
+        pol_q.order_by(desc(PoliticianTrade.disclosure_date)).limit(limit).all()
+    )
+    ratings = rating_q.order_by(desc(AnalystRating.rating_date)).limit(limit).all()
+    targets = consensus_targets(db, [ticker]) if ratings else {}
+
+    return TickerSignals(
+        ticker=ticker,
+        days=days,
+        ark_deltas=[ark_delta_item(d) for d in ark_deltas],
+        insider_clusters=[insider_cluster_item(c) for c in clusters],
+        politician_trades=[politician_trade_item(t) for t in pol_trades],
+        analyst_ratings=[analyst_rating_item(r, targets) for r in ratings],
+        counts=TickerSignalCounts(
+            ark_deltas=ark_q.count(),
+            insider_clusters=cluster_q.count(),
+            politician_trades=pol_q.count(),
+            analyst_ratings=rating_q.count(),
+        ),
+    )
+
+
+def signal_update_dimension(
+    scheduler_active: bool,
+    last_status: str | None,
+    next_run: datetime | None,
+) -> DataQualityDimension:
+    """Build the 'Signal-Updates' data quality dimension.
+
+    ``last_status`` is the raw collection_log status of the latest price
+    collector run; legacy values are normalized (e.g. ``error`` → failed).
+    """
+    status = job_status.normalize(last_status)
+    next_str = next_run.strftime("%d.%m. %H:%M") if next_run else None
+
+    if not scheduler_active:
+        return DataQualityDimension(
+            label="Signal-Updates", status="missing", summary="Scheduler nicht aktiv",
         )
-        .order_by(desc(PoliticianTrade.disclosure_date))
-        .limit(20)
-        .all()
+    if status in (job_status.FAILED, job_status.PARTIAL):
+        summary = (
+            "Letzter Lauf fehlgeschlagen"
+            if status == job_status.FAILED
+            else "Letzter Lauf unvollständig"
+        )
+        if next_str:
+            summary += f", nächster: {next_str}"
+        return DataQualityDimension(
+            label="Signal-Updates", status="partial", summary=summary,
+        )
+    summary = f"Nächster Lauf: {next_str}" if next_str else "Scheduler aktiv"
+    return DataQualityDimension(
+        label="Signal-Updates", status="complete", summary=summary,
     )
-
-    # Analyst Ratings
-    ratings = (
-        db.query(AnalystRating)
-        .filter(AnalystRating.ticker == ticker, AnalystRating.rating_date >= cutoff)
-        .order_by(desc(AnalystRating.rating_date))
-        .limit(20)
-        .all()
-    )
-
-    return {
-        "ark_deltas": [
-            ARKDeltaItem(
-                delta_date=d.delta_date,
-                etf_ticker=d.etf_ticker,
-                ticker=d.ticker,
-                delta_type=d.delta_type,
-                shares_delta=float(d.shares_delta) if d.shares_delta else None,
-                shares_prev=float(d.shares_prev) if d.shares_prev else None,
-                shares_curr=float(d.shares_curr) if d.shares_curr else None,
-                weight_delta=float(d.weight_delta) if d.weight_delta else None,
-                weight_prev=float(d.weight_prev) if d.weight_prev else None,
-                weight_curr=float(d.weight_curr) if d.weight_curr else None,
-            )
-            for d in ark_deltas
-        ],
-        "insider_clusters": [
-            InsiderClusterItem(
-                ticker=c.ticker,
-                cluster_start=c.cluster_start,
-                cluster_end=c.cluster_end,
-                n_insiders=c.n_insiders,
-                n_buys=c.n_buys,
-                n_sells=c.n_sells,
-                total_buy_value=(
-                    float(c.total_buy_value) if c.total_buy_value else None
-                ),
-                cluster_score=float(c.cluster_score) if c.cluster_score else None,
-            )
-            for c in clusters
-        ],
-        "politician_trades": [
-            PoliticianTradeItem(
-                politician_name=t.politician_name,
-                party=t.party,
-                ticker=t.ticker,
-                transaction_date=t.transaction_date,
-                disclosure_date=t.disclosure_date,
-                transaction_type=t.transaction_type,
-                amount_range=t.amount_range,
-                delay_days=(
-                    (t.disclosure_date - t.transaction_date).days
-                    if t.disclosure_date and t.transaction_date
-                    else None
-                ),
-            )
-            for t in pol_trades
-        ],
-        "analyst_ratings": [
-            AnalystRatingItem(
-                ticker=r.ticker,
-                firm=r.firm,
-                rating_date=r.rating_date,
-                rating_new=r.rating_new,
-                rating_old=r.rating_old,
-                action=r.action,
-                price_target_new=(
-                    float(r.price_target_new) if r.price_target_new else None
-                ),
-                price_target_old=(
-                    float(r.price_target_old) if r.price_target_old else None
-                ),
-            )
-            for r in ratings
-        ],
-    }
 
 
 @router.get("/{symbol}/data-quality", response_model=TickerDataQuality)
@@ -388,37 +360,23 @@ def get_data_quality(
     if scheduler and scheduler.running:
         scheduler_active = True
         for job in scheduler.get_jobs():
-            if job.id == "price_collector":
+            if job.id == PRICE_JOB_ID:
                 next_price_run = job.next_run_time
                 break
 
-    # Check last collection log
+    # Check last collection log of the price collector
     last_log = (
         db.query(CollectionLog)
-        .filter(CollectionLog.collector_name == "price_collector")
+        .filter(CollectionLog.collector_name == PRICE_COLLECTOR_NAME)
         .order_by(desc(CollectionLog.started_at))
         .first()
     )
 
-    if not scheduler_active:
-        s_status, s_summary = "missing", "Scheduler nicht aktiv"
-    elif last_log and last_log.status == "failed":
-        s_status = "partial"
-        s_summary = "Letzter Lauf fehlgeschlagen"
-        if next_price_run:
-            s_summary += f", nächster: {next_price_run.strftime('%d.%m. %H:%M')}"
-    else:
-        s_status = "complete"
-        if next_price_run:
-            s_summary = (
-                f"Nächster Lauf: {next_price_run.strftime('%d.%m. %H:%M')}"
-            )
-        else:
-            s_summary = "Scheduler aktiv"
-
     dimensions.append(
-        DataQualityDimension(
-            label="Signal-Updates", status=s_status, summary=s_summary
+        signal_update_dimension(
+            scheduler_active,
+            last_log.status if last_log else None,
+            next_price_run,
         )
     )
 

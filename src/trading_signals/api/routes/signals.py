@@ -2,12 +2,18 @@
 
 Provides recent signal data: ARK deltas, insider clusters,
 politician trades, analyst ratings, and news sentiment.
+
+List endpoints that apply a ``limit`` report the uncapped number of
+matching rows in the ``X-Total-Count`` response header so clients can
+show "N von M" instead of silently truncating.
 """
 
 from datetime import date, timedelta
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import case, desc, func
+from sqlalchemy.orm import Query as SAQuery
 from sqlalchemy.orm import Session
 
 from trading_signals.api.deps import get_db
@@ -17,8 +23,16 @@ from trading_signals.api.schemas import (
     ARKSummaryItem,
     InsiderClusterItem,
     PoliticianTradeItem,
-    SentimentSummaryItem,
     SentimentArticleItem,
+    SentimentSummaryItem,
+)
+from trading_signals.api.serializers import (
+    analyst_rating_item,
+    ark_delta_item,
+    consensus_targets,
+    insider_cluster_item,
+    politician_trade_item,
+    to_float,
 )
 from trading_signals.db.models import (
     AnalystRating,
@@ -26,16 +40,31 @@ from trading_signals.db.models import (
     InsiderCluster,
     PoliticianTrade,
 )
-from trading_signals.db.models.fundamentals import FundamentalsSnapshot
 from trading_signals.db.models.news import NewsArticle, NewsSentiment
 
 router = APIRouter(prefix="/signals")
 
+TOTAL_COUNT_HEADER = "X-Total-Count"
+
+SentimentSort = Literal["most_negative", "most_positive", "most_articles"]
+
+
+def _set_total(response: Response, query: SAQuery) -> None:
+    """Set the uncapped row count of ``query`` as response header."""
+    response.headers[TOTAL_COUNT_HEADER] = str(query.order_by(None).count())
+
+
+def _norm_ticker(ticker: str | None) -> str | None:
+    ticker = (ticker or "").strip().upper()
+    return ticker or None
+
 
 @router.get("/ark", response_model=list[ARKDeltaItem])
 def get_ark_deltas(
+    response: Response,
     db: Session = Depends(get_db),
     days: int = Query(7, ge=1, le=90, description="Lookback days"),
+    ticker: str | None = Query(None, description="Exact ticker filter"),
     limit: int = Query(100, ge=1, le=500),
 ):
     """Get recent ARK ETF delta movements.
@@ -43,57 +72,22 @@ def get_ark_deltas(
     Shows new positions, closed positions, and significant weight changes.
     """
     cutoff = date.today() - timedelta(days=days)
-    deltas = (
-        db.query(ARKDelta)
-        .filter(
-            ARKDelta.delta_date >= cutoff,
-            ARKDelta.delta_type != "unchanged",
-        )
-        .order_by(desc(ARKDelta.delta_date), ARKDelta.ticker)
-        .limit(limit)
-        .all()
+    query = db.query(ARKDelta).filter(
+        ARKDelta.delta_date >= cutoff,
+        ARKDelta.delta_type != "unchanged",
     )
-
-    return [
-        ARKDeltaItem(
-            delta_date=d.delta_date,
-            etf_ticker=d.etf_ticker,
-            ticker=d.ticker,
-            delta_type=d.delta_type,
-            shares_delta=float(d.shares_delta) if d.shares_delta else None,
-            shares_prev=float(d.shares_prev) if d.shares_prev else None,
-            shares_curr=float(d.shares_curr) if d.shares_curr else None,
-            weight_delta=float(d.weight_delta) if d.weight_delta else None,
-            weight_prev=float(d.weight_prev) if d.weight_prev else None,
-            weight_curr=float(d.weight_curr) if d.weight_curr else None,
-        )
-        for d in deltas
-    ]
-
-
-@router.get("/ark/summary", response_model=list[ARKSummaryItem])
-def get_ark_summary(
-    db: Session = Depends(get_db),
-    days: int = Query(5, ge=1, le=90, description="Lookback window in days"),
-):
-    """Get aggregated ARK moves per ticker across all ETFs.
-
-    Groups ARK delta entries by ticker over the given time window,
-    summing shares and weight changes across all ETFs and days.
-    Sorted by absolute weight impact (strongest moves first).
-    """
-    cutoff = date.today() - timedelta(days=days)
+    if symbol := _norm_ticker(ticker):
+        query = query.filter(ARKDelta.ticker == symbol)
+    _set_total(response, query)
     deltas = (
-        db.query(ARKDelta)
-        .filter(
-            ARKDelta.delta_date >= cutoff,
-            ARKDelta.delta_type != "unchanged",
-        )
-        .all()
+        query.order_by(desc(ARKDelta.delta_date), ARKDelta.ticker).limit(limit).all()
     )
+    return [ark_delta_item(d) for d in deltas]
 
-    # Group by ticker
-    ticker_data: dict[str, list] = {}
+
+def summarize_ark_deltas(deltas: list[ARKDelta]) -> list[ARKSummaryItem]:
+    """Aggregate ARK deltas per ticker, strongest absolute weight move first."""
+    ticker_data: dict[str, list[ARKDelta]] = {}
     for d in deltas:
         ticker_data.setdefault(d.ticker, []).append(d)
 
@@ -101,8 +95,8 @@ def get_ark_summary(
     for ticker, entries in ticker_data.items():
         total_shares = sum(float(e.shares_delta or 0) for e in entries)
         total_weight = sum(float(e.weight_delta or 0) for e in entries)
-        etfs = sorted(set(e.etf_ticker for e in entries))
-        dates = sorted(set(e.delta_date for e in entries))
+        etfs = sorted({e.etf_ticker for e in entries})
+        dates = sorted({e.delta_date for e in entries})
 
         if total_shares > 0:
             direction = "increased"
@@ -130,12 +124,36 @@ def get_ark_summary(
     return results
 
 
+@router.get("/ark/summary", response_model=list[ARKSummaryItem])
+def get_ark_summary(
+    db: Session = Depends(get_db),
+    days: int = Query(5, ge=1, le=90, description="Lookback window in days"),
+    ticker: str | None = Query(None, description="Exact ticker filter"),
+):
+    """Get aggregated ARK moves per ticker across all ETFs.
+
+    Groups ARK delta entries by ticker over the given time window,
+    summing shares and weight changes across all ETFs and days.
+    Sorted by absolute weight impact (strongest moves first). Not limited.
+    """
+    cutoff = date.today() - timedelta(days=days)
+    query = db.query(ARKDelta).filter(
+        ARKDelta.delta_date >= cutoff,
+        ARKDelta.delta_type != "unchanged",
+    )
+    if symbol := _norm_ticker(ticker):
+        query = query.filter(ARKDelta.ticker == symbol)
+    return summarize_ark_deltas(query.all())
+
+
 @router.get("/insider", response_model=list[InsiderClusterItem])
 def get_insider_clusters(
+    response: Response,
     db: Session = Depends(get_db),
     days: int = Query(30, ge=1, le=365, description="Lookback days"),
     min_score: float = Query(0.0, ge=0.0, description="Minimum cluster score"),
-    limit: int = Query(50, ge=1, le=200),
+    ticker: str | None = Query(None, description="Exact ticker filter"),
+    limit: int = Query(50, ge=1, le=500),
 ):
     """Get active insider trading clusters.
 
@@ -143,133 +161,80 @@ def get_insider_clusters(
     within a short time window.
     """
     cutoff = date.today() - timedelta(days=days)
-    clusters = (
+    query = (
         db.query(InsiderCluster)
         .filter(InsiderCluster.cluster_end >= cutoff)
         .filter(InsiderCluster.cluster_score >= min_score)
-        .order_by(desc(InsiderCluster.cluster_score))
-        .limit(limit)
-        .all()
     )
-
-    return [
-        InsiderClusterItem(
-            ticker=c.ticker,
-            cluster_start=c.cluster_start,
-            cluster_end=c.cluster_end,
-            n_insiders=c.n_insiders,
-            n_buys=c.n_buys,
-            n_sells=c.n_sells,
-            total_buy_value=float(c.total_buy_value) if c.total_buy_value else None,
-            cluster_score=float(c.cluster_score) if c.cluster_score else None,
-        )
-        for c in clusters
-    ]
+    if symbol := _norm_ticker(ticker):
+        query = query.filter(InsiderCluster.ticker == symbol)
+    _set_total(response, query)
+    clusters = query.order_by(desc(InsiderCluster.cluster_score)).limit(limit).all()
+    return [insider_cluster_item(c) for c in clusters]
 
 
 @router.get("/politicians", response_model=list[PoliticianTradeItem])
 def get_politician_trades(
+    response: Response,
     db: Session = Depends(get_db),
     days: int = Query(30, ge=1, le=365, description="Lookback days"),
+    ticker: str | None = Query(None, description="Exact ticker filter"),
     limit: int = Query(100, ge=1, le=500),
 ):
     """Get recent politician trades from Senate financial disclosures."""
     cutoff = date.today() - timedelta(days=days)
-    trades = (
-        db.query(PoliticianTrade)
-        .filter(PoliticianTrade.disclosure_date >= cutoff)
-        .order_by(desc(PoliticianTrade.disclosure_date))
-        .limit(limit)
-        .all()
-    )
-
-    return [
-        PoliticianTradeItem(
-            politician_name=t.politician_name,
-            party=t.party,
-            ticker=t.ticker,
-            transaction_date=t.transaction_date,
-            disclosure_date=t.disclosure_date,
-            transaction_type=t.transaction_type,
-            amount_range=t.amount_range,
-            delay_days=(
-                (t.disclosure_date - t.transaction_date).days
-                if t.disclosure_date and t.transaction_date
-                else None
-            ),
-        )
-        for t in trades
-    ]
+    query = db.query(PoliticianTrade).filter(PoliticianTrade.disclosure_date >= cutoff)
+    if symbol := _norm_ticker(ticker):
+        query = query.filter(PoliticianTrade.ticker == symbol)
+    _set_total(response, query)
+    trades = query.order_by(desc(PoliticianTrade.disclosure_date)).limit(limit).all()
+    return [politician_trade_item(t) for t in trades]
 
 
 @router.get("/ratings", response_model=list[AnalystRatingItem])
 def get_analyst_ratings(
+    response: Response,
     db: Session = Depends(get_db),
-    days: int = Query(7, ge=1, le=90, description="Lookback days"),
+    days: int = Query(7, ge=1, le=365, description="Lookback days"),
+    ticker: str | None = Query(None, description="Exact ticker filter"),
     limit: int = Query(100, ge=1, le=500),
 ):
     """Get recent analyst rating changes (upgrades/downgrades).
 
-    Enriches each rating with the consensus median price target from
-    the latest fundamentals snapshot for that ticker.
+    ``firm_target_new/old`` are the firm's own price targets;
+    ``consensus_target`` is the consensus median from the latest
+    fundamentals snapshot of that ticker (context only).
     """
     cutoff = date.today() - timedelta(days=days)
-    ratings = (
-        db.query(AnalystRating)
-        .filter(AnalystRating.rating_date >= cutoff)
-        .order_by(desc(AnalystRating.rating_date))
-        .limit(limit)
-        .all()
-    )
+    query = db.query(AnalystRating).filter(AnalystRating.rating_date >= cutoff)
+    if symbol := _norm_ticker(ticker):
+        query = query.filter(AnalystRating.ticker == symbol)
+    _set_total(response, query)
+    ratings = query.order_by(desc(AnalystRating.rating_date)).limit(limit).all()
 
-    # Build a lookup of consensus price targets from the latest snapshot
-    # Subquery: max snapshot_date per ticker
-    latest_date_sq = (
-        db.query(
-            FundamentalsSnapshot.ticker,
-            func.max(FundamentalsSnapshot.snapshot_date).label("max_date"),
-        )
-        .group_by(FundamentalsSnapshot.ticker)
-        .subquery()
-    )
-    targets = (
-        db.query(
-            FundamentalsSnapshot.ticker,
-            FundamentalsSnapshot.target_price_median,
-        )
-        .join(
-            latest_date_sq,
-            (FundamentalsSnapshot.ticker == latest_date_sq.c.ticker)
-            & (FundamentalsSnapshot.snapshot_date == latest_date_sq.c.max_date),
-        )
-        .filter(FundamentalsSnapshot.target_price_median.isnot(None))
-        .all()
-    )
-    target_map = {t.ticker: float(t.target_price_median) for t in targets}
-
-    return [
-        AnalystRatingItem(
-            ticker=r.ticker,
-            firm=r.firm,
-            rating_date=r.rating_date,
-            rating_new=r.rating_new,
-            rating_old=r.rating_old,
-            action=r.action,
-            price_target_new=target_map.get(r.ticker),
-            price_target_old=None,
-        )
-        for r in ratings
-    ]
+    targets = consensus_targets(db, (r.ticker for r in ratings))
+    return [analyst_rating_item(r, targets) for r in ratings]
 
 
 # ── Sentiment Signal Endpoints ───────────────────────────────────────
 
 
+def _sentiment_order(sort: SentimentSort, avg_col, cnt_col) -> tuple:
+    if sort == "most_positive":
+        return (desc(avg_col), NewsSentiment.ticker)
+    if sort == "most_articles":
+        return (desc(cnt_col), NewsSentiment.ticker)
+    return (avg_col, NewsSentiment.ticker)
+
+
 @router.get("/sentiment/summary", response_model=list[SentimentSummaryItem])
 def get_sentiment_summary(
+    response: Response,
     db: Session = Depends(get_db),
     days: int = Query(7, ge=1, le=90, description="Lookback days"),
-    limit: int = Query(50, ge=1, le=200),
+    ticker: str | None = Query(None, description="Exact ticker filter"),
+    sort: SentimentSort = Query("most_negative", description="Sort order"),
+    limit: int = Query(100, ge=1, le=1000),
 ):
     """Aggregated sentiment per ticker over a time window.
 
@@ -278,13 +243,33 @@ def get_sentiment_summary(
     recent headline.
     """
     cutoff = date.today() - timedelta(days=days)
+    symbol = _norm_ticker(ticker)
+
+    base_filter = [
+        NewsArticle.published_at >= cutoff,
+        NewsSentiment.ticker.isnot(None),
+    ]
+    if symbol:
+        base_filter.append(NewsSentiment.ticker == symbol)
+
+    avg_col = func.avg(NewsSentiment.sentiment_score)
+    cnt_col = func.count(NewsSentiment.id)
+
+    # Total number of tickers (before limit)
+    total = (
+        db.query(func.count(func.distinct(NewsSentiment.ticker)))
+        .join(NewsArticle, NewsSentiment.article_id == NewsArticle.id)
+        .filter(*base_filter)
+        .scalar()
+    ) or 0
+    response.headers[TOTAL_COUNT_HEADER] = str(total)
 
     # Join articles + sentiment, grouped by ticker
     rows = (
         db.query(
             NewsSentiment.ticker,
-            func.avg(NewsSentiment.sentiment_score).label("avg_score"),
-            func.count(NewsSentiment.id).label("cnt"),
+            avg_col.label("avg_score"),
+            cnt_col.label("cnt"),
             func.sum(case(
                 (NewsSentiment.sentiment_label == "negative", 1), else_=0
             )).label("neg"),
@@ -296,43 +281,39 @@ def get_sentiment_summary(
             )).label("neu"),
         )
         .join(NewsArticle, NewsSentiment.article_id == NewsArticle.id)
-        .filter(
-            NewsArticle.published_at >= cutoff,
-            NewsSentiment.ticker.isnot(None),
-        )
+        .filter(*base_filter)
         .group_by(NewsSentiment.ticker)
-        .order_by(func.avg(NewsSentiment.sentiment_score))
+        .order_by(*_sentiment_order(sort, avg_col, cnt_col))
         .limit(limit)
         .all()
     )
 
-    # Collect tickers for latest headline lookup
+    # Latest headline per ticker – single DISTINCT ON query (no N+1)
     tickers = [r.ticker for r in rows]
-
-    # Subquery: latest article per ticker
     latest_headlines: dict[str, tuple] = {}
     if tickers:
-        for ticker in tickers:
-            latest = (
-                db.query(
-                    NewsArticle.headline,
-                    NewsSentiment.sentiment_label,
-                    NewsArticle.published_at,
-                )
-                .join(NewsSentiment, NewsSentiment.article_id == NewsArticle.id)
-                .filter(
-                    NewsSentiment.ticker == ticker,
-                    NewsArticle.published_at >= cutoff,
-                )
-                .order_by(desc(NewsArticle.published_at))
-                .first()
+        latest_rows = (
+            db.query(
+                NewsSentiment.ticker,
+                NewsArticle.headline,
+                NewsSentiment.sentiment_label,
+                NewsArticle.published_at,
             )
-            if latest:
-                latest_headlines[ticker] = (
-                    latest.headline,
-                    latest.sentiment_label,
-                    latest.published_at.date() if latest.published_at else None,
-                )
+            .join(NewsArticle, NewsSentiment.article_id == NewsArticle.id)
+            .filter(
+                NewsSentiment.ticker.in_(tickers),
+                NewsArticle.published_at >= cutoff,
+            )
+            .distinct(NewsSentiment.ticker)
+            .order_by(NewsSentiment.ticker, desc(NewsArticle.published_at))
+            .all()
+        )
+        for latest in latest_rows:
+            latest_headlines[latest.ticker] = (
+                latest.headline,
+                latest.sentiment_label,
+                latest.published_at.date() if latest.published_at else None,
+            )
 
     items = []
     for r in rows:
@@ -344,7 +325,9 @@ def get_sentiment_summary(
 
         items.append(SentimentSummaryItem(
             ticker=r.ticker,
-            avg_sentiment=round(float(r.avg_score), 4) if r.avg_score else None,
+            avg_sentiment=(
+                round(float(r.avg_score), 4) if r.avg_score is not None else None
+            ),
             article_count=cnt,
             negative_count=neg,
             positive_count=pos,
@@ -360,6 +343,7 @@ def get_sentiment_summary(
 
 @router.get("/sentiment/articles", response_model=list[SentimentArticleItem])
 def get_sentiment_articles(
+    response: Response,
     db: Session = Depends(get_db),
     days: int = Query(7, ge=1, le=90, description="Lookback days"),
     ticker: str | None = Query(None, description="Filter by ticker"),
@@ -386,9 +370,10 @@ def get_sentiment_articles(
         .filter(NewsArticle.published_at >= cutoff)
     )
 
-    if ticker:
-        query = query.filter(NewsSentiment.ticker == ticker.upper())
+    if symbol := _norm_ticker(ticker):
+        query = query.filter(NewsSentiment.ticker == symbol)
 
+    _set_total(response, query)
     articles = (
         query
         .order_by(desc(NewsArticle.published_at))
@@ -403,7 +388,7 @@ def get_sentiment_articles(
             source=a.source,
             published_at=a.published_at,
             ticker=a.ticker,
-            sentiment_score=float(a.sentiment_score) if a.sentiment_score is not None else None,
+            sentiment_score=to_float(a.sentiment_score),
             sentiment_label=a.sentiment_label,
             url=a.article_url,
         )

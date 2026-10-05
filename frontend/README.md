@@ -1,73 +1,38 @@
-# React + TypeScript + Vite
+# Alpaca Broker – Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React-Oberfläche (Vite + TypeScript) für das Signal Warehouse: Dashboard,
+Ticker-Universum, Signale, Feature-Pipeline, Logs und Betrieb.
 
-Currently, two official plugins are available:
+## Entwicklung
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev      # http://localhost:5173, /api wird an http://localhost:8090 weitergeleitet
+npm run build    # Typecheck (tsc -b) + Produktions-Build nach dist/
+npm run lint     # ESLint
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Das Backend (FastAPI) muss für die Entwicklung lokal auf Port 8090 laufen.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Authentifizierung
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+Schreibende bzw. geschützte Endpunkte erwarten einen API-Schlüssel. Er wird unter
+**Settings → Zugang** im Browser (`localStorage`) gespeichert und von
+`src/api.ts` bei jeder Anfrage als `X-API-Key` mitgeschickt (zusätzlich immer
+`X-Requested-With: XMLHttpRequest`). Bei 401/403 zeigt die UI einen Hinweis auf
+die Einstellungen.
+
+## Struktur
+
+| Pfad | Inhalt |
+| --- | --- |
+| `src/api.ts` | Fetch-Wrapper (`ApiError` mit Status + Backend-`detail`), Typen, Endpunkt-Funktionen |
+| `src/queries.ts` | Zentrale TanStack-Query-Keys und `queryOptions` |
+| `src/format.ts` | Gemeinsame Formatierer (Zahlen, Prozent, Datum, Dauer) |
+| `src/components/` | `DataTable` (Sortieren/Filtern), `QueryState` (Laden/Fehler/Leer) |
+| `src/pages/` | Seiten; Signal-Tabs unter `pages/signals/`, Settings-Karten unter `pages/settings/` |
+
+Listen-Endpunkte liefern die ungekürzte Gesamtzahl im Header `X-Total-Count`;
+die UI zeigt dann „Zeige N von M Einträgen“.
+
+Die Versionsnummer in der Seitenleiste stammt aus `package.json` (`__APP_VERSION__`).
