@@ -2,10 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from trading_signals.universe.alpaca_validator import (
-    AlpacaAsset,
     AlpacaAssetValidator,
     ValidationResult,
 )

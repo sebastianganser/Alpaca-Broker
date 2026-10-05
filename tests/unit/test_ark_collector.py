@@ -4,16 +4,13 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
+from trading_signals.collectors._parsing import parse_date as _parse_date
+from trading_signals.collectors._parsing import safe_float as _safe_numeric
 from trading_signals.collectors.ark_holdings import (
     ARK_ETFS,
     NON_EQUITY_RE,
     ARKHoldingsCollector,
-    _parse_date,
-    _safe_numeric,
 )
-
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 
@@ -147,3 +144,24 @@ class TestARKHoldingsCollector:
         assert fetched == 1
         assert written == 1
         session.flush.assert_called()
+        # one multi-row statement instead of row-by-row inserts
+        assert session.execute.call_count == 1
+
+    @patch("trading_signals.collectors.ark_holdings._fetch_etf_holdings")
+    def test_fetch_records_status_per_etf(self, mock_fetch):
+        """HTTP failures count as errors, empty answers as success (H5)."""
+
+        def _side_effect(etf):
+            if etf == "ARKK":
+                raise RuntimeError("boom")
+            return []
+
+        mock_fetch.side_effect = _side_effect
+        collector = ARKHoldingsCollector()
+        collector._reset_run_state()
+
+        data = collector.fetch(MagicMock())
+
+        assert data == {}
+        assert collector._attempts == len(ARK_ETFS)
+        assert collector._errors == 1

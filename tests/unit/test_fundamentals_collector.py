@@ -3,14 +3,11 @@
 from datetime import date
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from trading_signals.collectors.fundamentals_collector import (
-    FundamentalsCollectorYF,
     _UPSERT_COLUMNS,
+    FundamentalsCollectorYF,
 )
 from trading_signals.db.models.fundamentals import FundamentalsSnapshot
-
 
 # ============================================================================
 # Tests: FundamentalsSnapshot ORM Model
@@ -94,9 +91,13 @@ class TestFundamentalsCollector:
 
         collector.fetch(session)
 
-        mock_client.fetch_fundamentals.assert_called_once_with(
-            ["AAPL", "MSFT", "GOOGL"]
-        )
+        mock_client.fetch_fundamentals.assert_called_once()
+        args, kwargs = mock_client.fetch_fundamentals.call_args
+        assert args[0] == ["AAPL", "MSFT", "GOOGL"]
+        # H5: per-ticker outcome callbacks are wired to the run status
+        assert kwargs["on_success"] == collector.record_success
+        assert kwargs["on_error"] == collector.record_error
+        session.commit.assert_called()  # read txn released before HTTP
 
     def test_store_writes_records(self):
         """store() should write records with UPSERT."""
@@ -141,7 +142,7 @@ class TestFundamentalsCollector:
         collector = FundamentalsCollectorYF()
         session = MagicMock()
         mock_result = MagicMock()
-        mock_result.rowcount = 1
+        mock_result.rowcount = 3
         session.execute.return_value = mock_result
 
         data = [
@@ -154,7 +155,27 @@ class TestFundamentalsCollector:
 
         assert fetched == 3
         assert written == 3
-        assert session.execute.call_count == 3
+        # single multi-row INSERT … ON CONFLICT DO UPDATE
+        assert session.execute.call_count == 1
+
+    def test_store_upserts_most_recent_quarter(self):
+        """most_recent_quarter is written and updated on conflict (M4)."""
+        from sqlalchemy.dialects import postgresql
+
+        collector = FundamentalsCollectorYF()
+        session = MagicMock()
+        session.execute.return_value.rowcount = 1
+
+        collector.store(
+            session,
+            [{"ticker": "AAPL", "most_recent_quarter": date(2026, 6, 30)}],
+        )
+
+        stmt = session.execute.call_args[0][0]
+        sql = str(stmt.compile(dialect=postgresql.dialect()))
+        assert "most_recent_quarter" in sql
+        assert "ON CONFLICT (ticker, snapshot_date) DO UPDATE" in sql
+        assert "most_recent_quarter = excluded.most_recent_quarter" in sql
 
     def test_store_empty_data(self):
         """store() with empty data should return zero counts."""

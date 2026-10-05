@@ -14,19 +14,25 @@ Features:
   - Global market news: separate fetch without symbol filter
   - Deduplication via article_id (ON CONFLICT DO NOTHING)
   - Configurable lookback window (default: 24h for daily runs)
+  - Watermark (M3): the window starts at
+    ``min(now - lookback, max(published_at) - overlap)`` but never more than
+    ``MAX_CATCHUP_DAYS`` back, so missed runs are caught up automatically
+  - Pagination cap ``MAX_PAGES`` per request series; hitting it logs a
+    warning and marks the run PARTIAL (no silent truncation)
+  - Retry per single page (not per whole pagination)
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import requests
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from trading_signals.collectors._db import release_transaction
 from trading_signals.collectors.base import BaseCollector
 from trading_signals.config import get_settings
 from trading_signals.db.models.news import NewsArticle
-from trading_signals.db.models.universe import Universe
 from trading_signals.utils.logging import get_logger
 from trading_signals.utils.retry import retry
 
@@ -44,6 +50,15 @@ PAGE_LIMIT = 50
 # Default lookback: 1 day for daily collection
 DEFAULT_LOOKBACK_HOURS = 36  # 36h buffer for timezone edge cases
 
+#: Max pages per symbol batch / global request (100 × 50 = 5000 articles).
+MAX_PAGES = 100
+
+#: Overlap subtracted from the newest stored article (re-fetches are deduped).
+WATERMARK_OVERLAP = timedelta(hours=1)
+
+#: Catch-up after outages is bounded to this many days.
+MAX_CATCHUP_DAYS = 7
+
 
 class NewsCollectorAlpaca(BaseCollector):
     """Collect financial news from Alpaca News API."""
@@ -54,8 +69,9 @@ class NewsCollectorAlpaca(BaseCollector):
         """Initialize the Alpaca news collector.
 
         Args:
-            lookback_hours: Hours to look back for news articles.
+            lookback_hours: Minimum hours to look back for news articles.
                             Default 36 provides buffer for overnight runs.
+                            Extended automatically via the DB watermark.
         """
         self.lookback_hours = lookback_hours
         settings = get_settings()
@@ -64,88 +80,108 @@ class NewsCollectorAlpaca(BaseCollector):
             "APCA-API-SECRET-KEY": settings.ALPACA_SECRET_KEY,
         }
 
+    def _start_time(self, latest: Any, now: datetime) -> datetime:
+        """Compute the window start from the DB watermark (see module doc)."""
+        start = now - timedelta(hours=self.lookback_hours)
+        if isinstance(latest, datetime):
+            if latest.tzinfo is None:
+                latest = latest.replace(tzinfo=UTC)  # stored as UTC
+            start = min(start, latest - WATERMARK_OVERLAP)
+        return max(start, now - timedelta(days=MAX_CATCHUP_DAYS))
+
     def fetch(self, session: Session) -> list[dict]:
         """Fetch news articles for all universe tickers + global news.
 
         Returns:
             List of article dicts, deduplicated by article_id.
         """
-        # Get all active tickers
-        tickers = [
-            r[0]
-            for r in session.execute(
-                Universe.__table__.select()
-                .with_only_columns(Universe.ticker)
-                .where(Universe.is_active.is_(True))
-                .order_by(Universe.ticker)
-            ).all()
-        ]
+        latest = session.execute(select(func.max(NewsArticle.published_at))).scalar()
+        release_transaction(session)
+        tickers = self.get_active_tickers(session)
+
+        start_time = self._start_time(latest, datetime.now(UTC))
         logger.info(
             f"[{self.name}] Fetching news for {len(tickers)} tickers "
-            f"(lookback={self.lookback_hours}h)"
+            f"since {start_time:%Y-%m-%d %H:%M}Z "
+            f"(lookback={self.lookback_hours}h, watermark={latest})"
         )
 
-        start_time = datetime.now(timezone.utc) - timedelta(
-            hours=self.lookback_hours
-        )
         seen_ids: set[str] = set()
         all_articles: list[dict] = []
 
+        def _add(articles: list[dict]) -> None:
+            for article in articles:
+                aid = str(article.get("id", ""))
+                if aid and aid not in seen_ids:
+                    seen_ids.add(aid)
+                    all_articles.append(article)
+
         # 1. Fetch ticker-specific news in batches
+        total_batches = (len(tickers) + SYMBOL_BATCH_SIZE - 1) // SYMBOL_BATCH_SIZE
         for i in range(0, len(tickers), SYMBOL_BATCH_SIZE):
             batch = tickers[i : i + SYMBOL_BATCH_SIZE]
             batch_num = (i // SYMBOL_BATCH_SIZE) + 1
-            total_batches = (
-                len(tickers) + SYMBOL_BATCH_SIZE - 1
-            ) // SYMBOL_BATCH_SIZE
 
             logger.info(
                 f"[{self.name}] Batch {batch_num}/{total_batches}: "
                 f"{len(batch)} symbols"
             )
-
-            try:
-                articles = _fetch_news_page(
-                    symbols=batch,
-                    start=start_time,
-                    headers=self._headers,
-                )
-                for article in articles:
-                    aid = str(article.get("id", ""))
-                    if aid and aid not in seen_ids:
-                        seen_ids.add(aid)
-                        all_articles.append(article)
-            except Exception as e:
-                logger.error(
-                    f"[{self.name}] Batch {batch_num} failed: {e}"
-                )
+            _add(self._fetch_paginated(batch, start_time, f"batch {batch_num}"))
 
         # 2. Fetch global news (no symbol filter)
         logger.info(f"[{self.name}] Fetching global market news...")
-        try:
-            global_articles = _fetch_news_page(
-                symbols=None,
-                start=start_time,
-                headers=self._headers,
-            )
-            for article in global_articles:
-                aid = str(article.get("id", ""))
-                if aid and aid not in seen_ids:
-                    seen_ids.add(aid)
-                    all_articles.append(article)
-        except Exception as e:
-            logger.error(f"[{self.name}] Global news fetch failed: {e}")
+        _add(self._fetch_paginated(None, start_time, "global"))
 
         logger.info(
-            f"[{self.name}] Fetched {len(all_articles)} unique articles "
-            f"(from {len(seen_ids)} total)"
+            f"[{self.name}] Fetched {len(all_articles)} unique articles"
         )
         return all_articles
+
+    def _fetch_paginated(
+        self,
+        symbols: list[str] | None,
+        start: datetime,
+        label: str,
+        max_pages: int = MAX_PAGES,
+    ) -> list[dict]:
+        """Fetch all pages for one symbol batch (or global news).
+
+        Each page is requested (and retried) individually and reported via
+        record_success/record_error. On a failed page the articles fetched
+        so far are kept. Hitting ``max_pages`` logs a warning and marks the
+        run PARTIAL.
+        """
+        articles: list[dict] = []
+        page_token: str | None = None
+        for _page in range(max_pages):
+            try:
+                payload = _fetch_news_page(symbols, start, self._headers, page_token)
+            except Exception as e:
+                self.record_error()
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                logger.error(
+                    f"[{self.name}] {label} page {_page + 1} failed: "
+                    f"{type(e).__name__}{f' (HTTP {status})' if status else ''}"
+                )
+                return articles
+            self.record_success()
+            articles.extend(payload.get("news", []) or [])
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                return articles
+
+        logger.warning(
+            f"[{self.name}] {label}: page cap of {max_pages} pages "
+            f"({max_pages * PAGE_LIMIT} articles) reached – older articles "
+            f"in the window were not fetched"
+        )
+        self.mark_partial(f"news page cap hit ({label})")
+        return articles
 
     def store(
         self, session: Session, data: list[dict]
     ) -> tuple[int, int]:
-        """Store fetched news articles in the database.
+        """Store fetched news articles in the database (multi-row insert).
 
         Uses ON CONFLICT DO NOTHING on article_id for idempotent inserts.
 
@@ -153,8 +189,8 @@ class NewsCollectorAlpaca(BaseCollector):
             Tuple of (records_fetched, records_written).
         """
         records_fetched = len(data)
-        records_written = 0
 
+        rows = []
         for article in data:
             article_id = str(article.get("id", ""))
             headline = article.get("headline", "")
@@ -167,27 +203,21 @@ class NewsCollectorAlpaca(BaseCollector):
             if published_at is None:
                 continue
 
-            stmt = (
-                pg_insert(NewsArticle)
-                .values(
-                    article_id=article_id,
-                    headline=headline,
-                    summary=article.get("summary"),
-                    source=article.get("source"),
-                    author=article.get("author"),
-                    published_at=published_at,
-                    article_url=article.get("url"),
-                    symbols=symbols if symbols else None,
-                    is_global=len(symbols) == 0,
-                )
-                .on_conflict_do_nothing(
-                    constraint="uq_news_articles_article_id"
-                )
-            )
-            result = session.execute(stmt)
-            if result.rowcount > 0:
-                records_written += 1
+            rows.append({
+                "article_id": article_id,
+                "headline": headline,
+                "summary": article.get("summary"),
+                "source": article.get("source"),
+                "author": article.get("author"),
+                "published_at": published_at,
+                "article_url": article.get("url"),
+                "symbols": symbols if symbols else None,
+                "is_global": len(symbols) == 0,
+            })
 
+        records_written = self._bulk_insert(
+            session, NewsArticle, rows, conflict_cols=["article_id"]
+        )
         session.flush()
         logger.info(
             f"[{self.name}] Stored {records_written}/{records_fetched} articles "
@@ -201,50 +231,37 @@ def _fetch_news_page(
     symbols: list[str] | None,
     start: datetime,
     headers: dict[str, str],
-    max_pages: int = 10,
-) -> list[dict]:
-    """Fetch news articles from Alpaca, handling pagination.
+    page_token: str | None = None,
+) -> dict:
+    """Fetch ONE page of news articles from Alpaca (retried individually).
 
     Args:
         symbols: List of ticker symbols (max 50), or None for global news.
         start: Start time for news lookback.
         headers: Alpaca auth headers.
-        max_pages: Maximum number of pages to fetch (safety limit).
+        page_token: ``next_page_token`` of the previous page, if any.
 
     Returns:
-        List of article dicts from the API.
+        The JSON payload (``news`` list + ``next_page_token``).
     """
-    all_articles: list[dict] = []
-    next_page_token = None
+    params: dict[str, Any] = {
+        "start": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "limit": PAGE_LIMIT,
+        "sort": "desc",
+    }
+    if symbols:
+        params["symbols"] = ",".join(symbols)
+    if page_token:
+        params["page_token"] = page_token
 
-    for _page in range(max_pages):
-        params: dict[str, Any] = {
-            "start": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "limit": PAGE_LIMIT,
-            "sort": "desc",
-        }
-        if symbols:
-            params["symbols"] = ",".join(symbols)
-        if next_page_token:
-            params["page_token"] = next_page_token
-
-        response = requests.get(
-            NEWS_BASE_URL,
-            headers=headers,
-            params=params,
-            timeout=30,
-        )
-        response.raise_for_status()
-        payload = response.json()
-
-        articles = payload.get("news", [])
-        all_articles.extend(articles)
-
-        next_page_token = payload.get("next_page_token")
-        if not next_page_token:
-            break
-
-    return all_articles
+    response = requests.get(
+        NEWS_BASE_URL,
+        headers=headers,
+        params=params,
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 def _parse_timestamp(ts: str) -> datetime | None:

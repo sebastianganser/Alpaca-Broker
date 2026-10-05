@@ -103,3 +103,69 @@ class TestRetryDecorator:
         result = custom_error()
         assert result == "ok"
         assert call_count == 2
+
+
+class TestRetryHttp:
+    """M8: 5xx gateway errors are retried, Retry-After is honoured."""
+
+    @staticmethod
+    def _http_error(status, headers=None):
+        from unittest.mock import MagicMock
+
+        import requests
+
+        resp = MagicMock(status_code=status)
+        resp.headers = headers or {}
+        return requests.exceptions.HTTPError(response=resp)
+
+    @pytest.mark.parametrize("status", [500, 502, 503, 504, 429])
+    def test_retries_transient_http(self, status, monkeypatch):
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+        calls = []
+
+        @retry(max_attempts=3, base_delay=0.01)
+        def flaky():
+            calls.append(1)
+            if len(calls) < 2:
+                raise self._http_error(status)
+            return "ok"
+
+        assert flaky() == "ok"
+        assert len(calls) == 2
+
+    def test_does_not_retry_404(self, monkeypatch):
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+        calls = []
+
+        @retry(max_attempts=3, base_delay=0.01)
+        def missing():
+            calls.append(1)
+            raise self._http_error(404)
+
+        import requests
+
+        with pytest.raises(requests.exceptions.HTTPError):
+            missing()
+        assert len(calls) == 1
+
+    def test_honours_retry_after(self, monkeypatch):
+        sleeps = []
+        monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
+        calls = []
+
+        @retry(max_attempts=2, base_delay=0.01)
+        def limited():
+            calls.append(1)
+            if len(calls) == 1:
+                raise self._http_error(429, {"Retry-After": "7"})
+            return "ok"
+
+        assert limited() == "ok"
+        assert sleeps == [7.0]
+
+    def test_retry_after_is_capped(self):
+        from trading_signals.utils.retry import MAX_RETRY_AFTER, _retry_after_seconds
+
+        resp = type("R", (), {"headers": {"Retry-After": "99999"}})()
+        assert _retry_after_seconds(resp) == 99999.0
+        assert min(_retry_after_seconds(resp), MAX_RETRY_AFTER) == MAX_RETRY_AFTER

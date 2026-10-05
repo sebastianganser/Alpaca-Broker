@@ -11,7 +11,6 @@ from sqlalchemy import (
     Date,
     DateTime,
     Index,
-    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -28,9 +27,11 @@ class PoliticianTrade(Base):
 
     __tablename__ = "politician_trades"
     __table_args__ = (
+        # owner is part of the key: identical Self/Spouse trades in one
+        # filing are distinct transactions (Migration 029).
         UniqueConstraint(
             "politician_name", "ticker", "transaction_date",
-            "transaction_type", "amount_range",
+            "transaction_type", "amount_range", "owner",
             name="uq_politician_trade_dedup",
         ),
         Index("idx_politician_ticker", "ticker"),
@@ -48,7 +49,9 @@ class PoliticianTrade(Base):
     disclosure_date: Mapped[date | None] = mapped_column(Date)
     transaction_type: Mapped[str | None] = mapped_column(String(20))  # Purchase, Sale
     amount_range: Mapped[str | None] = mapped_column(String(50))
-    owner: Mapped[str | None] = mapped_column(String(50))  # Self, Spouse, Joint, Child
+    owner: Mapped[str] = mapped_column(
+        String(50), nullable=False, server_default="Self"
+    )  # Self, Spouse, Joint, Child
     asset_description: Mapped[str | None] = mapped_column(Text)
     comment: Mapped[str | None] = mapped_column(Text)
     source_url: Mapped[str | None] = mapped_column(Text)

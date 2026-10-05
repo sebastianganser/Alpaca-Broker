@@ -8,19 +8,22 @@ Strategy:
   2. Fetch ticker.get_earnings_dates() via YFinanceClient
   3. Store with ON CONFLICT DO UPDATE (UPSERT – eps_actual gets filled post-earnings)
 
+Upsert semantics (M4): ``col = COALESCE(excluded.col, existing.col)`` – a
+later fetch never wipes a known value with NULL. ``fetched_at`` and
+``last_seen`` are bumped on every run, ``first_seen`` is set on insert only.
+
 Schedule: Weekly Sunday 02:00 MEZ
 """
 
-from typing import Any
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from trading_signals.collectors.base import BaseCollector
 from trading_signals.collectors.yfinance_client import YFinanceClient
 from trading_signals.db.models.fundamentals import EarningsCalendar
-from trading_signals.db.models.universe import Universe
 from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -30,6 +33,9 @@ _UPSERT_COLUMNS = [
     "time_of_day", "eps_estimate", "eps_actual",
     "revenue_estimate", "revenue_actual", "surprise_pct",
 ]
+
+#: Rows per multi-row INSERT statement.
+_CHUNK = 1000
 
 
 class EarningsCalendarCollector(BaseCollector):
@@ -65,9 +71,7 @@ class EarningsCalendarCollector(BaseCollector):
         Returns:
             List of dicts with earnings date records.
         """
-        # Load active tickers
-        stmt = select(Universe.ticker).where(Universe.is_active.is_(True))
-        tickers = [row[0] for row in session.execute(stmt).all()]
+        tickers = self.get_active_tickers(session)
 
         logger.info(
             f"[{self.name}] Fetching earnings dates for {len(tickers)} "
@@ -75,11 +79,14 @@ class EarningsCalendarCollector(BaseCollector):
         )
 
         return self.client.fetch_earnings_dates(
-            tickers, limit=self.earnings_limit
+            tickers,
+            limit=self.earnings_limit,
+            on_success=self.record_success,
+            on_error=self.record_error,
         )
 
     def store(self, session: Session, data: list[dict]) -> tuple[int, int]:
-        """Store earnings calendar with UPSERT.
+        """Store earnings calendar with a COALESCE UPSERT (multi-row).
 
         Uses ON CONFLICT DO UPDATE because eps_actual and surprise_pct
         are only available after the earnings call happens.
@@ -88,31 +95,41 @@ class EarningsCalendarCollector(BaseCollector):
             Tuple of (records_fetched, records_written).
         """
         records_fetched = len(data)
-        records_written = 0
+        now = datetime.now()
 
+        # De-duplicate on the PK (last wins) – PostgreSQL rejects a
+        # DO UPDATE statement that touches the same row twice.
+        dedup: dict[tuple, dict] = {}
         for record in data:
             values = {
                 "ticker": record["ticker"],
                 "earnings_date": record["earnings_date"],
-                "time_of_day": record.get("time_of_day"),
-                "eps_estimate": record.get("eps_estimate"),
-                "eps_actual": record.get("eps_actual"),
-                "revenue_estimate": record.get("revenue_estimate"),
-                "revenue_actual": record.get("revenue_actual"),
-                "surprise_pct": record.get("surprise_pct"),
+                **{col: record.get(col) for col in _UPSERT_COLUMNS},
+                "fetched_at": now,
+                "first_seen": now,
+                "last_seen": now,
             }
+            dedup[(values["ticker"], values["earnings_date"])] = values
+        rows = list(dedup.values())
 
-            stmt = (
-                pg_insert(EarningsCalendar)
-                .values(**values)
-                .on_conflict_do_update(
-                    constraint="pk_earnings_calendar",
-                    set_={col: values[col] for col in _UPSERT_COLUMNS},
-                )
+        records_written = 0
+        table = EarningsCalendar.__table__
+        for i in range(0, len(rows), _CHUNK):
+            stmt = pg_insert(EarningsCalendar).values(rows[i : i + _CHUNK])
+            set_ = {
+                col: func.coalesce(stmt.excluded[col], table.c[col])
+                for col in _UPSERT_COLUMNS
+            }
+            set_["fetched_at"] = stmt.excluded.fetched_at
+            set_["last_seen"] = stmt.excluded.last_seen
+            # first_seen intentionally NOT updated (insert-only)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["ticker", "earnings_date"], set_=set_
             )
             result = session.execute(stmt)
-            if result.rowcount > 0:
-                records_written += 1
+            rc = getattr(result, "rowcount", 0)
+            if isinstance(rc, int) and rc > 0:
+                records_written += rc
 
         session.flush()
 

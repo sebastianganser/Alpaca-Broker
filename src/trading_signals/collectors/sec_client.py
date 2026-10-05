@@ -12,7 +12,10 @@ with contact info is the only requirement for identification.
 """
 
 import time
-from datetime import date
+import xml.etree.ElementTree as ET
+from collections.abc import Iterable
+from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -24,6 +27,37 @@ logger = get_logger(__name__)
 
 # Minimum interval between requests (10 req/s → 0.1s)
 MIN_REQUEST_INTERVAL = 0.11  # Slightly above 0.1s for safety margin
+
+FORM4_TYPES = ("4", "4/A")
+FORM13F_TYPES = ("13F-HR", "13F-HR/A")
+
+
+def normalize_ticker(ticker: str) -> str:
+    """Normalise a ticker to SEC's notation (upper case, share class with '-').
+
+    SEC's company_tickers.json writes share classes with a dash
+    (``BRK-B``), while our universe / Alpaca use a dot (``BRK.B``).
+    """
+    return ticker.strip().upper().replace(".", "-").replace("/", "-")
+
+
+def parse_acceptance_datetime(value: str | None) -> datetime | None:
+    """Parse SEC ``acceptanceDateTime`` (e.g. ``2024-04-12T18:30:05.000Z``).
+
+    The submissions JSON labels values with ``Z``, but the clock time is
+    widely reported to be EDGAR (US/Eastern) time. We therefore interpret
+    the wall-clock value as ``America/New_York``. This is the conservative
+    choice for point-in-time use: if the value were truly UTC, reading it
+    as Eastern makes the filing appear 4–5 h *later*, never earlier
+    (no look-ahead). Returns a tz-aware datetime or ``None``.
+    """
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.strip().replace("Z", "").split("+")[0])
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=ZoneInfo("America/New_York")).astimezone(UTC)
 
 
 class SECClient:
@@ -38,11 +72,18 @@ class SECClient:
         self._last_request_time: float = 0.0
         self._ticker_to_cik: dict[str, str] | None = None
         self._cik_to_ticker: dict[str, str] | None = None
+        # Submissions JSON per padded CIK – valid for the lifetime of this
+        # client (one collector run). Call clear_cache() to start fresh.
+        self._submissions_cache: dict[str, dict] = {}
         self._session = requests.Session()
         self._session.headers.update({
             "User-Agent": self._user_agent,
             "Accept": "application/json",
         })
+
+    def clear_cache(self) -> None:
+        """Drop cached submissions (call at the start of each run)."""
+        self._submissions_cache.clear()
 
     # ── Rate Limiting ─────────────────────────────────────────────
 
@@ -108,10 +149,17 @@ class SECClient:
         )
 
     def get_cik(self, ticker: str) -> str | None:
-        """Look up the 10-digit CIK for a ticker symbol."""
+        """Look up the 10-digit CIK for a ticker symbol.
+
+        Share-class tickers are normalised to SEC notation first
+        (``BRK.B`` → ``BRK-B``).
+        """
         if self._ticker_to_cik is None:
             self.load_cik_mapping()
-        return self._ticker_to_cik.get(ticker.upper())  # type: ignore[union-attr]
+        mapping = self._ticker_to_cik or {}
+        return mapping.get(normalize_ticker(ticker)) or mapping.get(
+            ticker.strip().upper()
+        )
 
     def get_ticker(self, cik: str) -> str | None:
         """Look up the ticker for a 10-digit CIK."""
@@ -127,18 +175,81 @@ class SECClient:
 
     # ── Submissions API ───────────────────────────────────────────
 
-    def get_submissions(self, cik: str) -> dict:
+    def get_submissions(self, cik: str, use_cache: bool = True) -> dict:
         """Fetch filing metadata for a company via the Submissions API.
+
+        Responses are cached per CIK for the lifetime of the client
+        (one collector run), so repeated lookups cost no extra request.
 
         Args:
             cik: 10-digit CIK (with leading zeros).
+            use_cache: Return a cached response if available.
 
         Returns:
             JSON dict with company info and recent filings.
         """
         padded = self.pad_cik(cik)
+        if use_cache and padded in self._submissions_cache:
+            return self._submissions_cache[padded]
         url = f"{self.SUBMISSIONS_BASE}/CIK{padded}.json"
-        return self._get_json(url)
+        data = self._get_json(url)
+        self._submissions_cache[padded] = data
+        return data
+
+    @staticmethod
+    def _extract_filings(
+        submissions: dict,
+        form_types: Iterable[str],
+        since_date: date | None = None,
+    ) -> list[dict]:
+        """Extract filings of ``form_types`` from a submissions JSON.
+
+        Every filing dict contains: accession_number, filing_date (str),
+        primary_document, report_period (str), form_type and
+        acceptance_datetime (tz-aware datetime or None).
+        """
+        wanted = set(form_types)
+        recent = submissions.get("filings", {}).get("recent", {})
+
+        def col(name: str) -> list:
+            return recent.get(name, []) or []
+
+        forms = col("form")
+        accessions = col("accessionNumber")
+        filing_dates = col("filingDate")
+        primary_docs = col("primaryDocument")
+        report_dates = col("reportDate")
+        acceptances = col("acceptanceDateTime")
+
+        def at(values: list, i: int) -> str:
+            return values[i] if i < len(values) and values[i] else ""
+
+        filings = []
+        for i, form in enumerate(forms):
+            if form not in wanted:
+                continue
+
+            filing_date_str = at(filing_dates, i)
+            if since_date and filing_date_str:
+                try:
+                    fd = date.fromisoformat(filing_date_str)
+                    if fd < since_date:
+                        continue
+                except ValueError:
+                    pass
+
+            filings.append({
+                "accession_number": at(accessions, i),
+                "filing_date": filing_date_str,
+                "primary_document": at(primary_docs, i),
+                "report_period": at(report_dates, i),
+                "form_type": form,
+                "acceptance_datetime": parse_acceptance_datetime(
+                    at(acceptances, i)
+                ),
+            })
+
+        return filings
 
     def get_recent_form4_filings(
         self, cik: str, since_date: date | None = None
@@ -151,38 +262,11 @@ class SECClient:
 
         Returns:
             List of dicts with keys: accession_number, filing_date,
-            primary_document, form_type.
+            primary_document, form_type, report_period,
+            acceptance_datetime.
         """
         submissions = self.get_submissions(cik)
-        recent = submissions.get("filings", {}).get("recent", {})
-
-        forms = recent.get("form", [])
-        accessions = recent.get("accessionNumber", [])
-        filing_dates = recent.get("filingDate", [])
-        primary_docs = recent.get("primaryDocument", [])
-
-        filings = []
-        for i, form in enumerate(forms):
-            if form not in ("4", "4/A"):
-                continue
-
-            filing_date_str = filing_dates[i] if i < len(filing_dates) else ""
-            if since_date and filing_date_str:
-                try:
-                    fd = date.fromisoformat(filing_date_str)
-                    if fd < since_date:
-                        continue
-                except ValueError:
-                    pass
-
-            filings.append({
-                "accession_number": accessions[i] if i < len(accessions) else "",
-                "filing_date": filing_date_str,
-                "primary_document": primary_docs[i] if i < len(primary_docs) else "",
-                "form_type": form,
-            })
-
-        return filings
+        return self._extract_filings(submissions, FORM4_TYPES, since_date)
 
     def get_recent_13f_filings(
         self, cik: str, since_date: date | None = None
@@ -195,40 +279,35 @@ class SECClient:
 
         Returns:
             List of dicts with accession_number, filing_date,
-            primary_document, report_period.
+            primary_document, report_period, form_type,
+            acceptance_datetime.
         """
         submissions = self.get_submissions(cik)
-        recent = submissions.get("filings", {}).get("recent", {})
+        return self._extract_filings(submissions, FORM13F_TYPES, since_date)
 
-        forms = recent.get("form", [])
-        accessions = recent.get("accessionNumber", [])
-        filing_dates = recent.get("filingDate", [])
-        primary_docs = recent.get("primaryDocument", [])
-        report_dates = recent.get("reportDate", [])
+    def get_13f_amendment_type(
+        self, cik: str, accession_number: str
+    ) -> str | None:
+        """Return the amendment type of a 13F-HR/A filing.
 
-        filings = []
-        for i, form in enumerate(forms):
-            if form not in ("13F-HR", "13F-HR/A"):
-                continue
-
-            filing_date_str = filing_dates[i] if i < len(filing_dates) else ""
-            if since_date and filing_date_str:
-                try:
-                    fd = date.fromisoformat(filing_date_str)
-                    if fd < since_date:
-                        continue
-                except ValueError:
-                    pass
-
-            filings.append({
-                "accession_number": accessions[i] if i < len(accessions) else "",
-                "filing_date": filing_date_str,
-                "primary_document": primary_docs[i] if i < len(primary_docs) else "",
-                "report_period": report_dates[i] if i < len(report_dates) else "",
-                "form_type": form,
-            })
-
-        return filings
+        Reads ``coverPage/amendmentInfo/amendmentType`` from the filing's
+        ``primary_doc.xml``: ``"RESTATEMENT"`` (complete replacement of the
+        period's holdings) or ``"NEW HOLDINGS"`` (adds holdings). Returns
+        ``None`` if the document has no amendment type.
+        """
+        xml_content = self.download_filing_document(
+            cik, accession_number, "primary_doc.xml"
+        )
+        try:
+            root = ET.fromstring(xml_content)
+        except ET.ParseError:
+            return None
+        node = root.find(".//{*}amendmentType")
+        if node is None:
+            node = root.find(".//amendmentType")
+        if node is not None and node.text and node.text.strip():
+            return " ".join(node.text.split()).upper()
+        return None
 
     # ── Filing Document Downloads ─────────────────────────────────
 

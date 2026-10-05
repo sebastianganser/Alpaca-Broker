@@ -3,12 +3,14 @@
 import json
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
-
-from trading_signals.collectors.sec_client import SECClient, MIN_REQUEST_INTERVAL
-
+from trading_signals.collectors.sec_client import (
+    MIN_REQUEST_INTERVAL,
+    SECClient,
+    normalize_ticker,
+    parse_acceptance_datetime,
+)
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 
@@ -200,3 +202,112 @@ class TestSubmissionsAPI:
 
         assert len(filings) == 2  # Only April filings
         assert filings[0]["filing_date"] == "2026-04-05"
+
+
+class TestTickerNormalisation:
+    """M7: share-class tickers use SEC notation (BRK-B)."""
+
+    def test_normalize_ticker(self):
+        assert normalize_ticker("brk.b") == "BRK-B"
+        assert normalize_ticker(" BF/B ") == "BF-B"
+
+    def test_get_cik_dot_ticker(self):
+        client = SECClient(user_agent="TestAgent/1.0")
+        client._ticker_to_cik = {"BRK-B": "0001067983"}
+        client._cik_to_ticker = {"0001067983": "BRK-B"}
+        assert client.get_cik("BRK.B") == "0001067983"
+        assert client.get_cik("brk-b") == "0001067983"
+
+
+class TestSubmissionsCache:
+    """M7: submissions JSON fetched once per CIK per client."""
+
+    def test_cached_per_cik(self):
+        client = SECClient(user_agent="TestAgent/1.0")
+        with patch.object(client, "_get_json", return_value={"x": 1}) as mock:
+            client.get_submissions("320193")
+            client.get_submissions("0000320193")
+            assert mock.call_count == 1
+            client.get_submissions("789019")
+            assert mock.call_count == 2
+            client.clear_cache()
+            client.get_submissions("320193")
+            assert mock.call_count == 3
+
+
+class TestFilingMetadata:
+    """M1: accession number + acceptance datetime for every filing."""
+
+    SUBMISSIONS = {
+        "filings": {
+            "recent": {
+                "form": ["13F-HR", "4", "13F-HR/A"],
+                "accessionNumber": ["acc1", "acc2", "acc3"],
+                "filingDate": ["2026-02-14", "2026-02-15", "2026-03-01"],
+                "reportDate": ["2025-12-31", "2026-02-13", "2025-12-31"],
+                "acceptanceDateTime": [
+                    "2026-02-14T16:05:23.000Z", "", "2026-03-01T09:00:00.000Z",
+                ],
+                "primaryDocument": ["primary_doc.xml", "x.xml", "primary_doc.xml"],
+            }
+        }
+    }
+
+    def test_13f_filings(self):
+        from datetime import UTC, datetime
+
+        client = SECClient(user_agent="TestAgent/1.0")
+        with patch.object(client, "get_submissions", return_value=self.SUBMISSIONS):
+            filings = client.get_recent_13f_filings("0001067983")
+        assert [f["accession_number"] for f in filings] == ["acc1", "acc3"]
+        assert filings[0]["report_period"] == "2025-12-31"
+        # EDGAR wall-clock is interpreted as US/Eastern (conservative PIT):
+        # 16:05:23 EST (February) == 21:05:23 UTC
+        assert filings[0]["acceptance_datetime"] == datetime(
+            2026, 2, 14, 21, 5, 23, tzinfo=UTC
+        )
+        assert filings[1]["form_type"] == "13F-HR/A"
+
+    def test_form4_missing_acceptance(self):
+        client = SECClient(user_agent="TestAgent/1.0")
+        with patch.object(client, "get_submissions", return_value=self.SUBMISSIONS):
+            filings = client.get_recent_form4_filings("0001067983")
+        assert len(filings) == 1
+        assert filings[0]["accession_number"] == "acc2"
+        assert filings[0]["acceptance_datetime"] is None
+
+    def test_parse_acceptance_datetime(self):
+        assert parse_acceptance_datetime(None) is None
+        assert parse_acceptance_datetime("garbage") is None
+        dt = parse_acceptance_datetime("2026-02-14T16:05:23")
+        assert dt is not None and dt.tzinfo is not None
+        # Summer (EDT, UTC-4)
+        from datetime import UTC, datetime
+
+        assert parse_acceptance_datetime("2026-07-01T16:05:23.000Z") == datetime(
+            2026, 7, 1, 20, 5, 23, tzinfo=UTC
+        )
+
+
+class TestAmendmentType:
+    """13F-HR/A amendment type from primary_doc.xml."""
+
+    def test_restatement(self):
+        xml = """<edgarSubmission xmlns="http://www.sec.gov/edgar/thirteenffiler">
+          <formData><coverPage><isAmendment>true</isAmendment>
+            <amendmentInfo><amendmentType>RESTATEMENT</amendmentType></amendmentInfo>
+          </coverPage></formData></edgarSubmission>"""
+        client = SECClient(user_agent="TestAgent/1.0")
+        with patch.object(client, "download_filing_document", return_value=xml):
+            assert client.get_13f_amendment_type("1", "acc") == "RESTATEMENT"
+
+    def test_new_holdings_whitespace(self):
+        xml = "<a><amendmentType>New  Holdings</amendmentType></a>"
+        client = SECClient(user_agent="TestAgent/1.0")
+        with patch.object(client, "download_filing_document", return_value=xml):
+            assert client.get_13f_amendment_type("1", "acc") == "NEW HOLDINGS"
+
+    def test_missing(self):
+        client = SECClient(user_agent="TestAgent/1.0")
+        with patch.object(client, "download_filing_document", return_value="<a/>"):
+            assert client.get_13f_amendment_type("1", "acc") is None

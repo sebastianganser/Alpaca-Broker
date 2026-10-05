@@ -4,24 +4,27 @@ Collects individual analyst firm-level rating changes (upgrades, downgrades,
 initiations, reiterations) for all active tickers in the universe.
 
 Strategy:
-  1. Load active tickers from universe table
-  2. Fetch ticker.upgrades_downgrades via YFinanceClient
-  3. Filter to lookback_days window
-  4. Store with ON CONFLICT DO NOTHING (dedup via unique constraint)
+  1. Skip if a previous successful run already covered the last completed
+     NYSE session (weekend/holiday runs, H3/M9)
+  2. Load active tickers from universe table
+  3. Fetch ticker.upgrades_downgrades via YFinanceClient
+  4. Filter to lookback_days window
+  5. Store with ON CONFLICT DO NOTHING (dedup via unique constraint)
 
 Schedule: Daily 01:00 MEZ (night slot after all other daily collectors)
 """
 
-from typing import Any
+from datetime import datetime
 
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from trading_signals.collectors._db import release_transaction
 from trading_signals.collectors.base import BaseCollector
 from trading_signals.collectors.yfinance_client import YFinanceClient
+from trading_signals.db.models.collection_log import CollectionLog
 from trading_signals.db.models.fundamentals import AnalystRating
-from trading_signals.db.models.universe import Universe
+from trading_signals.utils import job_status, market_calendar
 from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -54,15 +57,45 @@ class AnalystRatingsCollector(BaseCollector):
             delay_between_batches=delay_between_batches,
         )
 
+    def _session_already_covered(self, session: Session) -> bool:
+        """True if a successful/partial earlier run already saw the session.
+
+        A run "covers" session X if X was the last completed NYSE session
+        when it started. ``collection_log.started_at`` is naive local
+        (container) time; ``astimezone()`` interprets it as such.
+        """
+        target = market_calendar.last_completed_session()
+        last_start = session.execute(
+            select(func.max(CollectionLog.started_at)).where(
+                CollectionLog.collector_name == self.name,
+                CollectionLog.status.in_([job_status.SUCCESS, job_status.PARTIAL]),
+            )
+        ).scalar()
+        release_transaction(session)
+        if not isinstance(last_start, datetime):
+            return False
+        try:
+            covered = market_calendar.last_completed_session(last_start.astimezone())
+        except Exception:
+            return False
+        if covered >= target:
+            logger.info(
+                f"[{self.name}] Session {target} already covered by run at "
+                f"{last_start:%Y-%m-%d %H:%M} — skipping"
+            )
+            return True
+        return False
+
     def fetch(self, session: Session) -> list[dict]:
         """Fetch analyst ratings for all active universe tickers.
 
         Returns:
             List of dicts with rating data (filtered to lookback window).
         """
-        # Load active tickers
-        stmt = select(Universe.ticker).where(Universe.is_active.is_(True))
-        tickers = [row[0] for row in session.execute(stmt).all()]
+        if self._session_already_covered(session):
+            return []
+
+        tickers = self.get_active_tickers(session)
 
         logger.info(
             f"[{self.name}] Fetching analyst ratings for {len(tickers)} "
@@ -70,30 +103,25 @@ class AnalystRatingsCollector(BaseCollector):
         )
 
         return self.client.fetch_analyst_ratings(
-            tickers, lookback_days=self.lookback_days
+            tickers,
+            lookback_days=self.lookback_days,
+            on_success=self.record_success,
+            on_error=self.record_error,
         )
 
     def store(self, session: Session, data: list[dict]) -> tuple[int, int]:
-        """Store analyst ratings with ON CONFLICT DO NOTHING.
+        """Store analyst ratings with ON CONFLICT DO NOTHING (multi-row).
 
         Returns:
             Tuple of (records_fetched, records_written).
         """
         records_fetched = len(data)
-        records_written = 0
-
-        for record in data:
-            stmt = (
-                pg_insert(AnalystRating)
-                .values(**record)
-                .on_conflict_do_nothing(
-                    constraint="uq_analyst_rating_dedup"
-                )
-            )
-            result = session.execute(stmt)
-            if result.rowcount > 0:
-                records_written += 1
-
+        records_written = self._bulk_insert(
+            session,
+            AnalystRating,
+            data,
+            conflict_cols=["ticker", "firm", "rating_date", "action"],
+        )
         session.flush()
 
         logger.info(

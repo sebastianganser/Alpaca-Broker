@@ -3,14 +3,11 @@
 from datetime import date
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from trading_signals.collectors.earnings_calendar_collector import (
-    EarningsCalendarCollector,
     _UPSERT_COLUMNS,
+    EarningsCalendarCollector,
 )
 from trading_signals.db.models.fundamentals import EarningsCalendar
-
 
 # ============================================================================
 # Tests: EarningsCalendar ORM Model
@@ -98,9 +95,12 @@ class TestEarningsCalendarCollector:
 
         collector.fetch(session)
 
-        mock_client.fetch_earnings_dates.assert_called_once_with(
-            ["AAPL", "MSFT", "GOOGL"], limit=4
-        )
+        mock_client.fetch_earnings_dates.assert_called_once()
+        args, kwargs = mock_client.fetch_earnings_dates.call_args
+        assert args[0] == ["AAPL", "MSFT", "GOOGL"]
+        assert kwargs["limit"] == 4
+        assert kwargs["on_success"] == collector.record_success
+        assert kwargs["on_error"] == collector.record_error
 
     def test_store_writes_records(self):
         """store() should write records with UPSERT."""
@@ -175,8 +175,51 @@ class TestEarningsCalendarCollector:
         fetched, written = collector.store(session, data)
 
         assert fetched == 2
-        assert written == 2
-        assert session.execute.call_count == 2
+        assert written == 1  # driver rowcount of the single multi-row UPSERT
+        assert session.execute.call_count == 1
+
+    def test_store_coalesce_upsert_sql(self):
+        """Known values are never overwritten with NULL; first_seen is
+        insert-only, last_seen/fetched_at are bumped (M4)."""
+        from sqlalchemy.dialects import postgresql
+
+        collector = EarningsCalendarCollector()
+        session = MagicMock()
+        session.execute.return_value.rowcount = 1
+
+        collector.store(
+            session,
+            [
+                {
+                    "ticker": "AAPL",
+                    "earnings_date": date(2026, 4, 24),
+                    "eps_actual": None,
+                }
+            ],
+        )
+
+        stmt = session.execute.call_args[0][0]
+        sql = str(stmt.compile(dialect=postgresql.dialect()))
+        assert "ON CONFLICT (ticker, earnings_date) DO UPDATE" in sql
+        assert "eps_actual = coalesce(excluded.eps_actual" in sql
+        assert "time_of_day = coalesce(excluded.time_of_day" in sql
+        assert "last_seen = excluded.last_seen" in sql
+        assert "fetched_at = excluded.fetched_at" in sql
+        set_clause = sql.split("DO UPDATE SET", 1)[1]
+        assert "first_seen" not in set_clause
+
+    def test_store_dedups_duplicate_keys(self):
+        """Duplicate PKs in one batch must not reach the same statement."""
+        collector = EarningsCalendarCollector()
+        session = MagicMock()
+        session.execute.return_value.rowcount = 1
+        rec = {"ticker": "AAPL", "earnings_date": date(2026, 4, 24)}
+
+        fetched, _ = collector.store(session, [rec, dict(rec, eps_estimate=1.0)])
+
+        assert fetched == 2
+        params = session.execute.call_args[0][0].compile().params
+        assert sum(1 for k in params if k.startswith("ticker")) == 1
 
     def test_store_future_earnings_no_actual(self):
         """Future earnings should have None for eps_actual and surprise_pct."""

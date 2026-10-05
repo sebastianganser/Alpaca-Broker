@@ -6,10 +6,20 @@ portfolio holdings and stores them in the database.
 
 Strategy: Filer-driven approach
   1. Iterate over TOP_FILERS list (configurable, ~20 institutions)
-  2. Fetch submissions JSON → filter for 13F-HR filings
-  3. For each new filing: download infotable XML → parse holdings
-  4. Map CUSIP → ticker where possible
-  5. Store with ON CONFLICT DO NOTHING (dedup via unique constraint)
+  2. Fetch submissions JSON → filter for 13F-HR / 13F-HR/A filings
+  3. Per report period, process the filings of the lookback window
+     oldest first (see ``Form13FCollector._process_period``):
+       - the latest original 13F-HR or RESTATEMENT amendment is the
+         "base" – if it is new, the period's stored rows are replaced
+       - NEW HOLDINGS amendments filed after the base add rows
+  4. Download infotable XML → parse holdings; lines with the same
+     (CUSIP, put/call) are summed (several discretion/manager lines)
+  5. Store with ON CONFLICT DO NOTHING on
+     (filer_cik, report_period, cusip, put_call)
+
+Values: 13F filings submitted before 2023-01-03 report ``value`` in
+thousands of dollars, later filings in whole dollars (SEC Form 13F
+change). ``market_value`` is always stored in whole dollars.
 
 Frequency: Weekly (Sundays), since 13F filings are quarterly.
 
@@ -18,17 +28,19 @@ SEC Rate Limit: 10 requests/second (enforced by SECClient)
 """
 
 import xml.etree.ElementTree as ET
-from datetime import date, timedelta
-from typing import Any
+from collections.abc import Iterable
+from datetime import date, datetime, timedelta
 
-from sqlalchemy import select, func
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from trading_signals.collectors._db import release_transaction
+from trading_signals.collectors._parsing import parse_date, safe_float
 from trading_signals.collectors.base import BaseCollector
 from trading_signals.collectors.sec_client import SECClient
 from trading_signals.db.models.form13f import Form13FHolding
 from trading_signals.utils.logging import get_logger
+from trading_signals.utils.retention import data_start_date
 
 logger = get_logger(__name__)
 
@@ -60,11 +72,90 @@ TOP_FILERS: dict[str, str] = {
 # XML namespace used in 13F infotable documents
 NS_13F = {"ns": "http://www.sec.gov/edgar/document/thirteenf/informationtable"}
 
+#: Unique key of ``form13f_holdings`` (constraint ``uq_13f_holding_key``).
+HOLDING_KEY = ("filer_cik", "report_period", "cusip", "put_call")
+
+#: put_call value for plain share / principal positions.
+PUT_CALL_SHARES = "SH"
+
+#: Filings submitted on/after this date report ``value`` in whole dollars.
+DOLLAR_VALUES_SINCE_FILING = date(2023, 1, 3)
+#: Fallback (no filing date): first report period filed in whole dollars.
+DOLLAR_VALUES_SINCE_PERIOD = date(2022, 12, 31)
+
+RESTATEMENT = "RESTATEMENT"
+
+
+def value_multiplier(
+    filing_date: date | None, report_period: date | None
+) -> int:
+    """Factor that converts the infotable ``value`` to whole dollars.
+
+    1000 for filings in the old format ($ thousands), else 1. Decided by
+    the filing date (amendments of old periods filed after 2023-01-03 use
+    the new format); falls back to the report period.
+    """
+    if filing_date is not None:
+        return 1 if filing_date >= DOLLAR_VALUES_SINCE_FILING else 1000
+    if report_period is not None:
+        return 1 if report_period >= DOLLAR_VALUES_SINCE_PERIOD else 1000
+    return 1
+
+
+def _sum_optional(a: float | None, b: float | None) -> float | None:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a + b
+
+
+def aggregate_holdings(rows: Iterable[dict]) -> list[dict]:
+    """Sum shares/market_value of rows sharing the same HOLDING_KEY.
+
+    13F infotables list one line per (CUSIP, put/call, investment
+    discretion, other managers); we keep one row per (filer, period,
+    CUSIP, put/call). Metadata of the first row wins.
+    """
+    agg: dict[tuple, dict] = {}
+    for r in rows:
+        key = tuple(r.get(c) for c in HOLDING_KEY)
+        if key not in agg:
+            agg[key] = dict(r)
+            continue
+        a = agg[key]
+        a["shares"] = _sum_optional(a.get("shares"), r.get("shares"))
+        a["market_value"] = _sum_optional(
+            a.get("market_value"), r.get("market_value")
+        )
+    return list(agg.values())
+
+
+def _filing_sort_key(filing: dict) -> tuple:
+    """Oldest first: filing date, acceptance time, accession number."""
+    acc_dt = filing.get("acceptance_datetime")
+    return (
+        filing.get("filing_date") or "",
+        acc_dt.isoformat() if isinstance(acc_dt, datetime) else "",
+        filing.get("accession_number") or "",
+    )
+
+
+def _is_base_filing(filing: dict) -> bool:
+    """Original 13F-HR or RESTATEMENT amendment (complete holdings list)."""
+    if filing.get("form_type") == "13F-HR":
+        return True
+    return (filing.get("amendment_type") or "").upper() == RESTATEMENT
+
 
 class Form13FCollector(BaseCollector):
     """Collect quarterly 13F institutional holdings."""
 
     name = "form13f_collector"
+
+    # (filer_cik, report_period) pairs whose stored rows are replaced in
+    # store(); set by fetch() (instance attribute), consumed by store().
+    _replace_keys: frozenset = frozenset()
 
     def __init__(self, lookback_days: int = 90) -> None:
         """Initialize with a lookback window.
@@ -80,9 +171,17 @@ class Form13FCollector(BaseCollector):
         """Fetch 13F holdings for all top filers.
 
         Returns:
-            List of holding dicts ready for storage.
+            List of holding dicts (one per infotable line) ready for
+            storage.
         """
-        since_date = date.today() - timedelta(days=self.lookback_days)
+        self.sec_client.clear_cache()
+        self._replace_keys = set()
+        since_date = max(
+            date.today() - timedelta(days=self.lookback_days),
+            data_start_date(),
+        )
+        # DB read first, then release the transaction before HTTP work
+        stored = self._stored_accessions(session, since_date)
 
         all_holdings: list[dict] = []
         filers_processed = 0
@@ -96,10 +195,12 @@ class Form13FCollector(BaseCollector):
                 filings = self.sec_client.get_recent_13f_filings(
                     cik, since_date=since_date
                 )
+                self.record_success()
             except Exception as e:
                 logger.warning(
                     f"[{self.name}] {name} (CIK {cik}): submissions error: {e}"
                 )
+                self.record_error()
                 errors += 1
                 continue
 
@@ -111,24 +212,25 @@ class Form13FCollector(BaseCollector):
 
             filers_with_filings += 1
 
-            # Process only the most recent filing per filer
-            latest_filing = filings[0]
-            try:
-                holdings = self._process_filing(cik, name, latest_filing)
+            by_period: dict[str, list[dict]] = {}
+            for filing in filings:
+                by_period.setdefault(filing.get("report_period") or "", []).append(
+                    filing
+                )
+
+            for period_str in sorted(by_period):
+                holdings, replace, period_errors = self._process_period(
+                    cik, name, by_period[period_str], stored
+                )
+                errors += period_errors
                 all_holdings.extend(holdings)
-                logger.info(
-                    f"[{self.name}] {name}: {len(holdings)} holdings from "
-                    f"filing {latest_filing['filing_date']}"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"[{self.name}] {name}: filing parse error: {e}"
-                )
-                errors += 1
+                period = parse_date(period_str)
+                if replace and period is not None:
+                    self._replace_keys.add((cik, period))
 
         logger.info(
             f"[{self.name}] Processed {filers_processed} filers "
-            f"({filers_with_filings} with new filings). "
+            f"({filers_with_filings} with filings in window). "
             f"Found {len(all_holdings)} total holdings. Errors: {errors}"
         )
         return all_holdings
@@ -138,31 +240,158 @@ class Form13FCollector(BaseCollector):
     ) -> tuple[int, int]:
         """Store 13F holdings with dedup via unique constraint.
 
+        Periods flagged for replacement by fetch() (new original filing or
+        RESTATEMENT amendment) are deleted first, then all rows are
+        inserted (aggregated per HOLDING_KEY).
+
         Returns:
             Tuple of (records_fetched, records_written).
         """
         records_fetched = len(data)
-        records_written = 0
 
-        for holding in data:
-            stmt = (
-                pg_insert(Form13FHolding)
-                .values(**holding)
-                .on_conflict_do_nothing(
-                    constraint="uq_13f_holding_dedup"
+        replace_keys = sorted(self._replace_keys)
+        for filer_cik, period in replace_keys:
+            session.execute(
+                delete(Form13FHolding).where(
+                    Form13FHolding.filer_cik == filer_cik,
+                    Form13FHolding.report_period == period,
                 )
             )
-            result = session.execute(stmt)
-            if result.rowcount > 0:
-                records_written += 1
+        self._replace_keys = set()
+
+        rows = aggregate_holdings(data)
+        records_written = self._bulk_insert(
+            session, Form13FHolding, rows, conflict_cols=list(HOLDING_KEY)
+        )
 
         session.flush()
 
         logger.info(
-            f"[{self.name}] Stored {records_written}/{records_fetched} "
-            f"holdings ({records_fetched - records_written} already existed)"
+            f"[{self.name}] Stored {records_written}/{len(rows)} aggregated "
+            f"holdings from {records_fetched} infotable lines "
+            f"({len(replace_keys)} filer periods replaced)"
         )
         return records_fetched, records_written
+
+    def _stored_accessions(self, session: Session, since_date: date) -> set[str]:
+        """Accessions already stored by this collector version.
+
+        Legacy rows (``form_type`` NULL, written before migration 029) are
+        ignored so that their filings are re-fetched once and replaced.
+        Ends the read transaction afterwards.
+        """
+        stmt = (
+            select(Form13FHolding.accession_number)
+            .where(
+                Form13FHolding.filer_cik.in_(list(TOP_FILERS)),
+                Form13FHolding.filing_date >= since_date,
+                Form13FHolding.accession_number.isnot(None),
+                Form13FHolding.form_type.isnot(None),
+            )
+            .distinct()
+        )
+        try:
+            result = {r[0] for r in session.execute(stmt).all() if r[0]}
+        except Exception as e:
+            logger.warning(f"[{self.name}] Could not load stored accessions: {e}")
+            session.rollback()
+            return set()
+        release_transaction(session)
+        return result
+
+    def _process_period(
+        self,
+        cik: str,
+        filer_name: str,
+        filings: list[dict],
+        stored: set[str],
+    ) -> tuple[list[dict], bool, int]:
+        """Decide which filings of one report period to apply and fetch them.
+
+        Rules (filings sorted oldest first):
+          * base = latest original 13F-HR or RESTATEMENT amendment.
+          * base not stored yet → replace mode: fetch base + all later
+            amendments; store() deletes the period's rows first.
+          * base already stored (or no base in window) → add mode: fetch
+            only not-yet-stored NEW HOLDINGS amendments (after the base);
+            existing keys are kept (ON CONFLICT DO NOTHING).
+          * 13F-HR/A with unknown amendment type is treated as NEW HOLDINGS.
+          * If the base download fails nothing of the period is stored.
+
+        Returns:
+            (holdings, replace, errors)
+        """
+        group = sorted(filings, key=_filing_sort_key)
+        errors = 0
+
+        # Amendment types only matter after the latest original filing
+        last_original = max(
+            (i for i, f in enumerate(group) if f.get("form_type") == "13F-HR"),
+            default=-1,
+        )
+        for i, f in enumerate(group):
+            f.setdefault("amendment_type", None)
+            if i < last_original or not str(f.get("form_type", "")).endswith("/A"):
+                continue
+            try:
+                f["amendment_type"] = self.sec_client.get_13f_amendment_type(
+                    cik, f["accession_number"]
+                )
+                self.record_success()
+            except Exception as e:
+                logger.warning(
+                    f"[{self.name}] {filer_name}: amendment type of "
+                    f"{f.get('accession_number')} unknown: {e}"
+                )
+                self.record_error()
+                errors += 1
+
+        base_idx = max(
+            (i for i, f in enumerate(group) if _is_base_filing(f)), default=None
+        )
+        if base_idx is None:
+            replace = False
+            to_fetch = [f for f in group if f["accession_number"] not in stored]
+        elif group[base_idx]["accession_number"] in stored:
+            replace = False
+            to_fetch = [
+                f for f in group[base_idx + 1:]
+                if f["accession_number"] not in stored
+            ]
+        else:
+            replace = True
+            to_fetch = group[base_idx:]
+
+        base = group[base_idx] if base_idx is not None else None
+        holdings: list[dict] = []
+        for filing in to_fetch:
+            try:
+                rows = self._process_filing(cik, filer_name, filing)
+                self.record_success()
+            except Exception as e:
+                logger.warning(
+                    f"[{self.name}] {filer_name}: filing parse error "
+                    f"({filing.get('accession_number')}): {e}"
+                )
+                self.record_error()
+                errors += 1
+                if replace and filing is base:
+                    return [], False, errors
+                continue
+            if replace and filing is base and not rows:
+                logger.warning(
+                    f"[{self.name}] {filer_name}: base filing "
+                    f"{filing.get('accession_number')} has no holdings – "
+                    f"stored period not replaced"
+                )
+                replace = False
+            logger.info(
+                f"[{self.name}] {filer_name}: {len(rows)} holdings from "
+                f"{filing.get('form_type')} {filing.get('accession_number')} "
+                f"(filed {filing.get('filing_date')})"
+            )
+            holdings.extend(rows)
+        return holdings, replace, errors
 
     def _process_filing(
         self, cik: str, filer_name: str, filing: dict
@@ -205,19 +434,18 @@ class Form13FCollector(BaseCollector):
             f"{self.sec_client.pad_cik(cik)}/{acc_no_dashes}/{infotable_doc}"
         )
 
-        # Parse dates
-        filing_date = _parse_date(filing_date_str)
-        report_period = _parse_date(report_period_str)
-
         # Parse the XML
         return parse_13f_infotable(
             xml_content,
             filer_name=filer_name,
             filer_cik=cik,
-            filing_date=filing_date,
-            report_period=report_period,
+            filing_date=parse_date(filing_date_str),
+            report_period=parse_date(report_period_str),
             source_url=source_url,
             sec_client=self.sec_client,
+            accession_number=accession,
+            form_type=filing.get("form_type"),
+            amendment_type=filing.get("amendment_type"),
         )
 
 
@@ -230,6 +458,9 @@ def parse_13f_infotable(
     report_period: date | None = None,
     source_url: str | None = None,
     sec_client: SECClient | None = None,
+    accession_number: str | None = None,
+    form_type: str | None = None,
+    amendment_type: str | None = None,
 ) -> list[dict]:
     """Parse a 13F infotable XML into holding dicts.
 
@@ -241,9 +472,14 @@ def parse_13f_infotable(
         report_period: End of the reporting quarter.
         source_url: URL to the original filing.
         sec_client: SECClient for CUSIP→ticker mapping.
+        accession_number: Accession number of the filing.
+        form_type: "13F-HR" or "13F-HR/A".
+        amendment_type: "RESTATEMENT" / "NEW HOLDINGS" for amendments.
 
     Returns:
-        List of dicts ready for Form13FHolding insertion.
+        List of dicts (one per infotable line, not aggregated) ready for
+        Form13FHolding insertion. ``market_value`` is in whole dollars,
+        ``put_call`` is "PUT"/"CALL" or "SH" for share positions.
     """
     try:
         root = ET.fromstring(xml_content)
@@ -252,6 +488,7 @@ def parse_13f_infotable(
         return []
 
     holdings: list[dict] = []
+    multiplier = value_multiplier(filing_date, report_period)
 
     # Try both namespaced and non-namespaced element names
     info_entries = root.findall(".//ns:infoTable", NS_13F)
@@ -263,38 +500,24 @@ def parse_13f_infotable(
 
     for entry in info_entries:
         # Extract fields (try both namespaced and unnamespaced)
-        name_of_issuer = _find_text(entry, "nameOfIssuer")
         cusip = _find_text(entry, "cusip")
         value_str = _find_text(entry, "value")
         shares_str = (
             _find_text(entry, "sshPrnamt")
             or _find_nested_text(entry, "shrsOrPrnAmt", "sshPrnamt")
         )
-        put_call = _find_text(entry, "putCall")
+        put_call = (_find_text(entry, "putCall") or "").upper() or PUT_CALL_SHARES
 
-        # Try to resolve CUSIP to ticker
+        # CUSIP → ticker: the SEC CIK mapper doesn't map CUSIPs. For now we
+        # store the CUSIP and resolve later if needed.
         ticker = None
-        if cusip and sec_client:
-            # The SEC CIK mapper doesn't map CUSIPs, but we can try
-            # matching the issuer name against our ticker mapping.
-            # For now, we store the CUSIP and resolve later if needed.
-            pass
 
-        # Parse values
-        market_value = None
-        if value_str:
-            try:
-                # 13F values are in thousands
-                market_value = float(value_str) * 1000
-            except (ValueError, TypeError):
-                pass
+        # Parse values (whole dollars, see value_multiplier)
+        market_value = safe_float(value_str)
+        if market_value is not None:
+            market_value *= multiplier
 
-        shares = None
-        if shares_str:
-            try:
-                shares = float(shares_str)
-            except (ValueError, TypeError):
-                pass
+        shares = safe_float(shares_str)
 
         holdings.append({
             "filer_name": filer_name,
@@ -302,10 +525,13 @@ def parse_13f_infotable(
             "report_period": report_period,
             "filing_date": filing_date,
             "ticker": ticker,
-            "cusip": cusip,
+            "cusip": cusip.upper() if cusip else cusip,
             "shares": shares,
             "market_value": market_value,
             "put_call": put_call,
+            "accession_number": accession_number,
+            "form_type": form_type,
+            "amendment_type": amendment_type,
             "source_url": source_url,
         })
 
@@ -341,13 +567,3 @@ def _find_nested_text(
     if parent is not None:
         return _find_text(parent, child_tag)
     return None
-
-
-def _parse_date(date_str: str | None) -> date | None:
-    """Parse a date string (YYYY-MM-DD) safely."""
-    if not date_str:
-        return None
-    try:
-        return date.fromisoformat(date_str)
-    except ValueError:
-        return None

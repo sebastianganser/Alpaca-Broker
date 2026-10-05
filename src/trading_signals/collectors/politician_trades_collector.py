@@ -5,27 +5,49 @@ Senate Electronic Financial Disclosure portal (efdsearch.senate.gov).
 
 Strategy:
   1. Search Senate eFD for PTR filings in the lookback window
-  2. For each electronic filing → parse HTML transaction table
-  3. Store with ON CONFLICT DO NOTHING (dedup via unique constraint)
+  2. Skip filings whose ``source_url`` is already stored (M6 – avoids
+     re-downloading a whole year of reports every week)
+  3. For each new electronic filing → parse HTML transaction table
+  4. Store with ON CONFLICT DO NOTHING (dedup via unique constraint that
+     includes ``owner`` – Self/Spouse trades no longer collide)
 
 House PTRs are PDF-only and not yet supported (future enhancement).
+
+Note: a filing that contained no valid stock transaction leaves no row
+behind and is therefore re-checked on later runs (cheap, rare).
 
 Schedule: Weekly Sunday 11:00 MEZ (trades are 30-45 days delayed anyway)
 """
 
-from datetime import date, timedelta
-from typing import Any
 import re
+from datetime import date, timedelta
 
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import distinct, select
 from sqlalchemy.orm import Session
 
+from trading_signals.collectors._db import release_transaction
+from trading_signals.collectors._parsing import parse_date
 from trading_signals.collectors.base import BaseCollector
 from trading_signals.collectors.disclosure_client import DisclosureClient
+from trading_signals.data.congress_members import lookup_member
 from trading_signals.db.models.politicians import PoliticianTrade
 from trading_signals.utils.logging import get_logger
+from trading_signals.utils.retention import data_start_date
 
 logger = get_logger(__name__)
+
+#: Owner values meaning "the filer himself" (eFD leaves the cell empty or "--").
+_SELF_OWNER_ALIASES = {"", "--", "SELF"}
+
+_TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
+
+
+def _normalize_owner(owner: str | None) -> str:
+    """Map empty/placeholder owners to 'Self' (owner is part of the key)."""
+    value = (owner or "").strip()
+    if value.upper() in _SELF_OWNER_ALIASES:
+        return "Self"
+    return value[:50]
 
 
 class PoliticianTradesCollector(BaseCollector):
@@ -44,13 +66,27 @@ class PoliticianTradesCollector(BaseCollector):
         self.lookback_days = lookback_days
         self.client = DisclosureClient()
 
+    def _stored_source_urls(self, session: Session) -> set[str]:
+        """Source URLs of Senate filings already stored (read before HTTP)."""
+        rows = session.execute(
+            select(distinct(PoliticianTrade.source_url)).where(
+                PoliticianTrade.chamber == "Senate",
+                PoliticianTrade.source_url.is_not(None),
+            )
+        ).all()
+        urls = {r[0] for r in rows if r and isinstance(r[0], str)}
+        release_transaction(session)
+        return urls
+
     def fetch(self, session: Session) -> list[dict]:
         """Fetch politician trades from Senate eFD.
 
         Returns:
             List of transaction dicts ready for storage.
         """
-        since_date = date.today() - timedelta(days=self.lookback_days)
+        today = date.today()
+        since_date = max(today - timedelta(days=self.lookback_days), data_start_date())
+        known_urls = self._stored_source_urls(session)
         all_trades: list[dict] = []
         errors = 0
 
@@ -60,17 +96,22 @@ class PoliticianTradesCollector(BaseCollector):
         try:
             filings = self.client.fetch_senate_ptrs(
                 from_date=since_date,
-                to_date=date.today(),
+                to_date=today,
             )
+            self.record_success()
         except Exception as e:
             logger.error(f"[{self.name}] Failed to fetch Senate PTR list: {e}")
             filings = []
             errors += 1
+            self.record_error()
 
+        new_filings = [f for f in filings if f.get("ptr_link") not in known_urls]
         logger.info(
-            f"[{self.name}] Senate PTR search returned {len(filings)} filings"
+            f"[{self.name}] Senate PTR search returned {len(filings)} filings "
+            f"({len(filings) - len(new_filings)} already stored, "
+            f"{len(new_filings)} new)"
         )
-        for i, f in enumerate(filings[:5]):  # Log first 5 for debugging
+        for i, f in enumerate(new_filings[:5]):  # Log first 5 for debugging
             logger.info(
                 f"[{self.name}]   Filing {i+1}: "
                 f"{f.get('first_name', '')} {f.get('last_name', '')} "
@@ -78,17 +119,19 @@ class PoliticianTradesCollector(BaseCollector):
             )
 
         filings_processed = 0
-        for filing in filings:
+        for filing in new_filings:
             try:
                 transactions = self.client.fetch_senate_ptr_transactions(
                     filing["ptr_link"]
                 )
+                self.record_success()
             except Exception as e:
                 logger.info(
                     f"[{self.name}] Failed to parse PTR for "
                     f"{filing.get('first_name', '')} {filing.get('last_name', '')}: {e}"
                 )
                 errors += 1
+                self.record_error()
                 continue
 
             filings_processed += 1
@@ -101,6 +144,10 @@ class PoliticianTradesCollector(BaseCollector):
                 filing.get("date_filed", "")
             )
 
+            # C3: Enrich with party affiliation from lookup (current party –
+            # see congress_members docstring)
+            member_info = lookup_member(politician_name)
+
             for txn in transactions:
                 trade = {
                     "politician_name": politician_name,
@@ -112,7 +159,7 @@ class PoliticianTradesCollector(BaseCollector):
                     "disclosure_date": disclosure_date,
                     "transaction_type": txn.get("transaction_type", ""),
                     "amount_range": txn.get("amount", ""),
-                    "owner": txn.get("owner", ""),
+                    "owner": _normalize_owner(txn.get("owner")),
                     "asset_description": txn.get("asset_name", ""),
                     "comment": txn.get("comment", ""),
                     "source_url": filing.get("ptr_link", ""),
@@ -123,9 +170,6 @@ class PoliticianTradesCollector(BaseCollector):
                     },
                 }
 
-                # C3: Enrich with party affiliation from lookup
-                from trading_signals.data.congress_members import lookup_member
-                member_info = lookup_member(politician_name)
                 if member_info:
                     trade["party"] = member_info.get("party")
                     # Also update state if lookup has better data
@@ -134,9 +178,7 @@ class PoliticianTradesCollector(BaseCollector):
 
                 # C2: Validate ticker format (1-5 uppercase letters, optional dot class)
                 # Rejects malformed tickers like "--", "123", empty strings
-                if trade["ticker"] and re.match(
-                    r"^[A-Z]{1,5}(\.[A-Z])?$", trade["ticker"]
-                ):
+                if trade["ticker"] and _TICKER_RE.match(trade["ticker"]):
                     all_trades.append(trade)
                 elif trade["ticker"]:
                     logger.info(
@@ -145,8 +187,8 @@ class PoliticianTradesCollector(BaseCollector):
                     )
 
         logger.info(
-            f"[{self.name}] Senate: processed {filings_processed}/{len(filings)} "
-            f"filings, found {len(all_trades)} stock transactions. "
+            f"[{self.name}] Senate: processed {filings_processed}/{len(new_filings)} "
+            f"new filings, found {len(all_trades)} stock transactions. "
             f"Errors: {errors}"
         )
 
@@ -171,27 +213,20 @@ class PoliticianTradesCollector(BaseCollector):
             Tuple of (records_fetched, records_written).
         """
         records_fetched = len(data)
-        records_written = 0
 
         # Collect all unique tickers for universe expansion
-        all_tickers: set[str] = set()
+        all_tickers: set[str] = {t["ticker"] for t in data if t.get("ticker")}
+        rows = [{**t, "owner": _normalize_owner(t.get("owner"))} for t in data]
 
-        for trade in data:
-            ticker = trade.get("ticker", "")
-            if ticker:
-                all_tickers.add(ticker)
-
-            stmt = (
-                pg_insert(PoliticianTrade)
-                .values(**trade)
-                .on_conflict_do_nothing(
-                    constraint="uq_politician_trade_dedup"
-                )
-            )
-            result = session.execute(stmt)
-            if result.rowcount > 0:
-                records_written += 1
-
+        records_written = self._bulk_insert(
+            session,
+            PoliticianTrade,
+            rows,
+            conflict_cols=[
+                "politician_name", "ticker", "transaction_date",
+                "transaction_type", "amount_range", "owner",
+            ],
+        )
         session.flush()
 
         logger.info(
@@ -219,16 +254,7 @@ class PoliticianTradesCollector(BaseCollector):
     @staticmethod
     def _parse_disclosure_date(date_str: str) -> date | None:
         """Parse the disclosure/filing date from search results."""
-        if not date_str:
-            return None
-        from datetime import datetime
-
-        for fmt in ("%m/%d/%Y", "%Y-%m-%d"):
-            try:
-                return datetime.strptime(date_str.strip(), fmt).date()
-            except ValueError:
-                continue
-        return None
+        return parse_date(date_str, formats=("%m/%d/%Y", "%Y-%m-%d"))
 
     @staticmethod
     def _extract_state(office_str: str) -> str | None:
@@ -239,8 +265,6 @@ class PoliticianTradesCollector(BaseCollector):
         """
         if not office_str:
             return None
-
-        import re
 
         # Look for 2-letter state code in parentheses
         match = re.search(r"\(([A-Z]{2})\)", office_str.upper())

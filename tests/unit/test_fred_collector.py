@@ -4,7 +4,7 @@ Tests the FredCollector with mocked FRED API responses.
 Sprint 9.5b D1.
 """
 
-from datetime import date, datetime
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -80,6 +80,77 @@ class TestFredCollector:
         """FRED_SERIES should contain all 6 required macro series."""
         expected = {"DGS2", "DGS10", "BAMLH0A0HYM2", "VIXCLS", "DTWEXBGS", "T10YIE"}
         assert set(FRED_SERIES.keys()) == expected
+
+    @patch("trading_signals.collectors.fred_collector.data_start_date")
+    @patch("trading_signals.collectors.fred_collector.get_settings")
+    def test_fetch_uses_retention_floor_and_latest(self, mock_settings, mock_start):
+        """New series start at data_start_date(); known ones after latest."""
+        mock_settings.return_value.FRED_API_KEY = "test_key"
+        mock_start.return_value = date(2021, 10, 1)
+        collector = FredCollector()
+        collector._reset_run_state()
+        session = MagicMock()
+        session.execute.return_value.all.return_value = [
+            ("DGS10", date(2026, 9, 30)),
+            ("VIXCLS", date(2019, 1, 1)),  # older than retention floor
+        ]
+        calls = {}
+
+        def _fake(series_id, start, end):
+            calls[series_id] = start
+            return []
+
+        collector._fetch_series = _fake
+        collector.fetch(session)
+
+        assert calls["DGS10"] == date(2026, 10, 1)
+        assert calls["VIXCLS"] == date(2021, 10, 1)
+        assert calls["DGS2"] == date(2021, 10, 1)
+        session.commit.assert_called()  # read txn released before HTTP
+        assert collector._attempts == len(calls)
+        assert collector._errors == 0
+
+    @patch("trading_signals.collectors.fred_collector.get_settings")
+    def test_fetch_error_does_not_log_api_key(self, mock_settings, caplog):
+        """HTTP errors (URL contains api_key) must not leak the key (H4)."""
+        import logging
+
+        import requests
+
+        secret = "SUPERSECRETKEY123"
+        mock_settings.return_value.FRED_API_KEY = secret
+        collector = FredCollector()
+        collector._reset_run_state()
+        session = MagicMock()
+        session.execute.return_value.all.return_value = []
+
+        resp = MagicMock(status_code=500)
+        err = requests.exceptions.HTTPError(
+            f"500 Server Error for url: https://x/?api_key={secret}", response=resp
+        )
+        collector._fetch_series = MagicMock(side_effect=err)
+
+        with caplog.at_level(logging.DEBUG):
+            result = collector.fetch(session)
+
+        assert result == []
+        assert collector._errors == len(FRED_SERIES)
+        assert secret not in caplog.text
+        assert "HTTP 500" in caplog.text
+
+    @patch("trading_signals.collectors.fred_collector.get_settings")
+    def test_store_single_multirow_insert(self, mock_settings):
+        mock_settings.return_value.FRED_API_KEY = "test_key"
+        collector = FredCollector()
+        session = MagicMock()
+        session.execute.return_value.rowcount = 2
+        data = [
+            {"series_id": "DGS10", "obs_date": date(2024, 1, d), "value": 4.0,
+             "source": "fred", "as_of": date(2024, 1, 5)}
+            for d in (2, 3)
+        ]
+        assert collector.store(session, data) == (2, 2)
+        assert session.execute.call_count == 1
 
 
 class TestMacroSeriesModel:

@@ -16,12 +16,12 @@ We use curl_cffi to impersonate a real Chrome browser TLS fingerprint.
 
 import re
 import time
-from datetime import date, datetime
-from typing import Any
+from datetime import date
 
-from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
+from curl_cffi import requests as cffi_requests
 
+from trading_signals.collectors._parsing import parse_date
 from trading_signals.utils.logging import get_logger
 from trading_signals.utils.retry import retry
 
@@ -101,10 +101,11 @@ class DisclosureClient:
         # Prefer form token, fall back to cookie
         self._csrf_token = form_csrf or cookie_csrf
 
+        # H4: never log token values – presence only
         logger.info(
-            f"[disclosure_client] CSRF tokens: "
-            f"form={form_csrf[:20]}{'...' if len(form_csrf) > 20 else ''}, "
-            f"cookie={cookie_csrf[:20]}{'...' if len(cookie_csrf) > 20 else ''}"
+            f"[disclosure_client] CSRF tokens found: "
+            f"form={'yes' if form_csrf else 'no'}, "
+            f"cookie={'yes' if cookie_csrf else 'no'}"
         )
 
         if not self._csrf_token:
@@ -200,7 +201,8 @@ class DisclosureClient:
         search_resp.raise_for_status()
 
         logger.info(
-            f"[disclosure_client] Search form POST -> status={search_resp.status_code}, "
+            f"[disclosure_client] Search form POST -> "
+            f"status={search_resp.status_code}, "
             f"content_length={len(search_resp.text)}"
         )
 
@@ -265,7 +267,9 @@ class DisclosureClient:
                     "report_types": "[11]",
                     "filer_types": "[1]",
                     # Dates with timestamps (matches DataTables JS config)
-                    "submitted_start_date": f"{from_date.strftime('%m/%d/%Y')} 00:00:00",
+                    "submitted_start_date": (
+                        f"{from_date.strftime('%m/%d/%Y')} 00:00:00"
+                    ),
                     "submitted_end_date": f"{to_date.strftime('%m/%d/%Y')} 23:59:59",
                     "candidate_state": "",
                     "senator_state": "",
@@ -495,16 +499,8 @@ class DisclosureClient:
 
 
 def _parse_date(date_str: str) -> date | None:
-    """Parse various date formats from disclosure filings."""
-    if not date_str:
-        return None
-
-    for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%m/%d/%y"):
-        try:
-            return datetime.strptime(date_str, fmt).date()
-        except ValueError:
-            continue
-    return None
+    """Parse various date formats from disclosure filings (shared helper)."""
+    return parse_date(date_str, formats=("%m/%d/%Y", "%Y-%m-%d", "%m/%d/%y"))
 
 
 def _normalize_ticker(ticker: str) -> str:

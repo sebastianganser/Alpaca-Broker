@@ -16,7 +16,6 @@ from sqlalchemy import (
     Index,
     Numeric,
     String,
-    Text,
     UniqueConstraint,
     func,
 )
@@ -58,6 +57,8 @@ class FundamentalsSnapshot(Base):
     target_price_mean: Mapped[float | None] = mapped_column(Numeric(16, 4))
     target_price_median: Mapped[float | None] = mapped_column(Numeric(16, 4))
     target_price_high: Mapped[float | None] = mapped_column(Numeric(16, 4))
+    # Fiscal quarter end the TTM figures refer to (yfinance mostRecentQuarter)
+    most_recent_quarter: Mapped[date | None] = mapped_column(Date)
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -122,7 +123,16 @@ class EarningsCalendar(Base):
     revenue_estimate: Mapped[float | None] = mapped_column(Numeric(20, 2))
     revenue_actual: Mapped[float | None] = mapped_column(Numeric(20, 2))
     surprise_pct: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    # fetched_at = time of the last insert/update; first_seen is set on insert
+    # only, last_seen is bumped on every run that still reports the date
+    # (Migration 029).
     fetched_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+    first_seen: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+    last_seen: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now()
     )
 

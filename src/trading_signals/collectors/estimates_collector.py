@@ -6,26 +6,29 @@ collector in the system because Yahoo's 90-day rolling window means
 history is lost daily if not captured.
 
 Strategy:
-  1. Load active tickers from universe table
+  1. Determine the target session (last completed NYSE session) and load
+     active tickers that are not yet stored for it
   2. Fetch eps_trend, eps_revisions, earnings_estimate, revenue_estimate
      via YFinanceClient (batched, rate-limited)
   3. Store with ON CONFLICT DO NOTHING (one snapshot per ticker+date+period)
 
-Schedule: Daily 01:30 CET (after analyst_ratings at 01:00, before feature_pipeline at 02:00)
+``as_of`` = last completed NYSE session at run time (H3). The 01:30-Berlin
+run on Tuesday stores Monday's session; Sunday/Monday runs find Friday
+already stored and return immediately.
+
+Schedule: Daily 01:30 CET (after analyst_ratings at 01:00,
+before feature_pipeline at 02:00)
 Sprint: 9.5a (Data Hardening)
 """
 
-from datetime import date
-from typing import Any
-
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import distinct, select
 from sqlalchemy.orm import Session
 
+from trading_signals.collectors._db import release_transaction
 from trading_signals.collectors.base import BaseCollector
-from trading_signals.collectors.yfinance_client import YFinanceClient, _clean_numeric
+from trading_signals.collectors.yfinance_client import YFinanceClient
 from trading_signals.db.models.estimates import EstimatesSnapshot
-from trading_signals.db.models.universe import Universe
+from trading_signals.utils import market_calendar
 from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -40,6 +43,27 @@ _ESTIMATE_PERIOD_MAP = {
     "0y": "0y",
     "+1y": "+1y",
 }
+
+SOURCE = "yfinance"
+
+#: Skip the run if this share of active tickers is already stored for the
+#: target session (otherwise only the missing tickers are fetched).
+SKIP_IF_STORED_SHARE = 0.9
+
+_VALUE_COLUMNS = [
+    # EPS consensus
+    "eps_avg", "eps_low", "eps_high", "eps_n_analysts", "eps_year_ago",
+    "eps_growth",
+    # EPS trend (rolling window)
+    "eps_current", "eps_7d_ago", "eps_30d_ago", "eps_60d_ago", "eps_90d_ago",
+    # Revision counts
+    "rev_up_7d", "rev_up_30d", "rev_down_7d", "rev_down_30d",
+    # Revenue consensus
+    "revenue_avg", "revenue_low", "revenue_high", "revenue_n_analysts",
+    "revenue_year_ago", "revenue_growth",
+    # Raw data for future-proofing
+    "raw",
+]
 
 
 class EstimatesCollector(BaseCollector):
@@ -65,83 +89,87 @@ class EstimatesCollector(BaseCollector):
         )
 
     def fetch(self, session: Session) -> list[dict]:
-        """Fetch estimate data for all active universe tickers.
+        """Fetch estimate data for active tickers not yet stored for the session.
 
         Returns:
-            List of dicts with estimate data per ticker per period.
+            List of dicts with estimate data per ticker per period; each
+            record carries its ``as_of`` (session date).
         """
-        stmt = select(Universe.ticker).where(Universe.is_active.is_(True))
-        tickers = [row[0] for row in session.execute(stmt).all()]
+        as_of = market_calendar.last_completed_session()
+        stored = {
+            r[0]
+            for r in session.execute(
+                select(distinct(EstimatesSnapshot.ticker)).where(
+                    EstimatesSnapshot.as_of == as_of,
+                    EstimatesSnapshot.source == SOURCE,
+                )
+            ).all()
+        }
+        release_transaction(session)
+        all_tickers = self.get_active_tickers(session)
+
+        if all_tickers and len(stored) >= SKIP_IF_STORED_SHARE * len(all_tickers):
+            logger.info(
+                f"[{self.name}] Session {as_of} already stored for "
+                f"{len(stored)}/{len(all_tickers)} tickers — skipping"
+            )
+            return []
+        tickers = [t for t in all_tickers if t not in stored]
 
         logger.info(
-            f"[{self.name}] Fetching estimates for {len(tickers)} active tickers"
+            f"[{self.name}] Fetching estimates for {len(tickers)} active tickers "
+            f"(as_of={as_of}, {len(stored)} already stored)"
         )
 
-        return self.client.fetch_estimates(tickers)
+        records = self.client.fetch_estimates(
+            tickers, on_success=self.record_success, on_error=self.record_error
+        )
+        for r in records:
+            r["as_of"] = as_of
+        return records
 
     def store(self, session: Session, data: list[dict]) -> tuple[int, int]:
-        """Store estimates with ON CONFLICT DO NOTHING.
+        """Store estimates with ON CONFLICT DO NOTHING (multi-row insert).
 
         Each (ticker, as_of, period, source) combination is stored once.
-        If we re-run on the same day, duplicates are silently skipped.
+        If we re-run for the same session, duplicates are silently skipped.
 
         Returns:
             Tuple of (records_fetched, records_written).
         """
         records_fetched = len(data)
-        records_written = 0
-        today = date.today()
+        if not data:
+            session.flush()
+            return 0, 0
 
+        default_as_of = None
+        rows = []
         for record in data:
-            values = {
+            as_of = record.get("as_of")
+            if as_of is None:
+                if default_as_of is None:
+                    default_as_of = market_calendar.last_completed_session()
+                as_of = default_as_of
+            row = {
                 "ticker": record["ticker"],
-                "as_of": today,
+                "as_of": as_of,
                 "period": record["period"],
-                "source": "yfinance",
-                # EPS consensus
-                "eps_avg": record.get("eps_avg"),
-                "eps_low": record.get("eps_low"),
-                "eps_high": record.get("eps_high"),
-                "eps_n_analysts": record.get("eps_n_analysts"),
-                "eps_year_ago": record.get("eps_year_ago"),
-                "eps_growth": record.get("eps_growth"),
-                # EPS trend (rolling window)
-                "eps_current": record.get("eps_current"),
-                "eps_7d_ago": record.get("eps_7d_ago"),
-                "eps_30d_ago": record.get("eps_30d_ago"),
-                "eps_60d_ago": record.get("eps_60d_ago"),
-                "eps_90d_ago": record.get("eps_90d_ago"),
-                # Revision counts
-                "rev_up_7d": record.get("rev_up_7d"),
-                "rev_up_30d": record.get("rev_up_30d"),
-                "rev_down_7d": record.get("rev_down_7d"),
-                "rev_down_30d": record.get("rev_down_30d"),
-                # Revenue consensus
-                "revenue_avg": record.get("revenue_avg"),
-                "revenue_low": record.get("revenue_low"),
-                "revenue_high": record.get("revenue_high"),
-                "revenue_n_analysts": record.get("revenue_n_analysts"),
-                "revenue_year_ago": record.get("revenue_year_ago"),
-                "revenue_growth": record.get("revenue_growth"),
-                # Raw data for future-proofing
-                "raw": record.get("raw"),
+                "source": SOURCE,
             }
+            for col in _VALUE_COLUMNS:
+                row[col] = record.get(col)
+            rows.append(row)
 
-            stmt = (
-                pg_insert(EstimatesSnapshot)
-                .values(**values)
-                .on_conflict_do_nothing(
-                    constraint="uq_estimates_snapshot_dedup",
-                )
-            )
-            result = session.execute(stmt)
-            if result.rowcount > 0:
-                records_written += 1
-
+        records_written = self._bulk_insert(
+            session,
+            EstimatesSnapshot,
+            rows,
+            conflict_cols=["ticker", "as_of", "period", "source"],
+        )
         session.flush()
 
         logger.info(
             f"[{self.name}] Stored {records_written}/{records_fetched} "
-            f"estimate snapshots for {today}"
+            f"estimate snapshots"
         )
         return records_fetched, records_written

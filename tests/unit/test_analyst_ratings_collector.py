@@ -3,13 +3,10 @@
 from datetime import date
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from trading_signals.collectors.analyst_ratings_collector import (
     AnalystRatingsCollector,
 )
 from trading_signals.db.models.fundamentals import AnalystRating
-
 
 # ============================================================================
 # Tests: AnalystRating ORM Model
@@ -95,9 +92,44 @@ class TestAnalystRatingsCollector:
 
         collector.fetch(session)
 
-        mock_client.fetch_analyst_ratings.assert_called_once_with(
-            ["AAPL", "MSFT"], lookback_days=30
-        )
+        mock_client.fetch_analyst_ratings.assert_called_once()
+        args, kwargs = mock_client.fetch_analyst_ratings.call_args
+        assert args[0] == ["AAPL", "MSFT"]
+        assert kwargs["lookback_days"] == 30
+        assert kwargs["on_success"] == collector.record_success
+        assert kwargs["on_error"] == collector.record_error
+
+    @patch("trading_signals.collectors.analyst_ratings_collector.market_calendar")
+    def test_fetch_skips_when_session_already_covered(self, mock_cal):
+        """Weekend runs skip if an earlier run already saw the session (H3)."""
+        from datetime import datetime
+
+        mock_cal.last_completed_session.return_value = date(2026, 10, 2)
+        collector = AnalystRatingsCollector()
+        collector.client = MagicMock()
+        session = MagicMock()
+        session.execute.return_value.scalar.return_value = datetime(2026, 10, 3, 1, 0)
+
+        assert collector.fetch(session) == []
+        collector.client.fetch_analyst_ratings.assert_not_called()
+
+    @patch("trading_signals.collectors.analyst_ratings_collector.market_calendar")
+    def test_fetch_runs_when_new_session(self, mock_cal):
+        from datetime import datetime
+
+        # previous run covered Friday, now Monday's session is complete
+        mock_cal.last_completed_session.side_effect = [
+            date(2026, 10, 5), date(2026, 10, 2)
+        ]
+        collector = AnalystRatingsCollector()
+        collector.client = MagicMock()
+        collector.client.fetch_analyst_ratings.return_value = []
+        session = MagicMock()
+        session.execute.return_value.scalar.return_value = datetime(2026, 10, 3, 1, 0)
+        session.execute.return_value.all.return_value = [("AAPL",)]
+
+        collector.fetch(session)
+        collector.client.fetch_analyst_ratings.assert_called_once()
 
     def test_store_writes_records(self):
         """store() should write records with ON CONFLICT DO NOTHING."""
@@ -205,5 +237,5 @@ class TestAnalystRatingsCollector:
         fetched, written = collector.store(session, data)
 
         assert fetched == 2
-        assert written == 2
-        assert session.execute.call_count == 2
+        assert written == 1  # driver rowcount of the single multi-row INSERT
+        assert session.execute.call_count == 1

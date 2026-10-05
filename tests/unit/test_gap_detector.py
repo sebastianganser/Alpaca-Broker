@@ -1,17 +1,21 @@
 """Tests for the GapDetector."""
 
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
+from sqlalchemy.dialects import postgresql
 
+from trading_signals.collectors._parsing import safe_float as _safe_float
+from trading_signals.collectors._parsing import safe_int as _safe_int
 from trading_signals.collectors.gap_detector import (
     GapDetector,
     GapRepairResult,
-    _safe_float,
-    _safe_int,
 )
+
+
+def _sql(stmt) -> str:
+    return str(stmt.compile(dialect=postgresql.dialect()))
 
 
 class TestSafeConversions:
@@ -40,6 +44,107 @@ class TestSafeConversions:
 
     def test_safe_int_nan(self):
         assert _safe_int(float("nan")) is None
+
+
+def _weekday_schedule(mock_mcal, start: date, end: date):
+    """Configure the mocked NYSE calendar to return all weekdays."""
+    cal = MagicMock()
+    mock_mcal.get_calendar.return_value = cal
+
+    def schedule(start_date, end_date):
+        idx = pd.bdate_range(start_date, end_date)
+        return pd.DataFrame(index=idx, data={"market_open": idx, "market_close": idx})
+
+    cal.schedule.side_effect = schedule
+    return cal
+
+
+class TestGapDetectorBulk:
+    """M2: grouped detection, safe extrapolation, replaceable extrapolations."""
+
+    @patch("trading_signals.collectors.gap_detector.mcal")
+    def test_detect_gaps_bulk_single_grouped_query(self, mock_mcal):
+        _weekday_schedule(mock_mcal, date(2026, 4, 6), date(2026, 4, 10))
+        session = MagicMock()
+        stats = MagicMock()
+        # AAPL complete (5 rows Mon-Fri), MSFT missing Wednesday
+        stats.all.return_value = [
+            ("AAPL", date(2026, 4, 6), date(2026, 4, 10), 5),
+            ("MSFT", date(2026, 4, 6), date(2026, 4, 10), 4),
+        ]
+        detail = MagicMock()
+        detail.all.return_value = [
+            ("MSFT", date(2026, 4, 6)),
+            ("MSFT", date(2026, 4, 7)),
+            ("MSFT", date(2026, 4, 9)),
+            ("MSFT", date(2026, 4, 10)),
+        ]
+        session.execute.side_effect = [stats, detail]
+
+        detector = GapDetector(session)
+        gaps = detector.detect_gaps_bulk(
+            ["AAPL", "MSFT"], start_bound=date(2026, 1, 1), end=date(2026, 4, 10)
+        )
+
+        assert gaps == {"MSFT": [date(2026, 4, 8)]}
+        # 1 grouped query + 1 detail query (only for MSFT), not N+1
+        assert session.execute.call_count == 2
+        assert "GROUP BY" in _sql(session.execute.call_args_list[0][0][0])
+
+    @patch("trading_signals.collectors.gap_detector.mcal")
+    def test_failed_fetch_never_extrapolates(self, mock_mcal):
+        session = MagicMock()
+        detector = GapDetector(session)
+        detector._extrapolate = MagicMock(return_value=1)
+
+        def boom(tickers, start, end):
+            raise RuntimeError("HTTP 500")
+
+        old = date(2026, 1, 5)
+        result = detector.repair_gaps(
+            {"AAPL": [old]}, batch_fetch_fn=boom, today=date(2026, 4, 1)
+        )
+        detector._extrapolate.assert_not_called()
+        assert result.gaps_extrapolated == 0
+        assert result.gaps_unfixable == 1
+
+    @patch("trading_signals.collectors.gap_detector.mcal")
+    def test_recent_gaps_not_extrapolated_on_empty_answer(self, mock_mcal):
+        session = MagicMock()
+        detector = GapDetector(session)
+        detector._extrapolate = MagicMock(side_effect=lambda t, dates: len(dates))
+
+        today = date(2026, 4, 20)
+        recent = today - timedelta(days=2)
+        old = today - timedelta(days=30)
+        result = detector.repair_gaps(
+            {"AAPL": [old, recent]},
+            batch_fetch_fn=lambda tickers, s, e: {},
+            min_extrapolate_age_days=7,
+            today=today,
+        )
+        detector._extrapolate.assert_called_once_with("AAPL", [old])
+        assert result.gaps_extrapolated == 1
+
+    @patch("trading_signals.collectors.gap_detector.mcal")
+    def test_fetched_rows_replace_only_extrapolated(self, mock_mcal):
+        session = MagicMock()
+        detector = GapDetector(session, source="alpaca")
+        d = date(2026, 4, 8)
+        df = pd.DataFrame(
+            [{"Open": 1, "High": 2, "Low": 0.5, "Close": 1.5, "Adj Close": 1.5,
+              "Volume": 100}],
+            index=[pd.Timestamp(d)],
+        )
+        result = detector.repair_gaps(
+            {"AAPL": [d]},
+            batch_fetch_fn=lambda tickers, s, e: {"AAPL": df},
+            today=date(2026, 5, 1),
+        )
+        assert result.gaps_repaired == 1
+        sql = _sql(session.execute.call_args_list[0][0][0])
+        assert "ON CONFLICT (ticker, trade_date) DO UPDATE" in sql
+        assert "prices_daily.is_extrapolated IS true" in sql
 
 
 class TestGapDetector:

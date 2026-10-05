@@ -9,7 +9,7 @@ Sprint 9.5b D3.
 
 from datetime import date
 
-from sqlalchemy import Date, Index, Numeric, BigInteger, String
+from sqlalchemy import BigInteger, Date, Index, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from trading_signals.db.base import Base

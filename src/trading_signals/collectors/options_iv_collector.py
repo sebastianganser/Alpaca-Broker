@@ -13,6 +13,12 @@ Greeks, IV, OI, or volume — only bid/ask quotes. OPRA requires
 a paid subscription. yfinance provides IV, OI, and volume for free.
 
 Rate limiting: ~2 req/s to avoid Yahoo throttling.
+
+Labelling (H3): snapshots are labelled with the last COMPLETED NYSE session
+(``market_calendar.last_completed_session``), not the Berlin calendar date
+of the run. The 04:30-Berlin run on Saturday therefore stores Friday's
+close, and the runs on Sunday/Monday morning find Friday already stored
+and return immediately.
 """
 
 from __future__ import annotations
@@ -20,18 +26,29 @@ from __future__ import annotations
 import time
 from datetime import date, timedelta
 
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import distinct, select
 from sqlalchemy.orm import Session
 
+from trading_signals.collectors._db import release_transaction
 from trading_signals.collectors.base import BaseCollector
+from trading_signals.collectors.yfinance_client import (
+    YFRateLimitError,
+    _try_get,
+    call_with_rate_limit_retry,
+    to_yahoo_symbol,
+)
 from trading_signals.db.models.options_iv import OptionsIVSnapshot
-from trading_signals.db.models.universe import Universe
+from trading_signals.utils import market_calendar
 from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 # Rate limit: pause between tickers
 TICKER_PAUSE_SECS = 0.5
+
+#: Skip the run if this share of active tickers is already stored for the
+#: target session (otherwise only the missing tickers are fetched).
+SKIP_IF_STORED_SHARE = 0.9
 
 
 class OptionsIVCollector(BaseCollector):
@@ -40,49 +57,49 @@ class OptionsIVCollector(BaseCollector):
     name = "options_iv_collector"
 
     def fetch(self, session: Session) -> list[dict]:
-        """Fetch ATM IV for all active tickers."""
-        import pandas as pd
-        import pandas_market_calendars as mcal
+        """Fetch ATM IV for all active tickers not yet stored for the session."""
+        snapshot_date = market_calendar.last_completed_session()
 
-        today = date.today()
-
-        # Skip weekends + NYSE holidays
-        nyse = mcal.get_calendar("NYSE")
-        schedule = nyse.schedule(
-            start_date=pd.Timestamp(today),
-            end_date=pd.Timestamp(today),
-        )
-        if len(schedule) == 0:
-            logger.info(
-                f"[{self.name}] {today} is not a NYSE trading day — skipping"
-            )
-            return []
-
-        tickers = [
+        stored = {
             r[0]
             for r in session.execute(
-                Universe.__table__.select()
-                .with_only_columns(Universe.ticker)
-                .where(Universe.is_active.is_(True))
-                .order_by(Universe.ticker)
+                select(distinct(OptionsIVSnapshot.ticker)).where(
+                    OptionsIVSnapshot.snapshot_date == snapshot_date
+                )
             ).all()
-        ]
+        }
+        release_transaction(session)
+        all_tickers = self.get_active_tickers(session)
+
+        if all_tickers and len(stored) >= SKIP_IF_STORED_SHARE * len(all_tickers):
+            logger.info(
+                f"[{self.name}] Session {snapshot_date} already stored for "
+                f"{len(stored)}/{len(all_tickers)} tickers — skipping"
+            )
+            return []
+        tickers = [t for t in all_tickers if t not in stored]
 
         results = []
         errors = 0
         no_options = 0
 
-        for i, ticker in enumerate(tickers):
+        for ticker in tickers:
             try:
-                snapshot = self._fetch_ticker_iv(ticker, today)
+                snapshot = call_with_rate_limit_retry(
+                    self._fetch_ticker_iv, ticker, snapshot_date, label=self.name
+                )
+                self.record_success()
                 if snapshot:
                     results.append(snapshot)
                 else:
                     no_options += 1
             except Exception as e:
                 errors += 1
+                self.record_error()
                 if errors <= 5:
-                    logger.warning(f"[{self.name}] {ticker} failed: {e}")
+                    logger.warning(
+                        f"[{self.name}] {ticker} failed: {type(e).__name__}: {e}"
+                    )
             # Rate limit
             time.sleep(TICKER_PAUSE_SECS)
 
@@ -92,30 +109,33 @@ class OptionsIVCollector(BaseCollector):
             )
 
         # Alert if trading day but no data collected
-        if len(results) == 0:
+        if len(results) == 0 and tickers:
             logger.warning(
-                f"[{self.name}] Trading day {today} but 0 IV snapshots "
+                f"[{self.name}] Session {snapshot_date} but 0 IV snapshots "
                 f"collected from {len(tickers)} tickers — possible API issue"
             )
         else:
             logger.info(
                 f"[{self.name}] Collected {len(results)}/{len(tickers)} "
-                f"IV snapshots ({no_options} no options, {errors} errors)"
+                f"IV snapshots for {snapshot_date} "
+                f"({no_options} no options, {errors} errors)"
             )
 
         return results
 
     def _fetch_ticker_iv(self, ticker: str, today: date) -> dict | None:
-        """Fetch options chain for one ticker via yfinance."""
+        """Fetch options chain for one ticker via yfinance.
+
+        ``today`` is the snapshot (session) date. Exceptions from the
+        primary requests propagate (counted as errors); an empty options
+        list is a valid "no options" answer.
+        """
         import yfinance as yf
 
-        yticker = yf.Ticker(ticker)
+        yticker = yf.Ticker(to_yahoo_symbol(ticker))
 
         # Get available expiration dates
-        try:
-            expirations = yticker.options
-        except Exception:
-            return None
+        expirations = yticker.options
 
         if not expirations:
             return None
@@ -129,10 +149,7 @@ class OptionsIVCollector(BaseCollector):
             return None
 
         # Get 30d chain
-        try:
-            chain_30d = yticker.option_chain(exp_30d)
-        except Exception:
-            return None
+        chain_30d = yticker.option_chain(exp_30d)
 
         calls_30d = chain_30d.calls
         puts_30d = chain_30d.puts
@@ -152,14 +169,18 @@ class OptionsIVCollector(BaseCollector):
         # Extract ATM IV from 30d chain
         atm_iv_30d = self._extract_atm_iv(calls_30d, current_price)
 
-        # Extract ATM IV from 60d chain
+        # Extract ATM IV from 60d chain (optional – errors ignored, but rate
+        # limits propagate so the whole ticker is retried)
         atm_iv_60d = None
         if exp_60d:
-            try:
-                chain_60d = yticker.option_chain(exp_60d)
-                atm_iv_60d = self._extract_atm_iv(chain_60d.calls, current_price)
-            except Exception:
-                pass
+            chain_60d = _try_get(lambda: yticker.option_chain(exp_60d))
+            if chain_60d is not None:
+                try:
+                    atm_iv_60d = self._extract_atm_iv(chain_60d.calls, current_price)
+                except YFRateLimitError:
+                    raise
+                except Exception:
+                    pass
 
         # Skew: OTM put IV vs OTM call IV (approximation of 25-delta skew)
         skew = self._extract_skew(calls_30d, puts_30d, current_price)
@@ -170,8 +191,12 @@ class OptionsIVCollector(BaseCollector):
             term_slope = round(atm_iv_60d - atm_iv_30d, 4)
 
         # Open interest totals (from 30d chain)
-        total_oi_call = int(calls_30d["openInterest"].sum()) if "openInterest" in calls_30d else None
-        total_oi_put = int(puts_30d["openInterest"].sum()) if "openInterest" in puts_30d else None
+        total_oi_call = None
+        if "openInterest" in calls_30d:
+            total_oi_call = int(calls_30d["openInterest"].sum())
+        total_oi_put = None
+        if "openInterest" in puts_30d:
+            total_oi_put = int(puts_30d["openInterest"].sum())
 
         put_call_oi = None
         if total_oi_call and total_oi_call > 0 and total_oi_put is not None:
@@ -182,7 +207,7 @@ class OptionsIVCollector(BaseCollector):
             return None
 
         return {
-            "ticker": ticker,
+            "ticker": ticker,  # original universe ticker (not Yahoo symbol)
             "snapshot_date": today,
             "atm_iv_30d": atm_iv_30d,
             "atm_iv_60d": atm_iv_60d,
@@ -271,35 +296,19 @@ class OptionsIVCollector(BaseCollector):
         return round(put_iv - call_iv, 4)
 
     def store(self, session: Session, records: list[dict]) -> tuple[int, int]:
-        """Upsert IV snapshots. Returns (fetched, written)."""
-        written = 0
-        for record in records:
-            update_fields = {
-                k: v for k, v in record.items()
-                if k not in ("ticker", "snapshot_date") and v is not None
-            }
+        """Insert IV snapshots (multi-row). Returns (fetched, written).
 
-            if update_fields:
-                stmt = (
-                    pg_insert(OptionsIVSnapshot)
-                    .values(**record)
-                    .on_conflict_do_update(
-                        index_elements=["ticker", "snapshot_date"],
-                        set_=update_fields,
-                    )
-                )
-            else:
-                # All optional fields are None — just insert, skip on conflict
-                stmt = (
-                    pg_insert(OptionsIVSnapshot)
-                    .values(**record)
-                    .on_conflict_do_nothing(
-                        index_elements=["ticker", "snapshot_date"],
-                    )
-                )
-
-            session.execute(stmt)
-            written += 1
-
+        fetch() only requests tickers that are not yet stored for the
+        session, so ON CONFLICT DO NOTHING is sufficient (a concurrent or
+        repeated run never overwrites an existing snapshot).
+        """
+        if not records:
+            return 0, 0
+        written = self._bulk_insert(
+            session,
+            OptionsIVSnapshot,
+            records,
+            conflict_cols=["ticker", "snapshot_date"],
+        )
         session.flush()
         return len(records), written

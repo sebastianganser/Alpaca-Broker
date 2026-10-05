@@ -1,17 +1,14 @@
 """Tests for YFinanceClient – rate-limiting, batching, and graceful error handling."""
 
-import time
 from datetime import date
-from unittest.mock import MagicMock, patch, PropertyMock
-
-import pytest
+from unittest.mock import MagicMock, PropertyMock, patch
 
 from trading_signals.collectors.yfinance_client import (
     YFinanceClient,
+    YFRateLimitError,
     _clean_numeric,
-    FUNDAMENTALS_KEYS,
+    to_yahoo_symbol,
 )
-
 
 # ============================================================================
 # Tests: _clean_numeric helper
@@ -253,8 +250,9 @@ class TestFetchAnalystRatings:
     @patch("trading_signals.collectors.yfinance_client.yf.Ticker")
     def test_extracts_ratings(self, mock_ticker_cls):
         """Should extract rating data from upgrades_downgrades."""
-        import pandas as pd
         from datetime import datetime, timedelta
+
+        import pandas as pd
 
         # Use recent dates relative to today to stay within lookback window
         recent_date_1 = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
@@ -300,8 +298,9 @@ class TestFetchAnalystRatings:
     @patch("trading_signals.collectors.yfinance_client.yf.Ticker")
     def test_lookback_filter(self, mock_ticker_cls):
         """Old ratings beyond lookback should be filtered out."""
-        import pandas as pd
         from datetime import datetime, timedelta
+
+        import pandas as pd
 
         # One old date (beyond 30 days) and one recent
         old_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
@@ -382,8 +381,8 @@ class TestFetchEarningsDates:
     @patch("trading_signals.collectors.yfinance_client.yf.Ticker")
     def test_nan_eps_values_cleaned(self, mock_ticker_cls):
         """NaN values in EPS fields should be cleaned to None."""
-        import pandas as pd
         import numpy as np
+        import pandas as pd
 
         mock_ticker = MagicMock()
         mock_df = pd.DataFrame(
@@ -406,3 +405,144 @@ class TestFetchEarningsDates:
         assert results[0]["eps_estimate"] is None
         assert results[0]["eps_actual"] is None
         assert results[0]["surprise_pct"] is None
+
+    @patch("trading_signals.collectors.yfinance_client.yf.Ticker")
+    def test_time_of_day_and_ny_date(self, mock_ticker_cls):
+        """BMO/AMC derived from the ET timestamp; date in New York time."""
+        import pandas as pd
+
+        # Index given in UTC; the client must convert to America/New_York.
+        idx = pd.DatetimeIndex(
+            [
+                "2026-04-15 11:00",  # 07:00 EDT → BMO
+                "2026-07-15 20:30",  # 16:30 EDT → AMC
+                "2026-10-15 17:00",  # 13:00 EDT → DMH
+                "2027-01-15 05:00",  # 00:00 EST → unknown
+                # 01:00 UTC = 21:00 ET of the previous day → AMC, NY date
+                "2027-04-16 01:00",
+            ],
+            tz="UTC",
+        )
+        mock_ticker = MagicMock()
+        mock_ticker.get_earnings_dates.return_value = pd.DataFrame(
+            {"EPS Estimate": [1.0] * 5}, index=idx
+        )
+        mock_ticker_cls.return_value = mock_ticker
+
+        client = YFinanceClient(
+            batch_size=10, delay_between_tickers=0, delay_between_batches=0
+        )
+        res = client.fetch_earnings_dates(["AAPL"])
+
+        assert [r["time_of_day"] for r in res] == ["BMO", "AMC", "DMH", None, "AMC"]
+        assert res[4]["earnings_date"] == date(2027, 4, 15)
+
+
+# ============================================================================
+# Tests: Symbol mapping, rate limits, outcome callbacks (M4 / H5)
+# ============================================================================
+
+
+class TestSymbolMappingAndRateLimits:
+    def test_to_yahoo_symbol(self):
+        assert to_yahoo_symbol("BRK.B") == "BRK-B"
+        assert to_yahoo_symbol("BF/B") == "BF-B"
+        assert to_yahoo_symbol("AAPL") == "AAPL"
+
+    @patch("trading_signals.collectors.yfinance_client.yf.Ticker")
+    def test_dotted_ticker_mapped_but_stored_under_original(self, mock_ticker_cls):
+        mock_ticker = MagicMock()
+        mock_ticker.info = {"regularMarketPrice": 1.0, "mostRecentQuarter": 1782777600}
+        mock_ticker.get_earnings_estimate.return_value = None
+        mock_ticker.analyst_price_targets = None
+        mock_ticker_cls.return_value = mock_ticker
+
+        client = YFinanceClient(
+            batch_size=10, delay_between_tickers=0, delay_between_batches=0
+        )
+        res = client.fetch_fundamentals(["BRK.B"])
+
+        mock_ticker_cls.assert_called_once_with("BRK-B")
+        assert res[0]["ticker"] == "BRK.B"
+        assert res[0]["most_recent_quarter"] == date(2026, 6, 30)
+
+    @patch("trading_signals.collectors.yfinance_client.time.sleep")
+    def test_rate_limit_retried_with_backoff(self, mock_sleep):
+        calls = {"n": 0}
+
+        def _fetch(t):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise YFRateLimitError()
+            return {"ticker": t}
+
+        client = YFinanceClient(
+            batch_size=10,
+            delay_between_tickers=0,
+            delay_between_batches=0,
+            rate_limit_base_delay=10,
+        )
+        ok, err = [], []
+        res = client._iterate_with_rate_limit(
+            ["AAPL"], _fetch, "test", lambda: ok.append(1), lambda: err.append(1)
+        )
+
+        assert res == [{"ticker": "AAPL"}]
+        assert [c.args[0] for c in mock_sleep.call_args_list] == [10, 20]
+        assert (len(ok), len(err)) == (1, 0)
+
+    @patch("trading_signals.collectors.yfinance_client.time.sleep")
+    def test_rate_limit_exhausted_counts_as_error(self, mock_sleep):
+        def _fetch(t):
+            raise YFRateLimitError()
+
+        client = YFinanceClient(
+            batch_size=10,
+            delay_between_tickers=0,
+            delay_between_batches=0,
+            rate_limit_retries=2,
+        )
+        ok, err = [], []
+        res = client._iterate_with_rate_limit(
+            ["AAPL"], _fetch, "test", lambda: ok.append(1), lambda: err.append(1)
+        )
+        assert res == []
+        assert mock_sleep.call_count == 2
+        assert (len(ok), len(err)) == (0, 1)
+
+    def test_callbacks_empty_answer_is_success(self):
+        client = YFinanceClient(
+            batch_size=10, delay_between_tickers=0, delay_between_batches=0
+        )
+        ok, err = [], []
+
+        def _fetch(t):
+            if t == "FAIL":
+                raise ValueError("x")
+            return None if t == "EMPTY" else {"ticker": t}
+
+        client._iterate_with_rate_limit(
+            ["AAPL", "EMPTY", "FAIL"], _fetch, "test",
+            lambda: ok.append(1), lambda: err.append(1),
+        )
+        assert (len(ok), len(err)) == (2, 1)
+
+    @patch("trading_signals.collectors.yfinance_client.time.sleep")
+    @patch("trading_signals.collectors.yfinance_client.yf.Ticker")
+    def test_estimates_rate_limit_not_swallowed(self, mock_ticker_cls, mock_sleep):
+        """Rate limits inside property access must trigger the retry."""
+        mock_ticker = MagicMock()
+        type(mock_ticker).eps_trend = PropertyMock(side_effect=YFRateLimitError())
+        mock_ticker_cls.return_value = mock_ticker
+
+        client = YFinanceClient(
+            batch_size=10,
+            delay_between_tickers=0,
+            delay_between_batches=0,
+            rate_limit_retries=1,
+        )
+        err = []
+        res = client.fetch_estimates(["AAPL"], on_error=lambda: err.append(1))
+        assert res == []
+        assert err == [1]
+        assert mock_sleep.call_count == 1

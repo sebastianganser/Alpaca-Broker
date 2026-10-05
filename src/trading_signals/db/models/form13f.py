@@ -2,6 +2,12 @@
 
 Form13FHolding: Raw layer – quarterly holdings of institutional investors
                ($100M+ AUM) from SEC 13F-HR filings.
+
+Key: one row per (filer, report period, CUSIP, put/call). Multiple infotable
+lines for the same key (different investment discretion / other managers)
+are summed by the collector. ``put_call`` is ``'SH'`` for plain share/
+principal positions and ``'PUT'``/``'CALL'`` for option positions – consumers
+counting holders should filter ``put_call = 'SH'``.
 """
 
 from datetime import date, datetime
@@ -16,6 +22,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,8 +35,8 @@ class Form13FHolding(Base):
     __tablename__ = "form13f_holdings"
     __table_args__ = (
         UniqueConstraint(
-            "filer_cik", "report_period", "cusip",
-            name="uq_13f_holding_dedup",
+            "filer_cik", "report_period", "cusip", "put_call",
+            name="uq_13f_holding_key",
         ),
         Index("idx_13f_ticker", "ticker"),
         Index("idx_13f_filer_period", "filer_cik", "report_period"),
@@ -44,8 +51,17 @@ class Form13FHolding(Base):
     ticker: Mapped[str | None] = mapped_column(String(20))
     cusip: Mapped[str | None] = mapped_column(String(20))
     shares: Mapped[float | None] = mapped_column(Numeric(20, 4))
+    # Always whole US dollars (pre-2023 filings reported $ thousands and
+    # are scaled by the collector).
     market_value: Mapped[float | None] = mapped_column(Numeric(20, 2))
-    put_call: Mapped[str | None] = mapped_column(String(10))
+    put_call: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="SH", server_default=text("'SH'")
+    )
+    # Filing provenance (accession of the filing the row came from;
+    # NULL for rows written before migration 029).
+    accession_number: Mapped[str | None] = mapped_column(String(25))
+    form_type: Mapped[str | None] = mapped_column(String(12))
+    amendment_type: Mapped[str | None] = mapped_column(String(20))
     source_url: Mapped[str | None] = mapped_column(Text)
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()

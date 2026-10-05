@@ -3,8 +3,6 @@
 from datetime import date
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from trading_signals.collectors.disclosure_client import (
     DisclosureClient,
     _normalize_ticker,
@@ -15,7 +13,6 @@ from trading_signals.collectors.politician_trades_collector import (
     PoliticianTradesCollector,
 )
 from trading_signals.db.models.politicians import PoliticianTrade
-
 
 # ============================================================================
 # Fixtures – HTML samples from Senate eFD portal
@@ -546,3 +543,95 @@ class TestPoliticianTradesCollector:
     def test_name_property(self):
         collector = PoliticianTradesCollector()
         assert collector.name == "politician_trades_collector"
+
+    def test_owner_part_of_unique_key(self):
+        """Self/Spouse trades with identical attributes must not collide (M6)."""
+        uq = next(
+            c for c in PoliticianTrade.__table__.constraints
+            if c.name == "uq_politician_trade_dedup"
+        )
+        assert "owner" in [col.name for col in uq.columns]
+        owner_col = PoliticianTrade.__table__.c.owner
+        assert owner_col.nullable is False
+        assert owner_col.server_default is not None
+
+    def test_store_normalizes_owner_and_uses_owner_conflict(self):
+        from sqlalchemy.dialects import postgresql
+
+        collector = PoliticianTradesCollector()
+        session = MagicMock()
+        session.execute.return_value.rowcount = 2
+        base = {
+            "politician_name": "Tommy Tuberville", "chamber": "Senate",
+            "ticker": "AAPL", "transaction_date": date(2025, 12, 15),
+            "transaction_type": "Purchase", "amount_range": "$1,001 - $15,000",
+            "source_url": "https://example.com/ptr/1",
+        }
+        data = [dict(base, owner=""), dict(base, owner="Spouse")]
+
+        with patch("trading_signals.universe.onboarder.NewTickerOnboarder"):
+            fetched, written = collector.store(session, data)
+
+        assert (fetched, written) == (2, 2)
+        stmt = session.execute.call_args_list[0][0][0]
+        compiled = stmt.compile(dialect=postgresql.dialect())
+        assert "owner) DO NOTHING" in str(compiled)
+        owners = sorted(v for k, v in compiled.params.items() if k.startswith("owner"))
+        assert owners == ["Self", "Spouse"]
+
+    def test_fetch_skips_already_stored_filings(self):
+        """Filings whose source_url is stored are not downloaded again (M6)."""
+        collector = PoliticianTradesCollector()
+        collector._reset_run_state()
+        collector.client = MagicMock()
+        collector.client.fetch_senate_ptrs.return_value = [
+            {"first_name": "A", "last_name": "B", "office": "", "date_filed": "",
+             "ptr_link": "https://example.com/ptr/old"},
+            {"first_name": "C", "last_name": "D", "office": "", "date_filed": "",
+             "ptr_link": "https://example.com/ptr/new"},
+        ]
+        collector.client.fetch_senate_ptr_transactions.return_value = []
+        session = MagicMock()
+        session.execute.return_value.all.return_value = [
+            ("https://example.com/ptr/old",)
+        ]
+
+        collector.fetch(session)
+
+        collector.client.fetch_senate_ptr_transactions.assert_called_once_with(
+            "https://example.com/ptr/new"
+        )
+        assert collector._attempts == 2  # list search + one filing
+        assert collector._errors == 0
+        session.commit.assert_called()
+
+
+# ============================================================================
+# Tests: Congress member lookup
+# ============================================================================
+
+
+class TestCongressLookup:
+    def test_exact(self):
+        from trading_signals.data.congress_members import lookup_member
+
+        assert lookup_member("Tim Scott")["party"] == "R"
+
+    def test_ambiguous_last_name_resolved_by_first_name(self):
+        from trading_signals.data.congress_members import lookup_member
+
+        # SCOTT is shared by Rick and Tim Scott → first name decides
+        assert lookup_member("Timothy E Scott")["state"] == "SC"
+        assert lookup_member("Richard L Scott") == {}  # RICK ≠ RICHARD prefix
+        assert lookup_member("Rick L Scott")["state"] == "FL"
+
+    def test_ambiguous_without_first_name_match(self):
+        from trading_signals.data.congress_members import lookup_member
+
+        assert lookup_member("Somebody Scott") == {}
+
+    def test_aliases_of_same_member_are_not_ambiguous(self):
+        from trading_signals.data.congress_members import lookup_member
+
+        # "THOMAS CARPER" and "TOM CARPER" describe the same member
+        assert lookup_member("Thomas R. Carper")["state"] == "DE"

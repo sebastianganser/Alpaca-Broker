@@ -12,16 +12,12 @@ Schedule: Weekly Sunday 01:00 MEZ
 """
 
 from datetime import date
-from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from trading_signals.collectors.base import BaseCollector
 from trading_signals.collectors.yfinance_client import YFinanceClient
 from trading_signals.db.models.fundamentals import FundamentalsSnapshot
-from trading_signals.db.models.universe import Universe
 from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -33,7 +29,7 @@ _UPSERT_COLUMNS = [
     "revenue_ttm", "revenue_growth_yoy", "eps_ttm", "eps_growth_yoy",
     "debt_to_equity", "current_ratio", "dividend_yield", "beta",
     "target_price_low", "target_price_mean", "target_price_median",
-    "target_price_high",
+    "target_price_high", "most_recent_quarter",
 ]
 
 
@@ -60,18 +56,18 @@ class FundamentalsCollectorYF(BaseCollector):
         Returns:
             List of dicts with fundamental metrics per ticker.
         """
-        # Load active tickers
-        stmt = select(Universe.ticker).where(Universe.is_active.is_(True))
-        tickers = [row[0] for row in session.execute(stmt).all()]
+        tickers = self.get_active_tickers(session)
 
         logger.info(
             f"[{self.name}] Fetching fundamentals for {len(tickers)} active tickers"
         )
 
-        return self.client.fetch_fundamentals(tickers)
+        return self.client.fetch_fundamentals(
+            tickers, on_success=self.record_success, on_error=self.record_error
+        )
 
     def store(self, session: Session, data: list[dict]) -> tuple[int, int]:
-        """Store fundamentals with UPSERT (ON CONFLICT DO UPDATE).
+        """Store fundamentals with UPSERT (multi-row ON CONFLICT DO UPDATE).
 
         Fundamentals change over time (e.g., after earnings reports),
         so we update existing records for the same (ticker, snapshot_date).
@@ -80,9 +76,9 @@ class FundamentalsCollectorYF(BaseCollector):
             Tuple of (records_fetched, records_written).
         """
         records_fetched = len(data)
-        records_written = 0
         today = date.today()
 
+        rows = []
         for record in data:
             values = {
                 "ticker": record["ticker"],
@@ -91,19 +87,15 @@ class FundamentalsCollectorYF(BaseCollector):
             # Add all fundamental fields
             for col in _UPSERT_COLUMNS:
                 values[col] = record.get(col)
+            rows.append(values)
 
-            stmt = (
-                pg_insert(FundamentalsSnapshot)
-                .values(**values)
-                .on_conflict_do_update(
-                    constraint="pk_fundamentals_snapshot",
-                    set_={col: values[col] for col in _UPSERT_COLUMNS},
-                )
-            )
-            result = session.execute(stmt)
-            if result.rowcount > 0:
-                records_written += 1
-
+        records_written = self._bulk_insert(
+            session,
+            FundamentalsSnapshot,
+            rows,
+            conflict_cols=["ticker", "snapshot_date"],
+            update_cols=_UPSERT_COLUMNS,
+        )
         session.flush()
 
         logger.info(

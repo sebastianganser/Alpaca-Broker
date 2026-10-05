@@ -13,11 +13,14 @@ from sqlalchemy import (
     Date,
     DateTime,
     Index,
+    Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -26,14 +29,29 @@ from trading_signals.db.base import Base
 
 
 class InsiderTrade(Base):
-    """A single insider transaction from an SEC Form 4 filing."""
+    """A single insider transaction from an SEC Form 4 filing.
+
+    Dedup key (migration 029): ``(accession_number, is_derivative,
+    row_index)`` – partial unique index for rows with an accession number.
+    ``row_index`` is the 0-based position of the transaction element within
+    its table (nonDerivativeTable / derivativeTable, counted separately,
+    including skipped elements) of the filing. Legacy rows (before 029)
+    have ``row_index`` NULL.
+
+    Multiple reporting owners (joint filings): the row carries the FIRST
+    owner (``insider_name``/``insider_cik``); ``owner_count`` holds the
+    number of owners and ``raw_data['reporting_owners']`` lists all of them.
+    One row per transaction (not per owner) avoids counting the same shares
+    several times.
+    """
 
     __tablename__ = "insider_trades"
     __table_args__ = (
-        UniqueConstraint(
-            "cik", "insider_name", "transaction_date",
-            "transaction_type", "shares", "price_per_share",
-            name="uq_insider_trade_dedup",
+        Index(
+            "uq_insider_trade_filing_row",
+            "accession_number", "is_derivative", "row_index",
+            unique=True,
+            postgresql_where=text("accession_number IS NOT NULL"),
         ),
         Index("idx_insider_ticker_date", "ticker", "transaction_date"),
         Index("idx_insider_filing_date", "filing_date"),
@@ -46,8 +64,17 @@ class InsiderTrade(Base):
     cik: Mapped[str | None] = mapped_column(String(20))
     insider_name: Mapped[str | None] = mapped_column(String(200))
     insider_title: Mapped[str | None] = mapped_column(String(200))
+    insider_cik: Mapped[str | None] = mapped_column(String(20))
+    owner_count: Mapped[int | None] = mapped_column(SmallInteger)
     transaction_date: Mapped[date | None] = mapped_column(Date)
     filing_date: Mapped[date | None] = mapped_column(Date)
+    # SEC acceptance timestamp (submissions JSON ``acceptanceDateTime``)
+    acceptance_datetime: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    accession_number: Mapped[str | None] = mapped_column(String(25))
+    form_type: Mapped[str | None] = mapped_column(String(10))
+    row_index: Mapped[int | None] = mapped_column(Integer)
     transaction_type: Mapped[str | None] = mapped_column(String(20))
     shares: Mapped[float | None] = mapped_column(Numeric(20, 4))
     price_per_share: Mapped[float | None] = mapped_column(Numeric(16, 4))
@@ -91,6 +118,9 @@ class InsiderCluster(Base):
     total_buy_value: Mapped[float | None] = mapped_column(Numeric(20, 2))
     total_sell_value: Mapped[float | None] = mapped_column(Numeric(20, 2))
     cluster_score: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    # Date the cluster became publicly known (point-in-time); filled by the
+    # cluster computation.
+    known_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     computed_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )

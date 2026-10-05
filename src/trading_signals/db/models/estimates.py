@@ -21,7 +21,6 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
-    Text,
     UniqueConstraint,
     func,
 )
@@ -57,8 +56,11 @@ class EstimatesSnapshot(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     ticker: Mapped[str] = mapped_column(String(20), nullable=False)
-    as_of: Mapped[date] = mapped_column(Date, nullable=False)  # Fetch date (point-in-time)
-    period: Mapped[str] = mapped_column(String(10), nullable=False)  # '0q','+1q','0y','+1y'
+    # Point-in-time key: last completed NYSE session at fetch time
+    # (rows written before migration 029 carry the Berlin fetch date).
+    as_of: Mapped[date] = mapped_column(Date, nullable=False)
+    # '0q', '+1q', '0y', '+1y'
+    period: Mapped[str] = mapped_column(String(10), nullable=False)
 
     # ── EPS Consensus ────────────────────────────────────────────────
     eps_avg: Mapped[float | None] = mapped_column(Numeric(16, 4))
@@ -94,7 +96,8 @@ class EstimatesSnapshot(Base):
 
     # ── Metadata ─────────────────────────────────────────────────────
     source: Mapped[str] = mapped_column(String(50), nullable=False, default="yfinance")
-    raw: Mapped[dict | None] = mapped_column(JSONB)  # Complete raw response for future-proofing
+    # Complete raw response for future-proofing
+    raw: Mapped[dict | None] = mapped_column(JSONB)
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )

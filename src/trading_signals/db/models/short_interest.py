@@ -47,7 +47,9 @@ class ShortInterest(Base):
     """Bi-monthly FINRA short interest settlement data."""
     __tablename__ = "short_interest"
     __table_args__ = (
-        UniqueConstraint("ticker", "settlement_date", "source", name="uq_short_interest_dedup"),
+        UniqueConstraint(
+            "ticker", "settlement_date", "source", name="uq_short_interest_dedup"
+        ),
         Index("idx_short_interest_ticker", "ticker"),
         {"schema": "signals"},
     )
