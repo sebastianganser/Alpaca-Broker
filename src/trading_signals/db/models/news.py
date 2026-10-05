@@ -13,8 +13,6 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
-    Date,
-    DateTime,
     ForeignKey,
     Index,
     Numeric,
@@ -26,7 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
-from trading_signals.db.base import Base
+from trading_signals.db.base import Base, TZDateTime
 
 
 class NewsArticle(Base):
@@ -48,12 +46,12 @@ class NewsArticle(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str | None] = mapped_column(String(100))
     author: Mapped[str | None] = mapped_column(String(200))
-    published_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    published_at: Mapped[datetime] = mapped_column(TZDateTime(), nullable=False)
     article_url: Mapped[str | None] = mapped_column(Text)
     symbols: Mapped[list[str] | None] = mapped_column(ARRAY(String(20)))
     is_global: Mapped[bool] = mapped_column(Boolean, server_default="false")
     fetched_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        TZDateTime(), server_default=func.now()
     )
 
     def __repr__(self) -> str:
@@ -88,7 +86,11 @@ class NewsSentiment(Base):
     )
     article_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("signals.news_articles.id", name="fk_news_sentiment_article_id"),
+        ForeignKey(
+            "signals.news_articles.id",
+            name="fk_news_sentiment_article_id",
+            ondelete="CASCADE",  # migration 031 (retention deletes articles)
+        ),
     )
     ticker: Mapped[str | None] = mapped_column(String(20))
     sentiment_label: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -96,7 +98,7 @@ class NewsSentiment(Base):
     confidence: Mapped[float | None] = mapped_column(Numeric(6, 4))
     model_version: Mapped[str] = mapped_column(String(50), nullable=False)
     scored_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        TZDateTime(), server_default=func.now()
     )
 
     def __repr__(self) -> str:

@@ -13,6 +13,7 @@ from trading_signals.db.base import Base
 
 # Import all models so Alembic can see them for autogeneration
 from trading_signals.db.models import Universe  # noqa: F401
+from trading_signals.db.models import short_interest  # noqa: F401  (not in models/__init__)
 
 # Alembic Config object
 config = context.config

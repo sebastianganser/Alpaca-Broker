@@ -11,10 +11,10 @@ re-entering the system.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from trading_signals.db.base import Base
+from trading_signals.db.base import Base, TZDateTime
 
 
 class TickerBlacklist(Base):
@@ -28,7 +28,7 @@ class TickerBlacklist(Base):
     quote_type: Mapped[str | None] = mapped_column(String(20))
     source: Mapped[str | None] = mapped_column(String(50))
     detected_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        TZDateTime(), server_default=func.now()
     )
 
     def __repr__(self) -> str:

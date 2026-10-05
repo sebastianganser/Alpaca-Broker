@@ -9,7 +9,6 @@ Usage:
 """
 
 import argparse
-import sys
 
 from trading_signals.db.session import get_session
 from trading_signals.universe.alpaca_validator import AlpacaAssetValidator
@@ -38,7 +37,7 @@ def main(dry_run: bool = False) -> None:
 
         # Report
         print(f"\n{'='*60}")
-        print(f"VALIDATION RESULT")
+        print("VALIDATION RESULT")
         print(f"{'='*60}")
         print(f"Total checked:     {result.total_checked}")
         print(f"Active/Tradeable:  {result.active_tradeable}")
@@ -46,12 +45,12 @@ def main(dry_run: bool = False) -> None:
         print(f"Not tradeable:     {len(result.not_tradeable)}")
 
         if result.not_found:
-            print(f"\nTicker NOT FOUND in Alpaca:")
+            print("\nTicker NOT FOUND in Alpaca:")
             for ticker in result.not_found:
                 print(f"  - {ticker}")
 
         if result.not_tradeable:
-            print(f"\nTicker NOT TRADEABLE on Alpaca:")
+            print("\nTicker NOT TRADEABLE on Alpaca:")
             for ticker in result.not_tradeable:
                 detail = result.details[ticker]
                 print(f"  - {ticker} (exchange: {detail.get('exchange', '?')})")

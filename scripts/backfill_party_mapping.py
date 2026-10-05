@@ -3,7 +3,7 @@
 Run via: uv run python scripts/backfill_party_mapping.py
 Sprint 9.5c C3.
 """
-from trading_signals.data.congress_members import CONGRESS_MEMBERS, lookup_member
+from trading_signals.data.congress_members import lookup_member
 from trading_signals.db.session import get_session
 from trading_signals.db.models.politicians import PoliticianTrade
 from sqlalchemy import select, update

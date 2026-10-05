@@ -27,6 +27,17 @@ logger = get_logger(__name__)
 
 USER_AGENT = "Mozilla/5.0 (Trading-Signals IndexSyncer/1.0)"
 
+#: Plausible constituent counts. A Wikipedia layout change that yields an
+#: empty/partial table must never close all membership intervals (H2).
+EXPECTED_COUNTS: dict[str, tuple[int, int]] = {
+    "sp500": (480, 520),
+    "nasdaq100": (95, 110),
+}
+
+
+class IndexSyncSanityError(ValueError):
+    """Fetched index list has an implausible size – sync aborted."""
+
 
 @dataclass
 class SyncResult:
@@ -38,7 +49,22 @@ class SyncResult:
     newly_added: int = 0
     not_tradeable: int = 0
     membership_updated: int = 0
+    membership_cleared: int = 0
     new_tickers: list[str] = field(default_factory=list)
+
+
+def check_index_sizes(lists: dict[str, set[str]]) -> None:
+    """Raise :class:`IndexSyncSanityError` if any list size is implausible."""
+    problems = []
+    for index_name, tickers in lists.items():
+        lo, hi = EXPECTED_COUNTS[index_name]
+        if not lo <= len(tickers) <= hi:
+            problems.append(f"{index_name}={len(tickers)} (expected {lo}-{hi})")
+    if problems:
+        raise IndexSyncSanityError(
+            "[index_sync] Implausible index sizes, aborting before any update: "
+            + ", ".join(problems)
+        )
 
 
 class IndexSyncer:
@@ -48,11 +74,12 @@ class IndexSyncer:
         self.session = session
         self._manager = UniverseManager(session)
 
-    def sync(self, dry_run: bool = False) -> SyncResult:
+    def sync(self, dry_run: bool = False, sanity_check: bool = True) -> SyncResult:
         """Fetch index lists and sync with universe.
 
         Args:
             dry_run: If True, only report what would change.
+            sanity_check: Abort (raise) if a list size is implausible.
 
         Returns:
             SyncResult with details.
@@ -69,6 +96,8 @@ class IndexSyncer:
             f"[index_sync] Fetched S&P 500: {len(sp500)}, "
             f"Nasdaq 100: {len(nasdaq100)}"
         )
+        if sanity_check:
+            check_index_sizes({"sp500": sp500, "nasdaq100": nasdaq100})
 
         # Build membership map: ticker -> set of indexes
         membership: dict[str, set[str]] = {}
@@ -77,11 +106,15 @@ class IndexSyncer:
         for ticker in nasdaq100:
             membership.setdefault(ticker, set()).add("nasdaq100")
 
-        # Get existing universe
-        existing = {
-            row[0] for row in
-            self.session.execute(select(Universe.ticker)).all()
-        }
+        # Get existing universe (+ current membership arrays)
+        existing_rows = self.session.execute(
+            select(Universe.ticker, Universe.index_membership)
+        ).all()
+        existing = {row[0] for row in existing_rows}
+        stale_members = [
+            row[0] for row in existing_rows
+            if len(row) > 1 and row[1] and row[0] not in membership
+        ]
 
         # Validate new tickers against Alpaca
         new_tickers = set(membership.keys()) - existing
@@ -154,10 +187,21 @@ class IndexSyncer:
                 )
                 result.membership_updated += 1
 
+        # Clear membership for tickers that left all tracked indexes
+        # (they stay in the universe, but must not count as members).
+        for ticker in stale_members:
+            self.session.execute(
+                update(Universe)
+                .where(Universe.ticker == ticker)
+                .values(index_membership=None)
+            )
+        result.membership_cleared = len(stale_members)
+
         self.session.flush()
         logger.info(
             f"[index_sync] Done: {result.newly_added} added, "
-            f"{result.membership_updated} memberships updated"
+            f"{result.membership_updated} memberships updated, "
+            f"{result.membership_cleared} cleared"
         )
 
         # ── Maintain index_membership intervals ──────────────────────
@@ -178,14 +222,13 @@ class IndexSyncer:
         intervals for additions and closes intervals for removals.
         """
         from sqlalchemy import and_
+
         from trading_signals.db.models.index_membership import IndexMembership
 
         today = date.today()
 
         for index_name in ("sp500", "nasdaq100"):
-            current_tickers = current_membership.get(index_name, set())
-            # Also check tickers that have this index in their membership set
-            # (the membership dict is keyed by ticker, values are sets of indexes)
+            # The membership dict is keyed by ticker, values are sets of indexes
             current_for_index = set()
             for ticker, indexes in current_membership.items():
                 if index_name in indexes:

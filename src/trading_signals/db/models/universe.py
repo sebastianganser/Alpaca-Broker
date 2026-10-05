@@ -10,7 +10,7 @@ Once added, tickers are never deleted – only marked as inactive.
 
 from datetime import date
 
-from sqlalchemy import Boolean, Date, Index, String, Text
+from sqlalchemy import Boolean, Date, Index, String
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -59,4 +59,7 @@ class Universe(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Universe(ticker='{self.ticker}', name='{self.company_name}', active={self.is_active})>"
+        return (
+            f"<Universe(ticker='{self.ticker}', name='{self.company_name}', "
+            f"active={self.is_active})>"
+        )

@@ -1,9 +1,6 @@
 """Tests for index membership model, interval generation, and point-in-time queries."""
 
 from datetime import date
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from trading_signals.db.models.index_membership import IndexMembership
 from trading_signals.universe.wikipedia_index_history import (

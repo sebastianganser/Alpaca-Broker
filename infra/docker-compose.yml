@@ -39,6 +39,11 @@ services:
     ports:
       - "8090:8090"
     restart: unless-stopped
+    # Container runs as 99:100 (nobody:users). Lifespan shutdown waits up to
+    # 25 s for running jobs → give it more than Docker's 10 s default.
+    stop_grace_period: 40s
+    # Falls das Volume für 99:100 nicht beschreibbar ist (Context Packs):
+    # user: "0:0"
     volumes:
       - /mnt/user/Workfiles/AlpacaBroker:/mnt/user/Workfiles/AlpacaBroker
     logging:

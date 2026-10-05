@@ -37,7 +37,9 @@
 We do **not** start with a trading strategy. We start with a data collector that spends at least 2–3 months **without trading**, only writing data to the database. Only when we have enough material do we start distilling signals.
 
 ### 2. Separation of Raw Data and Evaluation
-Raw data is sacred and never modified (append-only). Evaluations, scores, and signals are **computed** from raw data and can be recomputed any time if the algorithm changes.
+Raw data is never modified by evaluations. Evaluations, scores, and signals are **computed** from raw data and can be recomputed any time if the algorithm changes.
+
+**Rolling retention (decision 2026-10-05):** The system keeps exactly the last **20 calendar quarters** (~5 years). Older data is deleted weekly by the `data_retention` job and must not be re-collected by backfills. **No database backups** are kept. Use `trading_signals.utils.retention.data_start_date()` instead of hard-coded start dates.
 
 ### 3. Deterministic Core, LLM Only at the Edges
 Critical paths (data fetching, computations, later order execution) are pure Python code with unit tests. LLMs are only used for unstructured tasks (news parsing, report generation, ad-hoc analyses).
@@ -46,10 +48,10 @@ Critical paths (data fetching, computations, later order execution) are pure Pyt
 
 ## Current Status
 
-**Phase:** 🟢 Sprint 8 + 8b + 8c completed + production operation
-**Current sprint:** Operational – system running on Unraid, data collection + feature pipeline + sentiment pipeline + features UI active
-**Next step:** Waiting Phase (2–3 months data collection), then Sprint 9 (Exploratory Analysis / Jupyter)
-**Last updated:** May 2026
+**Phase:** 🟡 Sprint 9.5c (Candidate Pipeline MVP) + review fixes (Oct 2026)
+**Current sprint:** Data-integrity fixes from the Oct 2026 code review (migrations 029–031) → rebuild feature store → re-run R1
+**Next step:** Deploy, run repair scripts (`scripts/repair/`), then Phase 2 (R1 feature analysis, F1 composite score)
+**Last updated:** October 2026
 **Deployment:** ✅ Unraid Docker (192.168.1.93:8090)
 
 See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
@@ -81,9 +83,9 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 
 | Task | Model | Where |
 |---|---|---|
-| Architecture design, edge case analysis | Opus 4.6 | Claude Desktop (sparingly!) |
-| Standard implementation, debugging | Sonnet 4.6 | Claude Desktop (default) |
-| News parsing, daily reports | Haiku 4.5 | API (scheduler jobs) |
+| Architecture design, edge case analysis, reviews | Opus 5.5 | Antigravity / Claude Desktop (sparingly!) |
+| Standard implementation, debugging | Sonnet (current version) | Antigravity / Claude Desktop (default) |
+| News parsing, daily reports | Haiku (current version) | API (scheduler jobs) |
 | Routine scheduler (price checks etc.) | **No LLM** | Python code |
 
 **Expected cost in full operation:** ~€20/month Claude Pro + ~$10–15/month API costs

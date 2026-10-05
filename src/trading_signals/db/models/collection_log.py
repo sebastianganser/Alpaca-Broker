@@ -6,23 +6,28 @@ status, record counts, gap statistics, and any errors encountered.
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Integer, String, Text, func
+from sqlalchemy import BigInteger, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from trading_signals.db.base import Base
+from trading_signals.db.base import Base, TZDateTime
 
 
 class CollectionLog(Base):
     """Audit log entry for a single collector run."""
 
     __tablename__ = "collection_log"
+    __table_args__ = (
+        # Migration 031: dashboard/health look up the latest run per collector
+        Index("ix_collection_log_collector_started", "collector_name", "started_at"),
+        Index("ix_collection_log_started_at", "started_at"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     collector_name: Mapped[str | None] = mapped_column(String(100))
-    started_at: Mapped[datetime | None] = mapped_column(DateTime)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
-    status: Mapped[str | None] = mapped_column(String(20))  # success, partial, failed
+    started_at: Mapped[datetime | None] = mapped_column(TZDateTime())
+    finished_at: Mapped[datetime | None] = mapped_column(TZDateTime())
+    status: Mapped[str | None] = mapped_column(String(20))  # see utils.job_status
     records_fetched: Mapped[int | None] = mapped_column(Integer)
     records_written: Mapped[int | None] = mapped_column(Integer)
     gaps_detected: Mapped[int] = mapped_column(Integer, default=0)

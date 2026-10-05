@@ -4,14 +4,18 @@ Maintained manually. Updated when Congress membership changes.
 Source: Official US Senate website (senate.gov).
 
 Usage in PoliticianTradesCollector:
-    lookup_key = politician_name.strip().upper()
-    member_info = CONGRESS_MEMBERS.get(lookup_key, {})
+    member_info = lookup_member(politician_name)  # handles name variants
     party = member_info.get("party")  # "R", "D", or "I"
+
+Limitation: the mapping stores the CURRENT party/state only. Historical
+party switches (e.g. Manchin/Sinema D → I) are not modelled, so older
+trades get the current affiliation.
 
 C3 Sprint 9.5c: Initial version with 119th Congress Senate.
 """
 
-# Format: "FIRSTNAME LASTNAME" -> {"party": "R"|"D"|"I", "state": "XX", "chamber": "Senate"}
+# Format: "FIRSTNAME LASTNAME" ->
+#         {"party": "R"|"D"|"I", "state": "XX", "chamber": "Senate"}
 # Names must match the format from Senate eFD: first_name + " " + last_name
 CONGRESS_MEMBERS: dict[str, dict[str, str]] = {
     "TOMMY TUBERVILLE": {"party": "R", "state": "AL", "chamber": "Senate"},
@@ -83,7 +87,8 @@ CONGRESS_MEMBERS: dict[str, dict[str, str]] = {
     "TED BUDD": {"party": "R", "state": "NC", "chamber": "Senate"},
     "JOHN HOEVEN": {"party": "R", "state": "ND", "chamber": "Senate"},
     "KEVIN CRAMER": {"party": "R", "state": "ND", "chamber": "Senate"},
-    "SHERROD BROWN": {"party": "D", "state": "OH", "chamber": "Senate"}, # Wait, Moreno won? Bernie Moreno. I will add Moreno.
+    # Wait, Moreno won? Bernie Moreno. I will add Moreno.
+    "SHERROD BROWN": {"party": "D", "state": "OH", "chamber": "Senate"},
     "BERNIE MORENO": {"party": "R", "state": "OH", "chamber": "Senate"},
     "JD VANCE": {"party": "R", "state": "OH", "chamber": "Senate"},
     "JAMES LANKFORD": {"party": "R", "state": "OK", "chamber": "Senate"},
@@ -116,8 +121,9 @@ CONGRESS_MEMBERS: dict[str, dict[str, str]] = {
     "TAMMY BALDWIN": {"party": "D", "state": "WI", "chamber": "Senate"},
     "JOHN BARRASSO": {"party": "R", "state": "WY", "chamber": "Senate"},
     "CYNTHIA LUMMIS": {"party": "R", "state": "WY", "chamber": "Senate"},
-    
-    # Adding some common ones under alternative names or recently retired just in case they appear in historical backfill (118th congress):
+
+    # Adding some common ones under alternative names or recently retired
+    # just in case they appear in historical backfill (118th congress):
     "JOE MANCHIN": {"party": "I", "state": "WV", "chamber": "Senate"},
     "KYRSTEN SINEMA": {"party": "I", "state": "AZ", "chamber": "Senate"},
     "MITT ROMNEY": {"party": "R", "state": "UT", "chamber": "Senate"},
@@ -138,7 +144,9 @@ CONGRESS_MEMBERS: dict[str, dict[str, str]] = {
 }
 
 # Suffixes to strip when normalizing names for fallback matching
-_SUFFIXES = {", JR.", ", JR", " JR.", " JR", ", II", ", III", ", IV", " II", " III", " IV"}
+_SUFFIXES = {
+    ", JR.", ", JR", " JR.", " JR", ", II", ", III", ", IV", " II", " III", " IV",
+}
 
 
 def _normalize_name(name: str) -> str:
@@ -151,12 +159,40 @@ def _normalize_name(name: str) -> str:
     return name
 
 
+def _first_names_match(a: str, b: str) -> bool:
+    """Loose first-name match: equal, or one is a prefix of the other
+    (TIM/TIMOTHY, DAN/DANIEL) with at least 3 characters."""
+    a, b = a.strip(".").upper(), b.strip(".").upper()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    short, long_ = sorted((a, b), key=len)
+    return len(short) >= 3 and long_.startswith(short)
+
+
+def _unique_info(matches: list[tuple[str, dict[str, str]]]) -> dict[str, str]:
+    """Return the info if all matches describe the same member, else {}."""
+    infos = {tuple(sorted(info.items())) for _, info in matches}
+    if len(infos) == 1:
+        return matches[0][1]
+    return {}
+
+
 def lookup_member(politician_name: str) -> dict[str, str]:
     """Look up a Congress member by name.
 
     Handles common name variations: middle initials, suffixes
     (Jr., II, IV), trailing commas, and formal legal names.
-    Returns empty dict if not found.
+    Returns empty dict if not found or ambiguous.
+
+    Fallback order: exact → normalized → last name (if it identifies one
+    member) → first + last name (if the last name is shared, e.g.
+    RICK SCOTT vs. TIM SCOTT).
+
+    NOTE: ``party``/``state`` reflect the member's CURRENT affiliation
+    only (no history) – e.g. a member who switched party is reported with
+    the new party also for older trades.
     """
     key = politician_name.strip().upper()
 
@@ -171,14 +207,31 @@ def lookup_member(politician_name: str) -> dict[str, str]:
     if result:
         return result
 
-    # 3. Fallback: match last name only (after stripping suffixes)
-    last_name = normalized.split()[-1] if normalized else ""
+    # 3. Fallback: match last name (after stripping suffixes)
+    parts = normalized.split()
+    if not parts:
+        return {}
+    last_name = parts[-1]
     matches = [
         (name, info)
         for name, info in CONGRESS_MEMBERS.items()
-        if name.split()[-1] == last_name
+        if _normalize_name(name).split()[-1] == last_name
     ]
-    if len(matches) == 1:
-        return matches[0][1]
+    if not matches:
+        return {}
+    unique = _unique_info(matches)
+    if unique:
+        return unique
 
+    # 4. Ambiguous last name → additionally require a matching first name
+    if len(parts) < 2:
+        return {}
+    first_name = parts[0]
+    narrowed = [
+        (name, info)
+        for name, info in matches
+        if _first_names_match(_normalize_name(name).split()[0], first_name)
+    ]
+    if narrowed:
+        return _unique_info(narrowed)
     return {}

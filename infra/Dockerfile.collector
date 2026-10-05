@@ -3,6 +3,12 @@
 # =============================================================================
 # Multi-stage build: Node for frontend, uv for Python, slim runtime.
 
+# uv version is pinned (reproducible builds; ":latest" broke lock semantics
+# between uv releases). Bump deliberately together with uv.lock.
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.2
+
+FROM ${UV_IMAGE} AS uv
+
 # ── Stage 1: Frontend Build ──────────────────────────────────────────────
 FROM node:20-alpine AS frontend-builder
 WORKDIR /frontend
@@ -15,8 +21,8 @@ RUN npm run build
 # ── Stage 2: Python Dependencies ─────────────────────────────────────────
 FROM python:3.12-slim AS python-builder
 
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Install uv (pinned, see UV_IMAGE)
+COPY --from=uv /uv /usr/local/bin/uv
 
 WORKDIR /app
 
@@ -38,44 +44,57 @@ RUN uv sync --frozen
 # Pre-download FinBERT model so it's cached in the image
 # (avoids 440 MB download on first scheduler run)
 # Store in /app/.cache so it's included in the multi-stage COPY
-# NOTE: Use .venv/bin/python directly – uv run re-resolves dependencies
-#       which conflicts with the PyTorch CPU index containing old packages
+# NOTE: Use .venv/bin/python directly – no re-resolution/sync at runtime
+#       (torch comes from the explicit PyTorch CPU index, see pyproject.toml)
 ENV HF_HOME=/app/.cache/huggingface
 RUN .venv/bin/python -c "from transformers import pipeline; pipeline('sentiment-analysis', model='ProsusAI/finbert')"
 
 # ── Stage 3: Runtime ─────────────────────────────────────────────────────
 FROM python:3.12-slim
 
-# Install PostgreSQL client (for pg_isready health checks)
+# Unraid default: nobody(99):users(100) – matches the ownership of the
+# mounted /mnt/user/Workfiles share. Override with --build-arg if needed.
+ARG APP_UID=99
+ARG APP_GID=100
+
+# Install PostgreSQL client (for pg_isready in the entrypoint)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
+# Non-root runtime user (reuse an existing group/user with that id if present)
+RUN (getent group ${APP_GID} || groupadd -g ${APP_GID} app) \
+    && (getent passwd ${APP_UID} || useradd -u ${APP_UID} -g ${APP_GID} -d /app -M -s /usr/sbin/nologin app)
+
 WORKDIR /app
 
 # Copy the virtual environment, source, and HuggingFace model cache from python builder
-COPY --from=python-builder /app /app
+COPY --from=python-builder --chown=${APP_UID}:${APP_GID} /app /app
 ENV HF_HOME=/app/.cache/huggingface
+ENV HOME=/app
 
 # Copy the frontend build output
-COPY --from=frontend-builder /frontend/dist /app/frontend/dist
+COPY --from=frontend-builder --chown=${APP_UID}:${APP_GID} /frontend/dist /app/frontend/dist
 
-# Add uv to runtime for running scripts
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Add uv to runtime for running scripts (pinned, see UV_IMAGE)
+COPY --from=uv /uv /usr/local/bin/uv
 
 # Copy and set entrypoint (auto-migration on startup)
-COPY infra/entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+COPY --chmod=755 infra/entrypoint.sh /app/entrypoint.sh
+
+USER ${APP_UID}:${APP_GID}
 
 # Expose the API + UI port
 EXPOSE 8090
 
-# Health check: verify DB is reachable
-HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
-    CMD pg_isready -h ${DB_HOST:-localhost} -p ${DB_PORT:-5432} || exit 1
+# Health check: application-level (/api/v1/health checks DB + scheduler and
+# returns 503 when degraded). start-period covers migrations + model load.
+HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=3 \
+    CMD [".venv/bin/python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8090/api/v1/health', timeout=8).status == 200 else 1)"]
 
 # Entrypoint: wait for DB, run migrations, then start CMD
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-# Run FastAPI + Scheduler via uvicorn
-CMD ["uv", "run", "python", "-m", "trading_signals.main"]
+# Run FastAPI + Scheduler via uvicorn. Uses the venv directly – "uv run"
+# would try to sync/re-resolve at container start.
+CMD [".venv/bin/python", "-m", "trading_signals.main"]

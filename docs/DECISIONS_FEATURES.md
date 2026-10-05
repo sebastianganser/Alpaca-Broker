@@ -225,6 +225,38 @@
 
 ---
 
+## Review 2026-10-05 Decisions (Opus 5.5 Code Review)
+
+### [2026-10-05] Target Definition: Entry at Next Open
+**Context:** Features are computed at 02:00 CET from information that partly arrives after the US close (news, EDGAR filings until 22:00 ET). The old targets `close(d) → close(d+h)` therefore leaked the overnight gap.
+**Decision:** `return_h = close(d+h) / open(d+1) − 1` for h ∈ {1, 5, 20, 60} trading days on the NYSE calendar. All old targets were set to NULL in migration 030 and recomputed.
+
+### [2026-10-05] Information Cut-offs (Point-in-Time)
+- **News:** only articles with `published_at` < 16:00 ET on d (stored as naive UTC).
+- **Form 4:** public if `acceptance_datetime` < 16:00 ET on d, otherwise `filing_date` ≤ d. EDGAR clock times are interpreted as US/Eastern (conservative).
+- **Insider clusters:** rebuilt as of d only from filings public by d; stored clusters carry `known_date`.
+- **Politicians:** every query requires `disclosure_date` ≤ d (including the `_transaction` variants).
+- **13F:** `filing_date` ≤ d, only `put_call = 'SH'`.
+- **Macro (FRED):** daily series up to the previous session; DTWEXBGS with 7-day lag; max age 14 days.
+- **Earnings dates:** `first_seen` ≤ d (legacy rows keep a documented lookahead, capped at 90 days).
+- **Forward-fill limits:** 14 days (fundamentals, estimates, IV, TA), 10 days ARK, 152 days 13F.
+
+### [2026-10-05] Feature Versioning & Upsert Semantics
+Every row stores `feature_version` (currently `2026.10-1`) and `computed_at`. The upsert overwrites **all** feature columns including NULL, so recomputes repair stale values. Snapshots and targets exist **only for NYSE trading days**.
+
+### [2026-10-05] NULL vs. 0
+`0` = the source covers the ticker but nothing happened; `NULL` = no coverage. Extrapolated (gap-filled) prices are never used for TA, targets, liquidity or breadth.
+
+### [2026-10-05] Analysis Methodology
+Daily cross-sectional rank IC (mean, ICIR, Newey-West t with lag ≥ h−1), per-date quintiles, purged + embargoed walk-forward CV grouped by date, date-block bootstrap, imputer/scaler fitted inside folds. Analysis window starts at `ml_start_date()` (retention cutoff + indicator warm-up). Context-pack score uses per-date centered ranks; weights are **provisional** until R1 is re-run on the rebuilt feature store.
+
+### Known Limits
+- `universe.sector` is not point-in-time.
+- A 13F filed on day d counts as public on d.
+- Legacy earnings rows (before `first_seen` existed) retain lookahead up to 90 days.
+
+---
+
 ## Pending Decisions
 
 - ML model selection (Sprint 10, after sufficient data)

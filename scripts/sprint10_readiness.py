@@ -7,7 +7,7 @@ reliable Signal Scoring model (Sprint 10).
 Checks:
   1. Data Volume (dates, snapshots, tickers)
   2. Target Return Coverage (1d, 5d, 20d, 60d fill rates)
-  3. Feature Group Coverage (15 groups, ~86 features)
+  3. Feature Group Coverage (groups derived from FEATURE_COLUMNS)
   4. Earnings Cycle Coverage (distinct quarters)
   5. Market Regime Diversity (SPY monthly returns)
   6. Correlation Stability (across monthly analysis reports)
@@ -20,21 +20,27 @@ Updated Sept 2026 for Sprint 9.5 extensions:
   - Total feature columns: ~86 (up from ~55 in Sprint 8c)
 
 Run locally:  DATABASE_URL=postgresql://... python scripts/sprint10_readiness.py
-Run in container:  docker exec -it alpaca-broker uv run python scripts/sprint10_readiness.py
+Run in container:
+  docker exec -it alpaca-broker uv run python scripts/sprint10_readiness.py
 """
 
 # %% ── Setup ────────────────────────────────────────────────────────────
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+)
 
 import pandas as pd
-import numpy as np
-from scipy import stats
 from sqlalchemy import create_engine, text
+from sqlalchemy import inspect as sa_inspect
 
+from trading_signals.analysis.feature_groups import group_features
+from trading_signals.analysis.feature_report import build_load_query
 from trading_signals.config import get_settings
+from trading_signals.db.models.features import FEATURE_COLUMNS
+from trading_signals.utils.retention import data_start_date, ml_start_date
 
 settings = get_settings()
 engine = create_engine(settings.database_url)
@@ -56,35 +62,51 @@ THRESHOLDS = {
 
 # %% ── Load Data ────────────────────────────────────────────────────────
 
+ML_START = ml_start_date()
+
 print("=" * 72)
 print("  SPRINT 10 READINESS CHECK")
 print(f"  Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
+print(f"  ML window: snapshot_date >= {ML_START} (data start {data_start_date()})")
 print("=" * 72)
 
-df = pd.read_sql(
-    text("SELECT * FROM signals.feature_snapshots ORDER BY snapshot_date"),
-    engine,
-)
+# Only keys + model features + targets of the ML window (no SELECT *)
+_table_cols = [
+    c["name"]
+    for c in sa_inspect(engine).get_columns("feature_snapshots", schema="signals")
+]
+_sql, _params = build_load_query(_table_cols, ML_START)
+df = pd.read_sql(_sql, engine, params=_params)
 df["snapshot_date"] = pd.to_datetime(df["snapshot_date"])
 
 # Load analysis reports for stability check
 reports_df = pd.read_sql(
-    text("SELECT report_date, feature_correlations, consensus_features FROM signals.analysis_reports ORDER BY report_date"),
+    text(
+        "SELECT report_date, feature_correlations, consensus_features "
+        "FROM signals.analysis_reports ORDER BY report_date"
+    ),
     engine,
 )
 
-# Load SPY prices for regime diversity
+# Load SPY prices for regime diversity (same window as the ML data)
 spy_prices = pd.read_sql(
     text("""
         SELECT trade_date, close
         FROM signals.prices_daily
-        WHERE ticker = 'SPY'
+        WHERE ticker = 'SPY' AND trade_date >= :start
         ORDER BY trade_date
     """),
     engine,
+    params={"start": ML_START},
 )
 
 results = []
+
+
+def _ok(flag: bool) -> str:
+    """Check-mark icon for a pass/fail flag."""
+    return "✅" if flag else "❌"
+
 
 # %% ── Check 1: Data Volume ────────────────────────────────────────────
 
@@ -102,9 +124,12 @@ ok_dates = distinct_dates >= THRESHOLDS["min_distinct_dates"]
 ok_snaps = total_snapshots >= THRESHOLDS["min_snapshots"]
 ok_tickers = distinct_tickers >= THRESHOLDS["min_tickers"]
 
-print(f"  Distinct dates:    {distinct_dates:>6}  (min: {THRESHOLDS['min_distinct_dates']})  {'✅' if ok_dates else '❌'}")
-print(f"  Total snapshots:  {total_snapshots:>7}  (min: {THRESHOLDS['min_snapshots']:,})  {'✅' if ok_snaps else '❌'}")
-print(f"  Distinct tickers:  {distinct_tickers:>6}  (min: {THRESHOLDS['min_tickers']})  {'✅' if ok_tickers else '❌'}")
+print(f"  Distinct dates:    {distinct_dates:>6}  "
+      f"(min: {THRESHOLDS['min_distinct_dates']})  {_ok(ok_dates)}")
+print(f"  Total snapshots:  {total_snapshots:>7}  "
+      f"(min: {THRESHOLDS['min_snapshots']:,})  {_ok(ok_snaps)}")
+print(f"  Distinct tickers:  {distinct_tickers:>6}  "
+      f"(min: {THRESHOLDS['min_tickers']})  {_ok(ok_tickers)}")
 print(f"  Date range:        {date_min} → {date_max}")
 
 results.extend([ok_dates, ok_snaps, ok_tickers])
@@ -125,7 +150,8 @@ for col, min_pct in [
         filled = df[col].notna().sum()
         pct = 100.0 * filled / total_snapshots
         ok = pct >= min_pct
-        print(f"  {col:>12}:  {filled:>7} / {total_snapshots}  ({pct:5.1f}%)  (min: {min_pct}%)  {'✅' if ok else '❌'}")
+        print(f"  {col:>12}:  {filled:>7} / {total_snapshots}  ({pct:5.1f}%)  "
+              f"(min: {min_pct}%)  {_ok(ok)}")
         results.append(ok)
     else:
         print(f"  {col:>12}:  COLUMN MISSING  ❌")
@@ -137,40 +163,10 @@ print("\n" + "─" * 72)
 print("  3. FEATURE GROUP COVERAGE (latest date)")
 print("─" * 72)
 
-FEATURE_GROUPS = {
-    # ── Core groups (pre-Sprint 9.5) ────────────────────────────────
-    "ARK": ["ark_in_etf_count", "ark_total_weight", "ark_conviction_score",
-            "ark_multi_etf_signal", "ark_conviction_streak"],
-    "Insider": ["insider_cluster_score", "insider_cluster_active",
-                "cluster_count_30d", "days_since_last_cluster",
-                "insider_buy_ratio_30d", "insider_buy_ratio_90d"],
-    "Analyst": ["analyst_rating_score", "analyst_price_target_upside",
-                "analyst_net_sentiment_30d"],
-    "Politician": ["politician_buy_count_60d_disclosure",
-                   "politician_buy_count_60d_transaction"],
-    "Fundamentals": ["pe_ratio", "forward_pe", "profit_margin", "debt_to_equity"],
-    "Technical": ["price_vs_sma50", "rsi_14", "relative_strength_spy",
-                  "volume_ratio_20d", "atr_14_pct"],
-    "Earnings": ["earnings_days_until", "consecutive_beats",
-                 "sue_last", "days_since_last_earnings"],
-    "Sentiment": ["sentiment_avg_7d", "sentiment_avg_30d", "sentiment_momentum",
-                  "news_volume_ratio_7d"],
-    # ── Sprint 9.5 additions ────────────────────────────────────────
-    "13F": ["form13f_exited_positions_count", "form13f_holder_delta_qoq"],
-    "Macro": ["macro_vix", "macro_yield_spread", "macro_hy_spread",
-              "macro_dollar_index", "macro_inflation_expectation",
-              "macro_vix_regime"],
-    "Breadth": ["breadth_advance_decline", "breadth_pct_above_sma50"],
-    "Sector": ["sector_relative_return_20d", "sector_relative_momentum"],
-    "Liquidity": ["dollar_volume_20d", "amihud_illiquidity_20d"],
-    "Short Interest": ["short_volume_ratio_5d", "short_volume_ratio_20d",
-                       "short_volume_change_20d"],
-    "Options IV": ["options_iv_atm_30d", "options_iv_skew_25d",
-                   "options_iv_term_slope", "options_iv_put_call_oi"],
-    "Estimates": ["eps_revision_pct_30d", "eps_revision_pct_90d",
-                  "revenue_revision_pct_30d", "eps_revisions_net_7d",
-                  "eps_revisions_net_30d"],
-}
+# Groups derived from the ORM model (FEATURE_COLUMNS) by name prefix – every
+# feature is included ("Other" as fallback), so new columns are picked up
+# automatically. Group names match FEATURE_GROUP_THRESHOLDS below.
+FEATURE_GROUPS = group_features(FEATURE_COLUMNS)
 
 # Sparse signal groups have structurally low coverage (not every ticker
 # is in ARK ETFs, has insider trades, politician activity, or 13F filings).
@@ -197,7 +193,7 @@ for group, cols in FEATURE_GROUPS.items():
     min_pct = FEATURE_GROUP_THRESHOLDS.get(group, FEATURE_GROUP_DEFAULT_THRESHOLD)
     ok = fill_pct >= min_pct
     sparse = " (sparse)" if group in FEATURE_GROUP_THRESHOLDS else ""
-    print(f"  {group:>14}:  {fill_pct:5.1f}%  (min: {min_pct:.0f}%{sparse})  {'✅' if ok else '❌'}")
+    print(f"  {group:>14}:  {fill_pct:5.1f}%  (min: {min_pct:.0f}%{sparse})  {_ok(ok)}")
     results.append(ok)
 
 # %% ── Check 4: Earnings Cycle Coverage ────────────────────────────────
@@ -219,7 +215,8 @@ earnings_df = pd.read_sql(
 )
 n_quarters = len(earnings_df)
 ok_quarters = n_quarters >= THRESHOLDS["min_earnings_quarters"]
-print(f"  Distinct earnings quarters: {n_quarters}  (min: {THRESHOLDS['min_earnings_quarters']})  {'✅' if ok_quarters else '❌'}")
+print(f"  Distinct earnings quarters: {n_quarters}  "
+      f"(min: {THRESHOLDS['min_earnings_quarters']})  {_ok(ok_quarters)}")
 if not earnings_df.empty:
     for _, row in earnings_df.iterrows():
         print(f"    → Q{int(row['qtr'])} {int(row['yr'])}")
@@ -243,7 +240,8 @@ if not spy_prices.empty:
 
     ok_regime = ret_std >= THRESHOLDS["min_regime_diversity"]
 
-    print(f"  Monthly return std:   {ret_std:.4f}  (min: {THRESHOLDS['min_regime_diversity']})  {'✅' if ok_regime else '❌'}")
+    print(f"  Monthly return std:   {ret_std:.4f}  "
+          f"(min: {THRESHOLDS['min_regime_diversity']})  {_ok(ok_regime)}")
     print(f"  Monthly return range: {ret_range:.4f}")
     print(f"  Positive months: {n_positive}  |  Negative months: {n_negative}")
 
@@ -268,7 +266,8 @@ print("─" * 72)
 
 n_reports = len(reports_df)
 ok_reports = n_reports >= THRESHOLDS["min_analysis_reports"]
-print(f"  Analysis reports available: {n_reports}  (min: {THRESHOLDS['min_analysis_reports']})  {'✅' if ok_reports else '❌'}")
+print(f"  Analysis reports available: {n_reports}  "
+      f"(min: {THRESHOLDS['min_analysis_reports']})  {_ok(ok_reports)}")
 
 ok_stability = False
 if n_reports >= 2:
@@ -285,12 +284,13 @@ if n_reports >= 2:
             common = set(first_top10.keys()) & set(last_top10.keys())
             overlap_pct = 100.0 * len(common) / 10
 
-            print(f"  Top-10 overlap (first vs last report): {len(common)}/10 ({overlap_pct:.0f}%)")
+            print(f"  Top-10 overlap (first vs last report): "
+                  f"{len(common)}/10 ({overlap_pct:.0f}%)")
             if common:
                 print(f"  Stable features: {', '.join(sorted(common))}")
 
             ok_stability = overlap_pct >= 50.0
-            print(f"  Ranking stability: {'✅' if ok_stability else '❌'} (min 50% overlap)")
+            print(f"  Ranking stability: {_ok(ok_stability)} (min 50% overlap)")
         else:
             print("  ⚠️  Consensus-Daten nicht verfügbar in Reports")
     except Exception as e:
@@ -313,14 +313,16 @@ if "return_20d" in df.columns:
     ml_rows = df["return_20d"].notna().sum()
     # For train/test split 70/30: need at least 5000 for meaningful training
     ok_ml = ml_rows >= 30_000
-    print(f"  Rows with return_20d (ML target): {ml_rows:,}  (min: 30,000)  {'✅' if ok_ml else '❌'}")
+    print(f"  Rows with return_20d (ML target): {ml_rows:,}  (min: 30,000)  "
+          f"{_ok(ok_ml)}")
 
     # Check chronological split quality
     dates_with_target = df[df["return_20d"].notna()]["snapshot_date"].nunique()
     train_dates = int(dates_with_target * 0.7)
     test_dates = dates_with_target - train_dates
     print(f"  Train dates: {train_dates}  |  Test dates: {test_dates}")
-    print(f"  Train/test date ratio: {train_dates}/{test_dates} = {train_dates/max(test_dates,1):.1f}")
+    print(f"  Train/test date ratio: {train_dates}/{test_dates} = "
+          f"{train_dates / max(test_dates, 1):.1f}")
 
     ok_test = test_dates >= 20
     print(f"  Test set sufficient (≥20 dates): {'✅' if ok_test else '❌'}")
@@ -341,9 +343,13 @@ print("─" * 72)
 # less history but enough for rolling averages (5d, 20d).
 SOURCE_MATURITY = {
     "Options IV": {
-        "query": "SELECT COUNT(DISTINCT snapshot_date) FROM signals.options_iv_snapshot",
+        "query": (
+            "SELECT COUNT(DISTINCT snapshot_date) FROM signals.options_iv_snapshot"
+        ),
         "min_days": 60,
-        "note": "Needed for stable IV baselines; IV-Rank needs 252d (tracked separately)",
+        "note": (
+            "Needed for stable IV baselines; IV-Rank needs 252d (tracked separately)"
+        ),
     },
     "Short Volume": {
         "query": "SELECT COUNT(DISTINCT trade_date) FROM signals.short_volume",
@@ -356,7 +362,10 @@ SOURCE_MATURITY = {
         "note": "Revision momentum needs 90d; 60d minimum for 30d revision %",
     },
     "FRED Macro": {
-        "query": "SELECT COUNT(DISTINCT obs_date) FROM signals.macro_series WHERE obs_date >= CURRENT_DATE - INTERVAL '6 months'",
+        "query": (
+            "SELECT COUNT(DISTINCT obs_date) FROM signals.macro_series "
+            "WHERE obs_date >= CURRENT_DATE - INTERVAL '6 months'"
+        ),
         "min_days": 60,
         "note": "Macro features are market-wide; need regime variation",
     },
@@ -391,8 +400,11 @@ try:
         engine,
     ).iloc[0, 0]
     iv_rank_ready = iv_days >= 252
-    print(f"\n  IV-Rank (252d):     {iv_days:>4} days  (need: 252)  {'✅' if iv_rank_ready else '⏳ ' + str(252 - iv_days) + ' days remaining'}")
-    print(f"                     ↳ Informational only – not blocking Sprint 10")
+    iv_status = (
+        "✅" if iv_rank_ready else f"⏳ {252 - iv_days} days remaining"
+    )
+    print(f"\n  IV-Rank (252d):     {iv_days:>4} days  (need: 252)  {iv_status}")
+    print("                     ↳ Informational only – not blocking Sprint 10")
 except Exception:
     pass
 

@@ -28,6 +28,8 @@ def get_engine():
             max_overflow=10,
             pool_pre_ping=True,  # Verify connections before use
             echo=False,  # Set True for SQL debugging
+            # Fail fast instead of hanging health checks / jobs on network issues
+            connect_args={"connect_timeout": 10},
         )
     return _engine
 

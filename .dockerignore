@@ -39,6 +39,9 @@ docs/
 # Docker
 infra/docker-compose*.yml
 
+# Archived one-off scripts (debug/diagnose, not needed in the image)
+scripts/archive/
+
 # OS
 Thumbs.db
 .DS_Store

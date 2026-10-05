@@ -29,7 +29,8 @@ class IndexMembership(Base):
 
     # Membership definition
     ticker: Mapped[str] = mapped_column(String(20), nullable=False)
-    index_name: Mapped[str] = mapped_column(String(20), nullable=False)  # 'sp500', 'nasdaq100'
+    # 'sp500', 'nasdaq100'
+    index_name: Mapped[str] = mapped_column(String(20), nullable=False)
 
     # Validity interval [valid_from, valid_to)
     # valid_to = NULL means currently active member
@@ -37,12 +38,18 @@ class IndexMembership(Base):
     valid_to: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     # Change metadata
-    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)  # 'S&P 500 constituent change'
-    replaced_by: Mapped[str | None] = mapped_column(String(20), nullable=True)  # Successor ticker on removal
-    source: Mapped[str] = mapped_column(String(50), nullable=False)  # 'wikipedia', 'github_csv', 'manual'
+    # e.g. 'S&P 500 constituent change'
+    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Successor ticker on removal
+    replaced_by: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # 'wikipedia', 'github_csv', 'manual'
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("ticker", "index_name", "valid_from", name="uq_membership_ticker_index_from"),
+        UniqueConstraint(
+            "ticker", "index_name", "valid_from",
+            name="uq_membership_ticker_index_from",
+        ),
         Index("ix_membership_lookup", "index_name", "valid_from", "valid_to"),
         Index("ix_membership_ticker", "ticker"),
     )

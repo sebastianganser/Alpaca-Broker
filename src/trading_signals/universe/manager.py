@@ -142,7 +142,8 @@ class UniverseManager:
         """Return tickers that were active index members on target_date.
 
         Queries the index_membership table for intervals that contain
-        target_date: valid_from <= target_date AND (valid_to IS NULL OR valid_to > target_date)
+        target_date: valid_from <= target_date AND
+        (valid_to IS NULL OR valid_to > target_date)
 
         If no membership data exists at all, falls back to current is_active=True
         to avoid breaking the pipeline before historical data is seeded.
@@ -157,6 +158,7 @@ class UniverseManager:
             Sorted list of ticker symbols.
         """
         from sqlalchemy import and_, func, or_
+
         from trading_signals.db.models.index_membership import IndexMembership
 
         # Check if we have any membership data at all

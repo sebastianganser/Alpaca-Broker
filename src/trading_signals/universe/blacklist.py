@@ -97,12 +97,16 @@ def add_to_blacklist(
     )
     result = session.execute(stmt)
     if result.rowcount > 0:
-        logger.info(f"[blacklist] Added {ticker} (quote_type={quote_type}, source={source})")
+        logger.info(
+            f"[blacklist] Added {ticker} (quote_type={quote_type}, source={source})"
+        )
         return True
     return False
 
 
-def filter_blacklisted(session: Session, tickers: set[str]) -> tuple[set[str], set[str]]:
+def filter_blacklisted(
+    session: Session, tickers: set[str]
+) -> tuple[set[str], set[str]]:
     """Split tickers into allowed and blacklisted sets.
 
     Returns:

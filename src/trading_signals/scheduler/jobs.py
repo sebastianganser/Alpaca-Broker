@@ -1,28 +1,95 @@
 """Scheduler job definitions.
 
-Each job is a simple function that instantiates a collector and runs it.
-Jobs are registered with APScheduler using CronTrigger.
+Each job is a simple function that instantiates a collector (or derived
+computer) and runs it. Jobs are registered with APScheduler in
+:mod:`trading_signals.scheduler.setup`.
+
+* Collector jobs (``BaseCollector`` subclasses) write their own
+  ``collection_log`` entry and alert themselves.
+* All other jobs run through :func:`~trading_signals.scheduler.runner.run_logged_job`
+  (collection_log with ``job_status`` constants, log capture, alerting).
+* Feature pipeline, target backfill and context pack run sequentially in the
+  :func:`run_nightly_chain` orchestrator after all feature inputs are in.
 """
 
+from __future__ import annotations
+
+import time as _time
+from collections.abc import Callable
+from datetime import date, datetime, time, timedelta
+
 from trading_signals.collectors.prices_alpaca import PriceCollectorAlpaca
+from trading_signals.db.base import now_local
+from trading_signals.scheduler.registry import NIGHTLY_UPSTREAM, get_collector_name
+from trading_signals.scheduler.runner import (
+    JobOutcome,
+    mark_stale_runs,
+    run_logged_job,
+    write_log,
+)
+from trading_signals.utils import job_status
 from trading_signals.utils.logging import get_logger
+from trading_signals.utils.retention import DATA_RETENTION_QUARTERS, quarter_cutoff
 
 logger = get_logger(__name__)
+
+__all__ = ["DATA_RETENTION_QUARTERS", "quarter_cutoff"]  # re-exported for scripts/tests
+
+
+# ── Collector helper ─────────────────────────────────────────────────────
+
+
+def _run_collector(
+    job_id: str,
+    factory: Callable[[], object],
+    *,
+    skip_on_value_error: bool = False,
+    post: Callable[[], None] | None = None,
+    post_statuses: tuple[str, ...] = (job_status.SUCCESS,),
+):
+    """Run a BaseCollector (which logs + alerts itself) and an optional post step.
+
+    Args:
+        job_id: Scheduler job id (for logging).
+        factory: Creates the collector instance.
+        skip_on_value_error: Treat ``ValueError`` from the constructor (missing
+            API key) as SKIPPED instead of failing.
+        post: Follow-up computation run only if the collector status is in
+            ``post_statuses``.
+    """
+    logger.info(f"Scheduler triggered: {job_id}")
+    try:
+        collector = factory()
+    except ValueError as e:
+        if not skip_on_value_error:
+            raise
+        logger.warning(f"{job_id} skipped: {e}")
+        write_log(
+            get_collector_name(job_id),
+            now_local(),
+            JobOutcome(status=job_status.SKIPPED, notes=str(e)),
+        )
+        return None
+
+    log = collector.run()
+    status = job_status.normalize(getattr(log, "status", None))
+    logger.info(
+        f"{job_id} finished: status={status}, "
+        f"written={getattr(log, 'records_written', None)}"
+    )
+    if post is not None and status in post_statuses:
+        post()
+    return log
 
 
 def run_price_collector() -> None:
     """Daily price collection job.
 
-    Scheduled for 22:15 Europe/Berlin (after US market close at 22:00 MEZ).
+    Scheduled for 22:30 Europe/Berlin (after US market close at 22:00 MEZ,
+    plus buffer for the SIP 15-minute rule / session-completion check).
     Uses Alpaca Market Data API (replaced yfinance in Sprint 1b).
     """
-    logger.info("Scheduler triggered: price_collector_job")
-    collector = PriceCollectorAlpaca(lookback_days=10)
-    log = collector.run()
-    logger.info(
-        f"price_collector_job finished: status={log.status}, "
-        f"written={log.records_written}"
-    )
+    _run_collector("price_collector", lambda: PriceCollectorAlpaca(lookback_days=10))
 
 
 def run_ark_holdings_collector() -> None:
@@ -32,25 +99,24 @@ def run_ark_holdings_collector() -> None:
     arkfunds.io needs time to aggregate).
     """
     from trading_signals.collectors.ark_holdings import ARKHoldingsCollector
-    from trading_signals.db.session import get_session
-    from trading_signals.derived.ark_deltas import ARKDeltaComputer
 
-    logger.info("Scheduler triggered: ark_holdings_job")
+    def _deltas() -> None:
+        from trading_signals.db.session import get_session
+        from trading_signals.derived.ark_deltas import ARKDeltaComputer
 
-    # Step 1: Collect holdings
-    collector = ARKHoldingsCollector()
-    log = collector.run()
-    logger.info(
-        f"ark_holdings_job collect: status={log.status}, "
-        f"written={log.records_written}"
+        def _body() -> int:
+            with get_session() as session:
+                return ARKDeltaComputer(session).compute_all()
+
+        run_logged_job("ark_holdings", "ark_deltas", _body)
+
+    # Deltas after SUCCESS or PARTIAL (deltas are computed per ETF/date)
+    _run_collector(
+        "ark_holdings",
+        ARKHoldingsCollector,
+        post=_deltas,
+        post_statuses=(job_status.SUCCESS, job_status.PARTIAL),
     )
-
-    # Step 2: Compute deltas (only if collection succeeded)
-    if log.status == "success":
-        with get_session() as session:
-            computer = ARKDeltaComputer(session)
-            deltas = computer.compute_all()
-            logger.info(f"ark_holdings_job deltas: {deltas} records computed")
 
 
 def run_form4_collector() -> None:
@@ -60,27 +126,23 @@ def run_form4_collector() -> None:
     SEC filings are available ~2 business days after transactions.
     """
     from trading_signals.collectors.form4_collector import Form4Collector
-    from trading_signals.db.session import get_session
-    from trading_signals.derived.insider_clusters import InsiderClusterComputer
 
-    logger.info("Scheduler triggered: form4_collector_job")
+    def _clusters() -> None:
+        from trading_signals.db.session import get_session
+        from trading_signals.derived.insider_clusters import InsiderClusterComputer
 
-    # Step 1: Collect Form 4 filings
-    collector = Form4Collector(lookback_days=7)
-    log = collector.run()
-    logger.info(
-        f"form4_collector_job collect: status={log.status}, "
-        f"written={log.records_written}"
+        def _body() -> int:
+            with get_session() as session:
+                return InsiderClusterComputer(session).compute_new()
+
+        run_logged_job("form4_collector", "insider_clusters", _body)
+
+    _run_collector(
+        "form4_collector",
+        lambda: Form4Collector(lookback_days=7),
+        post=_clusters,
+        post_statuses=(job_status.SUCCESS, job_status.PARTIAL),
     )
-
-    # Step 2: Compute insider clusters (only if collection succeeded)
-    if log.status == "success":
-        with get_session() as session:
-            computer = InsiderClusterComputer(session)
-            clusters = computer.compute_new()
-            logger.info(
-                f"form4_collector_job clusters: {clusters} records computed"
-            )
 
 
 def run_form13f_collector() -> None:
@@ -91,14 +153,7 @@ def run_form13f_collector() -> None:
     """
     from trading_signals.collectors.form13f_collector import Form13FCollector
 
-    logger.info("Scheduler triggered: form13f_collector_job")
-
-    collector = Form13FCollector(lookback_days=120)
-    log = collector.run()
-    logger.info(
-        f"form13f_collector_job finished: status={log.status}, "
-        f"written={log.records_written}"
-    )
+    _run_collector("form13f_collector", lambda: Form13FCollector(lookback_days=120))
 
 
 def run_politician_trades_collector() -> None:
@@ -111,13 +166,9 @@ def run_politician_trades_collector() -> None:
         PoliticianTradesCollector,
     )
 
-    logger.info("Scheduler triggered: politician_trades_collector_job")
-
-    collector = PoliticianTradesCollector(lookback_days=365)
-    log = collector.run()
-    logger.info(
-        f"politician_trades_collector_job finished: status={log.status}, "
-        f"written={log.records_written}"
+    _run_collector(
+        "politician_trades_collector",
+        lambda: PoliticianTradesCollector(lookback_days=365),
     )
 
 
@@ -131,14 +182,7 @@ def run_fundamentals_collector() -> None:
         FundamentalsCollectorYF,
     )
 
-    logger.info("Scheduler triggered: fundamentals_collector_job")
-
-    collector = FundamentalsCollectorYF()
-    log = collector.run()
-    logger.info(
-        f"fundamentals_collector_job finished: status={log.status}, "
-        f"written={log.records_written}"
-    )
+    _run_collector("fundamentals_collector", FundamentalsCollectorYF)
 
 
 def run_analyst_ratings_collector() -> None:
@@ -151,13 +195,8 @@ def run_analyst_ratings_collector() -> None:
         AnalystRatingsCollector,
     )
 
-    logger.info("Scheduler triggered: analyst_ratings_collector_job")
-
-    collector = AnalystRatingsCollector(lookback_days=30)
-    log = collector.run()
-    logger.info(
-        f"analyst_ratings_collector_job finished: status={log.status}, "
-        f"written={log.records_written}"
+    _run_collector(
+        "analyst_ratings_collector", lambda: AnalystRatingsCollector(lookback_days=30)
     )
 
 
@@ -169,20 +208,14 @@ def run_estimates_collector() -> None:
 
     CRITICAL: Yahoo provides a rolling 90-day window for EPS revisions.
     Every day this collector doesn't run, one day of irrecoverable
-    revision history is permanently lost.
+    revision history is permanently lost. (Startup catch-up re-runs it
+    if the container was down at 01:30.)
     """
     from trading_signals.collectors.estimates_collector import (
         EstimatesCollector,
     )
 
-    logger.info("Scheduler triggered: estimates_collector_job")
-
-    collector = EstimatesCollector()
-    log = collector.run()
-    logger.info(
-        f"estimates_collector_job finished: status={log.status}, "
-        f"written={log.records_written}"
-    )
+    _run_collector("estimates_collector", EstimatesCollector)
 
 
 def run_earnings_calendar_collector() -> None:
@@ -195,371 +228,10 @@ def run_earnings_calendar_collector() -> None:
         EarningsCalendarCollector,
     )
 
-    logger.info("Scheduler triggered: earnings_calendar_collector_job")
-
-    collector = EarningsCalendarCollector(earnings_limit=4)
-    log = collector.run()
-    logger.info(
-        f"earnings_calendar_collector_job finished: status={log.status}, "
-        f"written={log.records_written}"
+    _run_collector(
+        "earnings_calendar_collector",
+        lambda: EarningsCalendarCollector(earnings_limit=4),
     )
-
-
-def run_technical_indicators_computer() -> None:
-    """Daily technical indicators computation.
-
-    Scheduled for 22:30 Europe/Berlin (after Price Collector at 22:15).
-    Computes SMA, EMA, RSI, MACD, Bollinger, ATR, Volume SMA,
-    and Relative Strength vs SPY from prices_daily data.
-
-    Uses catch-up logic: automatically detects and fills any gaps
-    between the latest computed indicator date and the latest price
-    date. This handles missed runs, container restarts, and weekends.
-    """
-    from datetime import datetime
-
-    from trading_signals.utils.logging import CollectorLogCapture
-    from trading_signals.db.models.collection_log import CollectionLog
-    from trading_signals.db.session import get_session
-    from trading_signals.derived.technical_indicators import (
-        TechnicalIndicatorsComputer,
-    )
-
-    collector_name = "technical_indicators"
-    logger.info(f"Scheduler triggered: {collector_name}_job")
-
-    started_at = datetime.now()
-
-    with CollectorLogCapture(collector_name) as log_capture:
-        try:
-            with get_session() as session:
-                computer = TechnicalIndicatorsComputer(session)
-                written = computer.compute_catchup()
-
-                # Write collection_log entry
-                log_entry = CollectionLog(
-                    collector_name=collector_name,
-                    started_at=started_at,
-                    finished_at=datetime.now(),
-                    status="success",
-                    records_fetched=written,
-                    records_written=written,
-                    gaps_detected=0,
-                    log_lines=log_capture.get_lines(),
-                )
-                session.add(log_entry)
-                session.commit()
-
-            logger.info(
-                f"{collector_name}_job finished: "
-                f"{written} records computed"
-            )
-        except Exception as e:
-            logger.error(f"{collector_name}_job FAILED: {e}")
-            try:
-                with get_session() as session:
-                    log_entry = CollectionLog(
-                        collector_name=collector_name,
-                        started_at=started_at,
-                        finished_at=datetime.now(),
-                        status="error",
-                        records_fetched=0,
-                        records_written=0,
-                        gaps_detected=0,
-                        notes=str(e)[:2000],
-                        log_lines=log_capture.get_lines(),
-                    )
-                    session.add(log_entry)
-                    session.commit()
-            except Exception:
-                logger.error(f"{collector_name}_job: Failed to write error log")
-
-
-def run_index_sync() -> None:
-    """Monthly index membership sync + sector enrichment.
-
-    Scheduled for 1st of each month at 03:00 Europe/Berlin.
-    Updates S&P 500 / Nasdaq 100 membership from Wikipedia,
-    validates new tickers against Alpaca, adds them to the
-    universe, and enriches any tickers missing sector data.
-    """
-    from datetime import datetime
-
-    from sqlalchemy import select, update
-
-    from trading_signals.collectors.yfinance_client import YFinanceClient
-    from trading_signals.db.models.collection_log import CollectionLog
-    from trading_signals.db.models.universe import Universe
-    from trading_signals.db.session import get_session
-    from trading_signals.universe.index_sync import IndexSyncer
-    from trading_signals.utils.logging import CollectorLogCapture
-
-    collector_name = "index_sync"
-    logger.info(f"Scheduler triggered: {collector_name}_job")
-
-    started_at = datetime.now()
-    records_written = 0
-
-    with CollectorLogCapture(collector_name) as log_capture:
-        try:
-            # Step 1: Sync index membership
-            with get_session() as session:
-                syncer = IndexSyncer(session)
-                result = syncer.sync()
-                session.commit()
-                records_written += result.newly_added + result.membership_updated
-                logger.info(
-                    f"{collector_name}_job finished: "
-                    f"S&P 500={result.sp500_count}, Nasdaq 100={result.nasdaq100_count}, "
-                    f"added={result.newly_added}, updated={result.membership_updated}"
-                )
-                if result.new_tickers:
-                    logger.info(
-                        f"{collector_name}_job new tickers: {', '.join(result.new_tickers)}"
-                    )
-
-            # Step 2: Enrich tickers missing sector/industry data
-            with get_session() as session:
-                stmt = (
-                    select(Universe.ticker)
-                    .where(Universe.is_active.is_(True))
-                    .where(
-                        (Universe.sector.is_(None)) | (Universe.sector == "")
-                    )
-                    .order_by(Universe.ticker)
-                )
-                missing = [row[0] for row in session.execute(stmt).all()]
-
-            if missing:
-                logger.info(
-                    f"{collector_name}_job: enriching {len(missing)} tickers "
-                    f"with sector/industry from yfinance"
-                )
-                client = YFinanceClient(
-                    batch_size=50,
-                    delay_between_tickers=0.5,
-                    delay_between_batches=3.0,
-                )
-                results = client.fetch_sector_info(missing)
-
-                enriched = 0
-                deactivated_etfs: list[str] = []
-
-                with get_session() as session:
-                    from trading_signals.universe.blacklist import add_to_blacklist
-
-                    for record in results:
-                        ticker = record["ticker"]
-                        quote_type = record.get("quote_type", "")
-
-                        # Learned ETF filter: blacklist + deactivate non-equity tickers
-                        if quote_type and quote_type.upper() != "EQUITY":
-                            add_to_blacklist(
-                                session, ticker,
-                                quote_type=quote_type,
-                                source="index_sync",
-                            )
-                            session.execute(
-                                update(Universe)
-                                .where(Universe.ticker == ticker)
-                                .values(is_active=False)
-                            )
-                            deactivated_etfs.append(ticker)
-                            logger.warning(
-                                f"{collector_name}_job: blacklisted + deactivated {ticker}: "
-                                f"quoteType={quote_type}"
-                            )
-                            continue
-
-                        session.execute(
-                            update(Universe)
-                            .where(Universe.ticker == ticker)
-                            .values(
-                                sector=record.get("sector"),
-                                industry=record.get("industry"),
-                            )
-                        )
-                        enriched += 1
-                    records_written += enriched
-
-                if deactivated_etfs:
-                    logger.info(
-                        f"{collector_name}_job: blacklisted {len(deactivated_etfs)} "
-                        f"non-equity tickers: {deactivated_etfs}"
-                    )
-
-                logger.info(
-                    f"{collector_name}_job sector enrichment: "
-                    f"{enriched}/{len(missing)} tickers enriched"
-                )
-            else:
-                logger.info(f"{collector_name}_job: all tickers have sector data")
-
-            # Write success log entry
-            with get_session() as session:
-                log_entry = CollectionLog(
-                    collector_name=collector_name,
-                    started_at=started_at,
-                    finished_at=datetime.now(),
-                    status="success",
-                    records_fetched=records_written,
-                    records_written=records_written,
-                    gaps_detected=0,
-                    log_lines=log_capture.get_lines(),
-                )
-                session.add(log_entry)
-                session.commit()
-
-            logger.info(
-                f"{collector_name}_job completed: "
-                f"{records_written} records written"
-            )
-        except Exception as e:
-            logger.error(f"{collector_name}_job FAILED: {e}")
-            try:
-                with get_session() as session:
-                    log_entry = CollectionLog(
-                        collector_name=collector_name,
-                        started_at=started_at,
-                        finished_at=datetime.now(),
-                        status="failed",
-                        records_fetched=0,
-                        records_written=0,
-                        gaps_detected=0,
-                        notes=str(e)[:2000],
-                        log_lines=log_capture.get_lines(),
-                    )
-                    session.add(log_entry)
-                    session.commit()
-            except Exception:
-                logger.error(f"{collector_name}_job: Failed to write error log")
-
-
-def run_feature_pipeline() -> None:
-    """Daily feature pipeline – computes feature snapshots for all tickers.
-
-    Scheduled for 02:00 Europe/Berlin (night slot, after all collectors).
-    Aggregates all raw + derived signals into feature_snapshots table.
-    """
-    from datetime import datetime, date, timedelta
-
-    from trading_signals.utils.logging import CollectorLogCapture
-    from trading_signals.db.models.collection_log import CollectionLog
-    from trading_signals.db.session import get_session
-    from trading_signals.derived.feature_pipeline import FeaturePipeline
-
-    collector_name = "feature_pipeline"
-    logger.info(f"Scheduler triggered: {collector_name}_job")
-
-    started_at = datetime.now()
-    # Default: compute for yesterday (latest complete trading day)
-    target_date = date.today() - timedelta(days=1)
-
-    with CollectorLogCapture(collector_name) as log_capture:
-        try:
-            with get_session() as session:
-                pipeline = FeaturePipeline(session)
-                written = pipeline.compute_daily(target_date)
-
-                log_entry = CollectionLog(
-                    collector_name=collector_name,
-                    started_at=started_at,
-                    finished_at=datetime.now(),
-                    status="success",
-                    records_fetched=written,
-                    records_written=written,
-                    gaps_detected=0,
-                    log_lines=log_capture.get_lines(),
-                )
-                session.add(log_entry)
-                session.commit()
-
-            logger.info(
-                f"{collector_name}_job finished: "
-                f"{written} snapshots computed for {target_date}"
-            )
-        except Exception as e:
-            logger.error(f"{collector_name}_job FAILED: {e}")
-            try:
-                with get_session() as session:
-                    log_entry = CollectionLog(
-                        collector_name=collector_name,
-                        started_at=started_at,
-                        finished_at=datetime.now(),
-                        status="error",
-                        records_fetched=0,
-                        records_written=0,
-                        gaps_detected=0,
-                        notes=str(e)[:2000],
-                        log_lines=log_capture.get_lines(),
-                    )
-                    session.add(log_entry)
-                    session.commit()
-            except Exception:
-                logger.error(f"{collector_name}_job: Failed to write error log")
-
-
-def run_target_backfill() -> None:
-    """Daily target backfill – fills forward returns retrospectively.
-
-    Scheduled for 02:15 Europe/Berlin (after feature pipeline).
-    Computes return_1d/5d/20d/60d for feature snapshots where
-    sufficient future price data now exists.
-    """
-    from datetime import datetime
-
-    from trading_signals.utils.logging import CollectorLogCapture
-    from trading_signals.db.models.collection_log import CollectionLog
-    from trading_signals.db.session import get_session
-    from trading_signals.derived.target_backfill import TargetBackfillComputer
-
-    collector_name = "target_backfill"
-    logger.info(f"Scheduler triggered: {collector_name}_job")
-
-    started_at = datetime.now()
-
-    with CollectorLogCapture(collector_name) as log_capture:
-        try:
-            with get_session() as session:
-                computer = TargetBackfillComputer(session)
-                written = computer.backfill_all()
-
-                log_entry = CollectionLog(
-                    collector_name=collector_name,
-                    started_at=started_at,
-                    finished_at=datetime.now(),
-                    status="success",
-                    records_fetched=written,
-                    records_written=written,
-                    gaps_detected=0,
-                    log_lines=log_capture.get_lines(),
-                )
-                session.add(log_entry)
-                session.commit()
-
-            logger.info(
-                f"{collector_name}_job finished: "
-                f"{written} return values backfilled"
-            )
-        except Exception as e:
-            logger.error(f"{collector_name}_job FAILED: {e}")
-            try:
-                with get_session() as session:
-                    log_entry = CollectionLog(
-                        collector_name=collector_name,
-                        started_at=started_at,
-                        finished_at=datetime.now(),
-                        status="error",
-                        records_fetched=0,
-                        records_written=0,
-                        gaps_detected=0,
-                        notes=str(e)[:2000],
-                        log_lines=log_capture.get_lines(),
-                    )
-                    session.add(log_entry)
-                    session.commit()
-            except Exception:
-                logger.error(f"{collector_name}_job: Failed to write error log")
 
 
 def run_news_collector() -> None:
@@ -570,14 +242,98 @@ def run_news_collector() -> None:
     """
     from trading_signals.collectors.news_collector import NewsCollectorAlpaca
 
-    logger.info("Scheduler triggered: news_collector_job")
+    _run_collector("news_collector", lambda: NewsCollectorAlpaca(lookback_hours=36))
 
-    collector = NewsCollectorAlpaca(lookback_hours=36)
-    log = collector.run()
-    logger.info(
-        f"news_collector_job finished: status={log.status}, "
-        f"written={log.records_written}"
+
+def run_fred_collector() -> None:
+    """Daily FRED macro indicator collection.
+
+    Scheduled for 04:15 Europe/Berlin (FRED updates ~22:00 ET = 04:00 CET),
+    right before the nightly chain.
+    Fetches 6 macro series: VIX, Treasury yields, HY spread,
+    Dollar index, Breakeven Inflation.
+    Very lightweight: 6 API calls, ~2 seconds total.
+    """
+    from trading_signals.collectors.fred_collector import FredCollector
+
+    # FRED_API_KEY not configured → ValueError → SKIPPED
+    _run_collector("fred_collector", FredCollector, skip_on_value_error=True)
+
+
+# ── Options IV (Sprint 9.5b D3) ─────────────────────────────────────────
+
+
+def run_options_iv_collector() -> None:
+    """Daily options IV snapshot collection.
+
+    Scheduled for 23:15 Europe/Berlin (shortly after the US close, so the
+    snapshot reflects the closing option chain of the session). The
+    collector labels snapshots with ``last_completed_session()``.
+    Fetches ATM implied volatility, skew, term structure, and OI
+    for all universe tickers.
+
+    Rate-limited: ~750 tickers ≈ 20 minutes.
+    IV-Rank needs ~1 year of daily data to be meaningful.
+    """
+    from trading_signals.collectors.options_iv_collector import OptionsIVCollector
+
+    _run_collector("options_iv_collector", OptionsIVCollector, skip_on_value_error=True)
+
+
+def run_short_interest_collector() -> None:
+    """Daily short interest/volume collection via Massive API.
+
+    Scheduled for 00:15 Europe/Berlin (FINRA short volume of the session is
+    published ~18:00 ET = 00:00 CET). Rate-limited to 5 req/min — expect
+    ~2.5 hours for ~750 tickers, i.e. done well before the nightly chain.
+    """
+    from trading_signals.collectors.short_interest_collector import (
+        ShortInterestCollector,
     )
+
+    _run_collector("short_interest_collector", ShortInterestCollector)
+
+
+# ── Derived computations ────────────────────────────────────────────────
+
+
+def _technical_indicators_body() -> int:
+    from trading_signals.db.session import get_session
+    from trading_signals.derived.technical_indicators import (
+        TechnicalIndicatorsComputer,
+    )
+
+    with get_session() as session:
+        return TechnicalIndicatorsComputer(session).compute_catchup()
+
+
+def run_technical_indicators_computer() -> None:
+    """Daily technical indicators computation.
+
+    Scheduled for 22:50 Europe/Berlin (after Price Collector at 22:30) and
+    re-run (cheap, incremental) as first step of the nightly chain.
+    Computes SMA, EMA, RSI, MACD, Bollinger, ATR, Volume SMA,
+    and Relative Strength vs SPY from prices_daily data.
+
+    Uses catch-up logic: automatically detects and fills any gaps
+    between the latest computed indicator date and the latest price
+    date. This handles missed runs, container restarts, and weekends.
+    """
+    run_logged_job(
+        "technical_indicators_computer",
+        "technical_indicators",
+        _technical_indicators_body,
+    )
+
+
+def _sentiment_body() -> int:
+    from trading_signals.db.session import get_session
+    from trading_signals.derived.sentiment_computer import SentimentComputer
+    from trading_signals.derived.sentiment_scorer import FinBERTScorer
+
+    scorer = FinBERTScorer(batch_size=32)
+    with get_session() as session:
+        return SentimentComputer(session, scorer).compute()
 
 
 def run_sentiment_computer() -> None:
@@ -586,128 +342,310 @@ def run_sentiment_computer() -> None:
     Scheduled for 00:30 Europe/Berlin (after news collector).
     Uses FinBERT (CPU) to score all articles not yet processed.
     """
-    from datetime import datetime
+    run_logged_job("sentiment_computer", "sentiment_computer", _sentiment_body)
+
+
+def _feature_pipeline_body(target_date: date) -> JobOutcome:
+    from trading_signals.db.session import get_session
+    from trading_signals.derived.feature_pipeline import FeaturePipeline
+
+    with get_session() as session:
+        written = FeaturePipeline(session).compute_daily(target_date)
+    notes = f"session={target_date.isoformat()}"
+    if not written:
+        # 0 rows = non-trading day or no price bars for that session yet
+        return JobOutcome(
+            status=job_status.SKIPPED, records_written=0, notes=f"{notes} no rows"
+        )
+    return JobOutcome(records_written=written, notes=notes)
+
+
+def _target_backfill_body() -> int:
+    from trading_signals.db.session import get_session
+    from trading_signals.derived.target_backfill import TargetBackfillComputer
+
+    with get_session() as session:
+        return TargetBackfillComputer(session).backfill_all()
+
+
+def _context_pack_body(target_date: date) -> JobOutcome:
+    from trading_signals.db.session import get_session
+    from trading_signals.derived.context_pack_generator import ContextPackGenerator
+
+    with get_session() as session:
+        written = ContextPackGenerator(session).generate_daily(target_date)
+    return JobOutcome(
+        records_written=written or 0, notes=f"session={target_date.isoformat()}"
+    )
+
+
+def _target_session() -> date:
+    from trading_signals.utils.market_calendar import last_completed_session
+
+    return last_completed_session()
+
+
+def run_feature_pipeline() -> None:
+    """Feature pipeline – computes feature snapshots for all tickers.
+
+    Normally executed as step 2 of :func:`run_nightly_chain`; this entry
+    point is the manual trigger (Settings → Scheduler). Target date is the
+    last completed NYSE session (not ``today - 1``).
+    Aggregates all raw + derived signals into feature_snapshots table.
+    """
+    target = _target_session()
+    run_logged_job(
+        "feature_pipeline", "feature_pipeline", lambda: _feature_pipeline_body(target)
+    )
+
+
+def run_target_backfill() -> None:
+    """Target backfill – fills forward returns retrospectively.
+
+    Normally executed as step 3 of :func:`run_nightly_chain` (manual
+    trigger otherwise). Computes return_1d/5d/20d/60d for feature snapshots
+    where sufficient future price data now exists.
+    """
+    run_logged_job("target_backfill", "target_backfill", _target_backfill_body)
+
+
+def run_context_pack_generator() -> None:
+    """Context Pack generation for top candidates.
+
+    Normally executed as step 4 of :func:`run_nightly_chain` (manual
+    trigger otherwise). Generates Markdown reports with YAML frontmatter for
+    the top 5 candidates of the last completed session.
+
+    Sprint 9.5c F2.
+    """
+    target = _target_session()
+    run_logged_job(
+        "context_pack_generator",
+        "context_pack_generator",
+        lambda: _context_pack_body(target),
+    )
+
+
+# ── Nightly chain ────────────────────────────────────────────────────────
+
+#: Max time the chain waits for upstream collectors that are still running.
+CHAIN_MAX_WAIT = timedelta(hours=2)
+CHAIN_POLL_SECONDS = 300
+
+
+def _session_close(session_date: date) -> datetime:
+    """Regular NYSE close (16:00 ET) of ``session_date`` as aware datetime."""
+    from trading_signals.utils.market_calendar import NY_TZ
+
+    return datetime.combine(session_date, time(16, 0), tzinfo=NY_TZ)
+
+
+def check_upstream(target: date) -> tuple[list[str], list[str]]:
+    """Return ``(stale, running)`` upstream collector names for ``target``.
+
+    A collector is *fresh* if it has a SUCCESS/PARTIAL run that started after
+    the close of the target session; *running* if such a run is in progress.
+    """
+    from sqlalchemy import select
 
     from trading_signals.db.models.collection_log import CollectionLog
     from trading_signals.db.session import get_session
-    from trading_signals.derived.sentiment_computer import SentimentComputer
-    from trading_signals.derived.sentiment_scorer import FinBERTScorer
-    from trading_signals.utils.logging import CollectorLogCapture
 
-    collector_name = "sentiment_computer"
-    logger.info(f"Scheduler triggered: {collector_name}_job")
-
-    started_at = datetime.now()
-
-    with CollectorLogCapture(collector_name) as log_capture:
-        try:
-            scorer = FinBERTScorer(batch_size=32)
-
-            with get_session() as session:
-                computer = SentimentComputer(session, scorer)
-                written = computer.compute()
-
-                log_entry = CollectionLog(
-                    collector_name=collector_name,
-                    started_at=started_at,
-                    finished_at=datetime.now(),
-                    status="success",
-                    records_fetched=written,
-                    records_written=written,
-                    gaps_detected=0,
-                    log_lines=log_capture.get_lines(),
-                )
-                session.add(log_entry)
-                session.commit()
-
-            logger.info(
-                f"{collector_name}_job finished: "
-                f"{written} sentiment scores computed"
-            )
-        except Exception as e:
-            logger.error(f"{collector_name}_job FAILED: {e}")
-            try:
-                with get_session() as session:
-                    log_entry = CollectionLog(
-                        collector_name=collector_name,
-                        started_at=started_at,
-                        finished_at=datetime.now(),
-                        status="error",
-                        records_fetched=0,
-                        records_written=0,
-                        gaps_detected=0,
-                        notes=str(e)[:2000],
-                        log_lines=log_capture.get_lines(),
-                    )
-                    session.add(log_entry)
-                    session.commit()
-            except Exception:
-                logger.error(f"{collector_name}_job: Failed to write error log")
+    names = list(NIGHTLY_UPSTREAM)
+    with get_session() as session:
+        rows = session.execute(
+            select(CollectionLog.collector_name, CollectionLog.status)
+            .where(CollectionLog.collector_name.in_(names))
+            .where(CollectionLog.started_at >= _session_close(target))
+        ).all()
+    fresh = {
+        n
+        for n, s in rows
+        if job_status.normalize(s) in (job_status.SUCCESS, job_status.PARTIAL)
+    }
+    running = {n for n, s in rows if s is None or s == job_status.RUNNING}
+    stale = [n for n in names if n not in fresh]
+    return stale, [n for n in stale if n in running]
 
 
-def run_fred_collector() -> None:
-    """Daily FRED macro indicator collection.
+def wait_for_upstream(
+    target: date,
+    max_wait: timedelta = CHAIN_MAX_WAIT,
+    poll_seconds: float = CHAIN_POLL_SECONDS,
+    sleep: Callable[[float], None] = _time.sleep,
+    clock: Callable[[], float] = _time.monotonic,
+) -> list[str]:
+    """Wait (bounded) while stale upstream collectors are still running.
 
-    Scheduled for 04:15 Europe/Berlin (FRED updates ~22:00 ET = 04:00 CET).
-    Fetches 6 macro series: VIX, Treasury yields, HY spread,
-    Dollar index, Breakeven Inflation.
-    Very lightweight: 6 API calls, ~2 seconds total.
+    Returns the list of collector names that are still stale afterwards.
     """
-    from trading_signals.collectors.fred_collector import FredCollector
-
-    logger.info("Scheduler triggered: fred_collector_job")
-
-    try:
-        collector = FredCollector()
-        log = collector.run()
+    deadline = clock() + max_wait.total_seconds()
+    while True:
+        stale, running = check_upstream(target)
+        if not running or clock() >= deadline:
+            return stale
         logger.info(
-            f"fred_collector_job finished: status={log.status}, "
-            f"written={log.records_written}"
+            f"[nightly_chain] waiting for running upstream collectors: {running}"
         )
-    except ValueError as e:
-        # FRED_API_KEY not configured
-        logger.warning(f"fred_collector_job skipped: {e}")
+        sleep(poll_seconds)
 
 
-# ── Options IV (Sprint 9.5b D3) ─────────────────────────────────────────
+def _chain_done_for(target: date) -> bool:
+    """True if a nightly_chain run already completed successfully for ``target``."""
+    from sqlalchemy import select
 
-def run_options_iv_collector() -> None:
-    """Daily options IV snapshot collection.
+    from trading_signals.db.models.collection_log import CollectionLog
+    from trading_signals.db.session import get_session
 
-    Scheduled for 04:30 Europe/Berlin (after market close + FRED).
-    Fetches ATM implied volatility, skew, term structure, and OI
-    for all universe tickers via Alpaca Options API.
+    with get_session() as session:
+        row = session.execute(
+            select(CollectionLog.id)
+            .where(CollectionLog.collector_name == "nightly_chain")
+            .where(CollectionLog.status == job_status.SUCCESS)
+            .where(CollectionLog.notes.like(f"session={target.isoformat()}%"))
+            .limit(1)
+        ).first()
+    return row is not None
 
-    Rate-limited: ~170 req/min, ~750 tickers ≈ 5-6 minutes.
-    IV-Rank needs ~1 year of daily data to be meaningful.
-    """
-    from trading_signals.collectors.options_iv_collector import OptionsIVCollector
 
-    logger.info("Scheduler triggered: options_iv_collector_job")
-
-    try:
-        collector = OptionsIVCollector()
-        log = collector.run()
-        logger.info(
-            f"options_iv_collector_job finished: status={log.status}, "
-            f"written={log.records_written}"
+def _nightly_chain_body() -> JobOutcome:
+    target = _target_session()
+    if _chain_done_for(target):
+        logger.info(f"[nightly_chain] session {target} already processed – skipping")
+        return JobOutcome(
+            status=job_status.SKIPPED,
+            notes=f"session={target.isoformat()}; no new session",
         )
-    except ValueError as e:
-        logger.warning(f"options_iv_collector_job skipped: {e}")
 
-def run_short_interest_collector() -> None:
-    """Daily short interest/volume collection via Massive API.
-    Scheduled for 04:45 Europe/Berlin (after Options IV at 04:30).
-    Rate-limited to 5 req/min — expect ~2.5 hours for ~750 tickers.
-    """
-    from trading_signals.collectors.short_interest_collector import ShortInterestCollector
-    logger.info("Scheduler triggered: short_interest_collector_job")
-    collector = ShortInterestCollector()
-    log = collector.run()
-    logger.info(
-        f"short_interest_collector_job finished: status={log.status}, "
-        f"written={log.records_written}"
+    stale = wait_for_upstream(target)
+    if stale:
+        logger.warning(f"[nightly_chain] stale inputs for {target}: {', '.join(stale)}")
+
+    ta = run_logged_job(
+        "technical_indicators_computer",
+        "technical_indicators",
+        _technical_indicators_body,
+        alert=False,
     )
+    fp = run_logged_job(
+        "feature_pipeline",
+        "feature_pipeline",
+        lambda: _feature_pipeline_body(target),
+        alert=False,
+    )
+    tb = run_logged_job(
+        "target_backfill", "target_backfill", _target_backfill_body, alert=False
+    )
+    if fp.status in (job_status.SUCCESS, job_status.PARTIAL):
+        cp = run_logged_job(
+            "context_pack_generator",
+            "context_pack_generator",
+            lambda: _context_pack_body(target),
+            alert=False,
+        )
+    else:
+        cp = JobOutcome(
+            status=job_status.SKIPPED, notes=f"feature pipeline {fp.status}"
+        )
+
+    steps = {
+        "technical_indicators": ta,
+        "feature_pipeline": fp,
+        "target_backfill": tb,
+        "context_pack": cp,
+    }
+    if fp.status == job_status.FAILED:
+        overall = job_status.FAILED
+    elif stale or any(o.status != job_status.SUCCESS for o in steps.values()):
+        overall = job_status.PARTIAL
+    else:
+        overall = job_status.SUCCESS
+
+    notes = f"session={target.isoformat()}; " + ", ".join(
+        f"{k}={o.status}" for k, o in steps.items()
+    )
+    if stale:
+        notes += f"; stale inputs: {', '.join(stale)}"
+    failed_notes = [
+        f"{k}: {o.notes}"
+        for k, o in steps.items()
+        if o.status == job_status.FAILED and o.notes
+    ]
+    if failed_notes:
+        notes += "; " + "; ".join(failed_notes)
+    return JobOutcome(status=overall, records_written=fp.records_written, notes=notes)
+
+
+def run_nightly_chain() -> None:
+    """Nightly orchestrator: TA catch-up → features → targets → context pack.
+
+    Scheduled for 04:30 Europe/Berlin (after FRED at 04:15; options IV,
+    short interest, estimates etc. ran earlier in the night).
+    Target = last completed NYSE session; skipped if that session was already
+    processed successfully (weekends/holidays). Waits up to
+    ``CHAIN_MAX_WAIT`` for upstream collectors that are still running, then
+    proceeds and records stale inputs (status PARTIAL → alert).
+    """
+    run_logged_job("nightly_chain", "nightly_chain", _nightly_chain_body)
+
+
+# ── Index Sync ───────────────────────────────────────────────────────────
+
+
+def _index_sync_body() -> int:
+    from sqlalchemy import select
+
+    from trading_signals.db.models.universe import Universe
+    from trading_signals.db.session import get_session
+    from trading_signals.scheduler.sector_enrichment import enrich_sectors
+    from trading_signals.universe.index_sync import IndexSyncer
+
+    collector_name = "index_sync"
+    records_written = 0
+
+    # Step 1: Sync index membership
+    with get_session() as session:
+        result = IndexSyncer(session).sync()
+        session.commit()
+        records_written += result.newly_added + result.membership_updated
+        logger.info(
+            f"[{collector_name}] S&P 500={result.sp500_count}, "
+            f"Nasdaq 100={result.nasdaq100_count}, "
+            f"added={result.newly_added}, updated={result.membership_updated}"
+        )
+        if result.new_tickers:
+            logger.info(
+                f"[{collector_name}] new tickers: {', '.join(result.new_tickers)}"
+            )
+
+    # Step 2: Enrich tickers missing sector/industry data
+    with get_session() as session:
+        missing = [
+            row[0]
+            for row in session.execute(
+                select(Universe.ticker)
+                .where(Universe.is_active.is_(True))
+                .where((Universe.sector.is_(None)) | (Universe.sector == ""))
+                .order_by(Universe.ticker)
+            ).all()
+        ]
+    if missing:
+        enrichment = enrich_sectors(missing, source=collector_name)
+        records_written += enrichment.enriched
+    else:
+        logger.info(f"[{collector_name}] all tickers have sector data")
+    return records_written
+
+
+def run_index_sync() -> None:
+    """Monthly index membership sync + sector enrichment.
+
+    Scheduled for 1st of each month at 03:00 Europe/Berlin.
+    Updates S&P 500 / Nasdaq 100 membership from Wikipedia,
+    validates new tickers against Alpaca, adds them to the
+    universe, and enriches any tickers missing sector data.
+    """
+    run_logged_job("index_sync", "index_sync", _index_sync_body)
 
 
 # ── Log Retention ────────────────────────────────────────────────────────
@@ -715,82 +653,55 @@ def run_short_interest_collector() -> None:
 LOG_RETENTION_DAYS = 90
 
 
-def run_log_retention() -> None:
-    """Delete collection_logs older than LOG_RETENTION_DAYS.
-
-    Scheduled for 03:30 Europe/Berlin (daily, after all collectors).
-    Keeps the database lean by pruning old log entries.
-    """
-    from datetime import datetime, timedelta
-
+def _log_retention_body() -> JobOutcome:
     from sqlalchemy import delete
 
     from trading_signals.db.models.collection_log import CollectionLog
     from trading_signals.db.session import get_session
 
-    cutoff = datetime.now() - timedelta(days=LOG_RETENTION_DAYS)
+    stale = mark_stale_runs()
+    cutoff = now_local() - timedelta(days=LOG_RETENTION_DAYS)
+    with get_session() as session:
+        deleted = (
+            session.execute(
+                delete(CollectionLog).where(CollectionLog.started_at < cutoff)
+            ).rowcount
+            or 0
+        )
     logger.info(
-        f"Scheduler triggered: log_retention_job "
-        f"(deleting logs older than {cutoff.date()})"
+        f"[log_retention] {deleted} log entries older than {cutoff.date()} deleted"
+    )
+    return JobOutcome(
+        records_written=deleted,
+        notes=f"deleted={deleted} (older than {cutoff.date()}), stale_marked={stale}",
     )
 
-    try:
-        with get_session() as session:
-            result = session.execute(
-                delete(CollectionLog)
-                .where(CollectionLog.started_at < cutoff)
-            )
-            deleted = result.rowcount
-            session.commit()
 
-        logger.info(f"log_retention_job finished: {deleted} old log entries deleted")
-    except Exception as e:
-        logger.error(f"log_retention_job FAILED: {e}")
+def run_log_retention() -> None:
+    """Delete collection_logs older than LOG_RETENTION_DAYS.
+
+    Scheduled for 03:30 Europe/Berlin (daily).
+    Keeps the database lean by pruning old log entries and marks orphaned
+    RUNNING rows (process crash/restart) as failed.
+    """
+    run_logged_job("log_retention", "log_retention", _log_retention_body)
 
 
 # ── Data Retention ───────────────────────────────────────────────────────
 
-DATA_RETENTION_QUARTERS = 20  # 20 quarters = 5 years
 
+def retention_statements(cutoff: date) -> list[tuple[str, object]]:
+    """DELETE statements of the data-retention job, in FK-safe order.
 
-def _quarter_cutoff(retention_quarters: int) -> "date":
-    """Compute the cutoff date: start of the quarter that is
-    `retention_quarters` quarters ago.
-
-    E.g. if today is 2026-09-22 (Q3 2026) and retention=20,
-    cutoff = start of Q3 2021 = 2021-07-01.
-    Data older than this date will be deleted.
+    Date columns are chosen so that rows with garbage *event* dates are not
+    lost early: insider trades by ``filing_date`` (transaction_date contains
+    bogus years), politician trades by ``disclosure_date``, 13F by
+    ``filing_date``. News sentiment is deleted via its article (FK).
     """
-    from datetime import date
+    from sqlalchemy import delete, select
 
-    today = date.today()
-    current_q = (today.month - 1) // 3  # 0-based quarter index (0=Q1..3=Q4)
-    current_year = today.year
-
-    # Total quarters since epoch, minus retention
-    total_q = current_year * 4 + current_q - retention_quarters
-    cutoff_year = total_q // 4
-    cutoff_q = total_q % 4  # 0-based
-
-    cutoff_month = cutoff_q * 3 + 1  # 1=Jan, 4=Apr, 7=Jul, 10=Oct
-    return date(cutoff_year, cutoff_month, 1)
-
-
-def run_data_retention() -> None:
-    """Delete data older than DATA_RETENTION_QUARTERS from all tables.
-
-    Scheduled for Sunday 03:00 Europe/Berlin (weekly).
-    Excludes: earnings_calendar (historical value), collection_log
-    (has its own 90-day retention).
-
-    Uses quarter-based cutoff so boundaries align with calendar quarters.
-    """
-    from datetime import date, datetime
-
-    from sqlalchemy import delete
-
-    from trading_signals.db.models.ark import ArkDelta, ArkHolding
     from trading_signals.db.models.analysis import AnalysisReport
+    from trading_signals.db.models.ark import ARKDelta, ARKHolding
     from trading_signals.db.models.estimates import EstimatesSnapshot
     from trading_signals.db.models.features import FeatureSnapshot
     from trading_signals.db.models.form13f import Form13FHolding
@@ -806,228 +717,144 @@ def run_data_retention() -> None:
     from trading_signals.db.models.prices import PriceDaily
     from trading_signals.db.models.short_interest import ShortInterest, ShortVolume
     from trading_signals.db.models.technical_indicators import TechnicalIndicator
-    from trading_signals.db.session import get_session
 
-    cutoff = _quarter_cutoff(DATA_RETENTION_QUARTERS)
-    logger.info(
-        f"Scheduler triggered: data_retention_job "
-        f"(cutoff={cutoff}, retention={DATA_RETENTION_QUARTERS} quarters)"
-    )
-
-    # Tables to prune: (Model, date_column, label)
-    # Order matters: news_sentiment must be deleted BEFORE news_articles (FK)
-    tables = [
-        (NewsSentiment, NewsSentiment.scored_at, "news_sentiment"),
-        (NewsArticle, NewsArticle.published_at, "news_articles"),
-        (PriceDaily, PriceDaily.trade_date, "prices_daily"),
-        (TechnicalIndicator, TechnicalIndicator.trade_date, "technical_indicators"),
-        (InsiderTrade, InsiderTrade.transaction_date, "insider_trades"),
-        (InsiderCluster, InsiderCluster.cluster_start, "insider_clusters"),
-        (AnalystRating, AnalystRating.rating_date, "analyst_ratings"),
-        (ArkHolding, ArkHolding.snapshot_date, "ark_holdings"),
-        (ArkDelta, ArkDelta.delta_date, "ark_deltas"),
-        (FundamentalsSnapshot, FundamentalsSnapshot.snapshot_date, "fundamentals_snapshot"),
-        (Form13FHolding, Form13FHolding.report_period, "form13f_holdings"),
-        (PoliticianTrade, PoliticianTrade.transaction_date, "politician_trades"),
-        (FeatureSnapshot, FeatureSnapshot.snapshot_date, "feature_snapshots"),
-        (OptionsIVSnapshot, OptionsIVSnapshot.snapshot_date, "options_iv_snapshot"),
-        (EstimatesSnapshot, EstimatesSnapshot.as_of, "estimates_snapshot"),
-        (ShortVolume, ShortVolume.trade_date, "short_volume"),
-        (ShortInterest, ShortInterest.settlement_date, "short_interest"),
-        (MacroSeries, MacroSeries.obs_date, "macro_series"),
-        (AnalysisReport, AnalysisReport.report_date, "analysis_reports"),
+    old_articles = select(NewsArticle.id).where(NewsArticle.published_at < cutoff)
+    simple = [
+        ("news_articles", NewsArticle, NewsArticle.published_at),
+        ("prices_daily", PriceDaily, PriceDaily.trade_date),
+        ("technical_indicators", TechnicalIndicator, TechnicalIndicator.trade_date),
+        ("insider_trades", InsiderTrade, InsiderTrade.filing_date),
+        ("insider_clusters", InsiderCluster, InsiderCluster.cluster_start),
+        ("analyst_ratings", AnalystRating, AnalystRating.rating_date),
+        ("ark_holdings", ARKHolding, ARKHolding.snapshot_date),
+        ("ark_deltas", ARKDelta, ARKDelta.delta_date),
+        (
+            "fundamentals_snapshot",
+            FundamentalsSnapshot,
+            FundamentalsSnapshot.snapshot_date,
+        ),
+        ("form13f_holdings", Form13FHolding, Form13FHolding.filing_date),
+        ("politician_trades", PoliticianTrade, PoliticianTrade.disclosure_date),
+        ("feature_snapshots", FeatureSnapshot, FeatureSnapshot.snapshot_date),
+        ("options_iv_snapshot", OptionsIVSnapshot, OptionsIVSnapshot.snapshot_date),
+        ("estimates_snapshot", EstimatesSnapshot, EstimatesSnapshot.as_of),
+        ("short_volume", ShortVolume, ShortVolume.trade_date),
+        ("short_interest", ShortInterest, ShortInterest.settlement_date),
+        ("macro_series", MacroSeries, MacroSeries.obs_date),
+        ("analysis_reports", AnalysisReport, AnalysisReport.report_date),
+    ]
+    stmts: list[tuple[str, object]] = [
+        (
+            "news_sentiment",
+            delete(NewsSentiment).where(NewsSentiment.article_id.in_(old_articles)),
+        )
+    ]
+    stmts += [
+        (label, delete(model).where(col < cutoff)) for label, model, col in simple
+    ]
+    return [
+        (label, stmt.execution_options(synchronize_session=False))
+        for label, stmt in stmts
     ]
 
-    total_deleted = 0
-    try:
-        with get_session() as session:
-            for model, date_col, label in tables:
-                try:
-                    result = session.execute(
-                        delete(model).where(date_col < cutoff)
-                    )
-                    count = result.rowcount
-                    if count > 0:
-                        logger.info(
-                            f"data_retention: {label} — {count} rows deleted "
-                            f"(older than {cutoff})"
-                        )
-                        total_deleted += count
-                except Exception as table_err:
-                    logger.warning(
-                        f"data_retention: {label} — skipped: {table_err}"
-                    )
-                    session.rollback()
 
-            session.commit()
+def purge_old_data(cutoff: date) -> tuple[dict[str, int], dict[str, str]]:
+    """Execute the retention deletes; each table in its own savepoint + commit.
 
-        logger.info(
-            f"data_retention_job finished: {total_deleted} total rows deleted "
-            f"across all tables (cutoff={cutoff})"
-        )
-    except Exception as e:
-        logger.error(f"data_retention_job FAILED: {e}")
+    A failing table is rolled back on its own and does not undo or hide the
+    deletes of other tables. Returns ``(deleted_per_table, errors_per_table)``.
+    """
+    from trading_signals.db.session import get_session
+
+    deleted: dict[str, int] = {}
+    errors: dict[str, str] = {}
+    with get_session() as session:
+        for label, stmt in retention_statements(cutoff):
+            try:
+                with session.begin_nested():
+                    count = session.execute(stmt).rowcount or 0
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                errors[label] = f"{type(e).__name__}: {e}"[:300]
+                logger.warning(f"[data_retention] {label} — skipped: {errors[label]}")
+                continue
+            deleted[label] = count
+            if count:
+                logger.info(
+                    f"[data_retention] {label} — {count} rows deleted (< {cutoff})"
+                )
+    return deleted, errors
+
+
+def _data_retention_body() -> JobOutcome:
+    cutoff = quarter_cutoff(DATA_RETENTION_QUARTERS)
+    logger.info(
+        f"[data_retention] cutoff={cutoff}, "
+        f"retention={DATA_RETENTION_QUARTERS} quarters"
+    )
+    deleted, errors = purge_old_data(cutoff)
+    total = sum(deleted.values())
+    if errors and not deleted:
+        status = job_status.FAILED
+    elif errors:
+        status = job_status.PARTIAL
+    else:
+        status = job_status.SUCCESS
+    notes = f"cutoff={cutoff}; deleted={total}"
+    if errors:
+        notes += "; failed: " + "; ".join(f"{k}: {v}" for k, v in errors.items())
+    return JobOutcome(status=status, records_written=total, notes=notes)
+
+
+def run_data_retention() -> None:
+    """Delete data older than DATA_RETENTION_QUARTERS from all tables.
+
+    Scheduled for Sunday 03:00 Europe/Berlin (weekly).
+    Excludes: earnings_calendar (historical value), collection_log
+    (has its own 90-day retention), universe/blacklist/index_membership.
+
+    Uses quarter-based cutoff so boundaries align with calendar quarters.
+    """
+    run_logged_job("data_retention", "data_retention", _data_retention_body)
 
 
 # ── Feature Analysis ─────────────────────────────────────────────────────
 
 
+def _feature_analysis_body() -> JobOutcome:
+    from trading_signals.analysis.feature_report import FeatureAnalysisEngine
+    from trading_signals.db.session import get_session
+
+    with get_session() as session:
+        report = FeatureAnalysisEngine(session).run()
+        if report is None:
+            logger.warning("[feature_analysis] insufficient data (<30 dates), skipped")
+            return JobOutcome(
+                status=job_status.SKIPPED,
+                notes="Insufficient snapshot data (<30 distinct dates)",
+            )
+        # Extract values while still in session context
+        snap_count = report.snapshot_count
+        tick_count = report.ticker_count
+        comp_time = report.computation_time_seconds or 0.0
+
+    logger.info(
+        f"[feature_analysis] {snap_count} snapshots analyzed, "
+        f"{tick_count} tickers, {comp_time:.0f}s"
+    )
+    return JobOutcome(records_written=1, records_fetched=snap_count)
+
+
 def run_feature_analysis() -> None:
     """Monthly feature analysis – correlations, importance, hypothesis tests.
 
-    Scheduled for 1st of each month at 05:00 Europe/Berlin.
+    Scheduled for 1st of each month at 07:00 Europe/Berlin (after the
+    nightly chain). Also triggered via ``POST /analysis/trigger``.
     Runs Spearman correlations, Random Forest + LASSO feature importance,
     and hypothesis tests (H1–H13). Stores structured results in
     analysis_reports table and generates an HTML report.
 
     CPU-intensive (~2–5 min depending on data volume).
     """
-    from datetime import datetime
-
-    from trading_signals.utils.logging import CollectorLogCapture
-    from trading_signals.db.models.collection_log import CollectionLog
-    from trading_signals.db.session import get_session
-
-    collector_name = "feature_analysis"
-    logger.info(f"Scheduler triggered: {collector_name}_job")
-
-    started_at = datetime.now()
-
-    with CollectorLogCapture(collector_name) as log_capture:
-        try:
-            from trading_signals.analysis.feature_report import (
-                FeatureAnalysisEngine,
-            )
-
-            with get_session() as session:
-                engine = FeatureAnalysisEngine(session)
-                report = engine.run()
-
-                if report is None:
-                    logger.warning(
-                        f"{collector_name}_job: insufficient data (<30 dates), skipped"
-                    )
-                    log_entry = CollectionLog(
-                        collector_name=collector_name,
-                        started_at=started_at,
-                        finished_at=datetime.now(),
-                        status="skipped",
-                        records_fetched=0,
-                        records_written=0,
-                        gaps_detected=0,
-                        notes="Insufficient snapshot data (<30 distinct dates)",
-                        log_lines=log_capture.get_lines(),
-                    )
-                    session.add(log_entry)
-                    return
-
-                # Extract values while still in session context
-                snap_count = report.snapshot_count
-                tick_count = report.ticker_count
-                comp_time = report.computation_time_seconds or 0.0
-
-                log_entry = CollectionLog(
-                    collector_name=collector_name,
-                    started_at=started_at,
-                    finished_at=datetime.now(),
-                    status="success",
-                    records_fetched=snap_count,
-                    records_written=1,
-                    gaps_detected=0,
-                    log_lines=log_capture.get_lines(),
-                )
-                session.add(log_entry)
-                # Note: no explicit commit needed — get_session() auto-commits
-
-            logger.info(
-                f"{collector_name}_job finished: "
-                f"{snap_count} snapshots analyzed, "
-                f"{tick_count} tickers, "
-                f"{comp_time:.0f}s"
-            )
-        except Exception as e:
-            logger.error(f"{collector_name}_job FAILED: {e}")
-            try:
-                with get_session() as session:
-                    log_entry = CollectionLog(
-                        collector_name=collector_name,
-                        started_at=started_at,
-                        finished_at=datetime.now(),
-                        status="error",
-                        records_fetched=0,
-                        records_written=0,
-                        gaps_detected=0,
-                        notes=str(e)[:2000],
-                        log_lines=log_capture.get_lines(),
-                    )
-                    session.add(log_entry)
-                    session.commit()
-            except Exception:
-                logger.error(f"{collector_name}_job: Failed to write error log")
-
-
-def run_context_pack_generator() -> None:
-    """Daily Context Pack generation for top candidates.
-
-    Scheduled for 02:30 Europe/Berlin (after Feature Pipeline at 02:00).
-    Generates Markdown reports with YAML frontmatter for the top 5
-    candidates based on preliminary scoring.
-
-    Sprint 9.5c F2.
-    """
-    from datetime import date, timedelta
-    from datetime import datetime
-
-    from trading_signals.utils.logging import CollectorLogCapture
-    from trading_signals.db.models.collection_log import CollectionLog
-    from trading_signals.db.session import get_session
-    from trading_signals.derived.context_pack_generator import ContextPackGenerator
-
-    collector_name = "context_pack_generator"
-    logger.info(f"Scheduler triggered: {collector_name}_job")
-
-    started_at = datetime.now()
-    target_date = date.today() - timedelta(days=1)
-
-    with CollectorLogCapture(collector_name) as log_capture:
-        try:
-            with get_session() as session:
-                generator = ContextPackGenerator(session)
-                written = generator.generate_daily(target_date)
-
-                log_entry = CollectionLog(
-                    collector_name=collector_name,
-                    started_at=started_at,
-                    finished_at=datetime.now(),
-                    status="success",
-                    records_fetched=written,
-                    records_written=written,
-                    gaps_detected=0,
-                    log_lines=log_capture.get_lines(),
-                )
-                session.add(log_entry)
-                session.commit()
-
-            logger.info(
-                f"{collector_name}_job finished: "
-                f"{written} candidate files generated for {target_date}"
-            )
-        except Exception as e:
-            logger.error(f"{collector_name}_job FAILED: {e}")
-            try:
-                with get_session() as session:
-                    log_entry = CollectionLog(
-                        collector_name=collector_name,
-                        started_at=started_at,
-                        finished_at=datetime.now(),
-                        status="error",
-                        records_fetched=0,
-                        records_written=0,
-                        gaps_detected=0,
-                        notes=str(e)[:2000],
-                        log_lines=log_capture.get_lines(),
-                    )
-                    session.add(log_entry)
-                    session.commit()
-            except Exception:
-                logger.error(f"{collector_name}_job: Failed to write error log")
+    run_logged_job("feature_analysis", "feature_analysis", _feature_analysis_body)

@@ -290,3 +290,15 @@
   - `scripts/recompute_features.py` erstellt (112 historische Tage, ~30-60 Min Laufzeit)
   - Ausfuehrung auf Unraid via `docker exec`
 - **Tests:** 358 passed, 0 failed
+
+### Session 25 – 5 October 2026 – Opus 5.5 Konzept- & Code-Review + Bereinigung aller Befunde
+- **Review:** Konzept + gesamter Code in 4 Bereichen (Collectors, Feature-Pipeline/ML, Backend/Infra, Frontend)
+- **Entscheidung:** Rollierende 20-Quartale-Retention gewollt, keine Backups → Prinzip 2 in CLAUDE.md angepasst, `utils/retention.data_start_date()` ersetzt alle festen Startdaten
+- **Neue Shared Utils:** `market_calendar` (NYSE-Session statt Berlin-Datum), `job_status`, `retention`, `alerting` (ntfy-Webhook)
+- **Collectors:** 13F-Werte (×1000-Bug) + Dedup-Key (PUT/CALL, Amendments), Split-/Dividenden-Re-Adjustierung mit Full-Refresh + Recompute, SIP-Feed, Insider-Dedup via Accession, Index-Sync-Sanity-Guard, Market-Date-Labels (IV, Estimates, Short Interest), API-Key-Redaction, PARTIAL/FAILED-Status, Gap-Repair, Bulk-Inserts
+- **Feature-Pipeline:** Lookahead-Fixes (Insider-Cluster, Politiker, News-Cutoff 16:00 ET, Makro-Lag), neue Targets `close(d+h)/open(d+1)−1`, Upsert inkl. NULL + `feature_version`, nur NYSE-Handelstage, ARK-Exit, Breadth, 0-vs-NULL, Analyse auf Rank-IC + Purged Walk-forward
+- **Backend/Infra:** Auth (`X-API-Key`/`X-Requested-With`) auf `/ops/*`, Retention-Bugs (Rollback-Kette, News-FK, `ArkHolding`-Import-Crash), Nightly Chain 04:30, Alerting + Startup-Catch-up, Healthcheck, Non-Root-Container, uv gepinnt, 18 Skripte archiviert
+- **Frontend:** strict TS, Fehlerzustände, dynamische Feature-Gruppen, Signal-Marker im Kurschart, Ticker-Filter serverseitig, API-Key-Einstellung
+- **Migrationen:** 029 (Collector-Integrität), 030 (Feature-Store), 031 (timestamptz, Cascade-FK, Indizes)
+- **Tests:** 352 → 695 passed (Baseline hatte 6 Fehler)
+- **Offen:** Deployment + Reparatur-Skripte auf Unraid ausführen, danach R1 (Feature-Analyse) neu

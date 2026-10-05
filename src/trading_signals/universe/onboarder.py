@@ -16,7 +16,7 @@ tickers per run, the overhead is ~30-60 seconds, acceptable for
 night-scheduled collectors.
 """
 
-from datetime import date, timedelta
+from datetime import date
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -30,7 +30,7 @@ from trading_signals.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # How far back to fetch prices for newly discovered tickers
-BACKFILL_LOOKBACK_DAYS = 4 * 365  # ~4 years
+BACKFILL_LOOKBACK_DAYS = 4 * 365  # legacy constant; backfill now uses data_start_date()
 
 
 class NewTickerOnboarder:
@@ -46,9 +46,11 @@ class NewTickerOnboarder:
         # new_tickers = ["SIRI"]  (PLTR, AAPL already existed)
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session | None = None) -> None:
+        # The caller's session is kept only for backwards compatibility.
+        # All writes happen in the onboarder's OWN short sessions so that
+        # the caller's transaction is never committed behind its back (M5).
         self.session = session
-        self.manager = UniverseManager(session)
 
     def onboard(
         self,
@@ -68,18 +70,20 @@ class NewTickerOnboarder:
         if not tickers:
             return []
 
-        # Step 1: Find tickers not yet in universe
-        all_stmt = select(Universe.ticker)
-        all_existing = {row[0] for row in self.session.execute(all_stmt).all()}
-
-        new_tickers = tickers - all_existing
-        if not new_tickers:
-            return []
-
-        # Step 2: Filter against blacklist (learned ETF filter)
+        from trading_signals.db.session import get_session
         from trading_signals.universe.blacklist import filter_blacklisted
 
-        new_tickers, blocked = filter_blacklisted(self.session, new_tickers)
+        # Step 1+2: Find tickers not yet in universe, filter blacklist
+        with get_session() as own:
+            all_stmt = select(Universe.ticker)
+            all_existing = {row[0] for row in own.execute(all_stmt).all()}
+
+            new_tickers = tickers - all_existing
+            if not new_tickers:
+                return []
+
+            # Step 2: Filter against blacklist (learned ETF filter)
+            new_tickers, blocked = filter_blacklisted(own, new_tickers)
         if blocked:
             logger.info(
                 f"[onboarder] Blocked {len(blocked)} blacklisted tickers: "
@@ -128,18 +132,18 @@ class NewTickerOnboarder:
             logger.info("[onboarder] No verified equities to add.")
             return []
 
-        # Step 5: Now add to universe + backfill (only verified equities)
-        for ticker in verified:
-            asset = alpaca_assets.get(ticker)
-            self.manager.add_ticker(
-                ticker=ticker,
-                company_name=asset.name if asset else None,
-                added_by=source,
-                exchange=asset.exchange if asset else None,
-            )
-
-        # Commit universe additions so backfill can see them
-        self.session.commit()
+        # Step 5: Now add to universe + backfill (only verified equities).
+        # Own session → committed on exit so the backfill can see them.
+        with get_session() as own:
+            manager = UniverseManager(own)
+            for ticker in verified:
+                asset = alpaca_assets.get(ticker)
+                manager.add_ticker(
+                    ticker=ticker,
+                    company_name=asset.name if asset else None,
+                    added_by=source,
+                    exchange=asset.exchange if asset else None,
+                )
 
         logger.info(
             f"[onboarder] Added {len(verified)} tickers to universe: {verified}. "
@@ -165,25 +169,21 @@ class NewTickerOnboarder:
         """
         import yfinance as yf
 
+        from trading_signals.db.session import get_session
         from trading_signals.universe.blacklist import add_to_blacklist
 
         verified: list[str] = []
-        blacklisted: list[str] = []
+        blacklisted: list[tuple[str, str]] = []
 
         for ticker in tickers:
             try:
-                info = yf.Ticker(ticker).info
+                info = yf.Ticker(ticker.replace(".", "-")).info
                 qt = (info.get("quoteType", "UNKNOWN") if info else "UNKNOWN")
 
                 if qt.upper() == "EQUITY":
                     verified.append(ticker)
                 else:
-                    add_to_blacklist(
-                        self.session, ticker,
-                        quote_type=qt,
-                        source="onboarder/quoteType_check",
-                    )
-                    blacklisted.append(ticker)
+                    blacklisted.append((ticker, qt))
                     logger.warning(
                         f"[onboarder] Pre-backfill check: {ticker} is "
                         f"{qt}, not EQUITY → blacklisted"
@@ -197,6 +197,13 @@ class NewTickerOnboarder:
                 )
 
         if blacklisted:
+            with get_session() as own:
+                for ticker, qt in blacklisted:
+                    add_to_blacklist(
+                        own, ticker,
+                        quote_type=qt,
+                        source="onboarder/quoteType_check",
+                    )
             logger.info(
                 f"[onboarder] Pre-backfill filter: {len(blacklisted)} "
                 f"non-equities blocked, {len(verified)} equities verified"
@@ -205,77 +212,20 @@ class NewTickerOnboarder:
         return verified
 
     def _backfill_prices(self, tickers: list[str]) -> None:
-        """Fetch historical prices from Alpaca for new tickers."""
+        """Fetch full price history (retention window) from Alpaca.
+
+        Reuses the collector's fetch/upsert code (SIP feed, adjustment=all,
+        ON CONFLICT DO UPDATE). TA is computed in the next step.
+        """
         try:
-            from trading_signals.collectors.prices_alpaca import (
-                BATCH_SIZE,
-                _fetch_bars_batch,
-                _parse_bar_timestamp,
-                PriceCollectorAlpaca,
-            )
-            from trading_signals.db.models.prices import PriceDaily
+            from trading_signals.collectors.prices_alpaca import PriceCollectorAlpaca
             from trading_signals.db.session import get_session
 
-            start_date = (
-                date.today() - timedelta(days=BACKFILL_LOOKBACK_DAYS)
-            ).isoformat()
-            end_date = date.today().isoformat()
-
-            collector = PriceCollectorAlpaca(lookback_days=BACKFILL_LOOKBACK_DAYS)
-            total_written = 0
-
-            for i in range(0, len(tickers), BATCH_SIZE):
-                batch = tickers[i : i + BATCH_SIZE]
-
-                try:
-                    bars = _fetch_bars_batch(
-                        symbols=batch,
-                        start=start_date,
-                        end=end_date,
-                        headers=collector._headers,
-                    )
-
-                    with get_session() as session:
-                        batch_written = 0
-                        for ticker, ticker_bars in bars.items():
-                            for bar in ticker_bars:
-                                close_val = bar.get("c")
-                                if close_val is None:
-                                    continue
-                                trade_date = _parse_bar_timestamp(
-                                    bar.get("t", "")
-                                )
-                                if trade_date is None:
-                                    continue
-
-                                stmt = (
-                                    pg_insert(PriceDaily)
-                                    .values(
-                                        ticker=ticker,
-                                        trade_date=trade_date,
-                                        open=bar.get("o"),
-                                        high=bar.get("h"),
-                                        low=bar.get("l"),
-                                        close=close_val,
-                                        adj_close=close_val,
-                                        volume=bar.get("v"),
-                                        source="alpaca",
-                                        is_extrapolated=False,
-                                    )
-                                    .on_conflict_do_nothing(
-                                        index_elements=["ticker", "trade_date"]
-                                    )
-                                )
-                                result = session.execute(stmt)
-                                if result.rowcount > 0:
-                                    batch_written += 1
-
-                        total_written += batch_written
-
-                except Exception as e:
-                    logger.warning(
-                        f"[onboarder] Price backfill batch failed: {e}"
-                    )
+            collector = PriceCollectorAlpaca()
+            with get_session() as session:
+                total_written = collector.refresh_full_history(
+                    session, tickers, recompute=False
+                )
 
             logger.info(
                 f"[onboarder] Price backfill: {total_written} records "
@@ -284,6 +234,7 @@ class NewTickerOnboarder:
 
         except Exception as e:
             logger.error(f"[onboarder] Price backfill failed: {e}")
+
 
     def _backfill_indicators(self, tickers: list[str]) -> None:
         """Compute TA indicators for all backfilled prices."""

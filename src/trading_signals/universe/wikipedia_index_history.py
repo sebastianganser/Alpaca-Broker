@@ -22,8 +22,8 @@ from datetime import date, datetime
 import pandas as pd
 import requests
 
-from trading_signals.config import DATA_START_DATE
 from trading_signals.utils.logging import get_logger
+from trading_signals.utils.retention import data_start_date
 
 logger = get_logger(__name__)
 
@@ -118,7 +118,7 @@ class WikipediaIndexHistoryParser:
         else:
             msg = (
                 "S&P 500: Neither changes table nor 'Date added' column found. "
-                f"Layout may have changed. Tables: "
+                "Layout may have changed. Tables: "
                 + str([list(t.columns)[:5] for t in tables[:5]])
             )
             logger.warning(f"[index_history] LAYOUT CHANGE DETECTED: {msg}")
@@ -136,7 +136,7 @@ class WikipediaIndexHistoryParser:
         'added' events but no 'removed' events.
         """
         changes: list[IndexChange] = []
-        data_start = DATA_START_DATE
+        data_start = data_start_date()
 
         # Find the main constituents table (has 'Symbol' and 'Date added')
         for df in tables:
@@ -270,7 +270,7 @@ class WikipediaIndexHistoryParser:
           Date | Added (Ticker, Security) | Removed (Ticker, Security) | Reason
         """
         changes: list[IndexChange] = []
-        data_start = DATA_START_DATE
+        data_start = data_start_date()
 
         # Flatten MultiIndex columns if present
         if isinstance(df.columns, pd.MultiIndex):
@@ -351,11 +351,9 @@ class WikipediaIndexHistoryParser:
         Each table typically has 'Added' and 'Removed' columns.
         """
         changes: list[IndexChange] = []
-        data_start = DATA_START_DATE
+        data_start = data_start_date()
 
         for df in tables:
-            cols_lower = [str(c).lower() for c in df.columns]
-
             # Look for tables with 'added' and 'removed' columns
             added_col = None
             removed_col = None
@@ -501,9 +499,8 @@ class GitHubSP500Backup:
 
         # The CSV has date as first column and ticker lists as values
         # Parse consecutive snapshots to find additions/removals
-        data_start = DATA_START_DATE
+        data_start = data_start_date()
         prev_tickers: set[str] | None = None
-        prev_date: date | None = None
 
         for _, row in df.iterrows():
             try:
@@ -517,7 +514,6 @@ class GitHubSP500Backup:
                 prev_tickers = set(
                     t.strip() for t in tickers_str.split(",") if t.strip()
                 )
-                prev_date = row_date
                 continue
 
             # Current constituents from this row
@@ -550,7 +546,6 @@ class GitHubSP500Backup:
                     ))
 
             prev_tickers = current_tickers
-            prev_date = row_date
 
         logger.info(
             f"[index_history] Parsed {len(result.changes)} S&P 500 changes "
@@ -663,6 +658,7 @@ def generate_intervals_from_changes(
 
     logger.info(
         f"[index_history] Generated {len(closed_intervals)} membership intervals "
-        f"({sum(1 for iv in closed_intervals if iv['valid_to'] is None)} currently active)"
+        f"({sum(1 for iv in closed_intervals if iv['valid_to'] is None)} "
+        f"currently active)"
     )
     return closed_intervals

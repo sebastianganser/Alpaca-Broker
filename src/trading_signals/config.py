@@ -6,17 +6,18 @@ must never have default values.
 """
 
 from datetime import date
-from urllib.parse import quote_plus
-
 from functools import lru_cache
+from urllib.parse import quote_plus
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from trading_signals.utils.retention import data_start_date
+
 # ── Universal Data Boundary ──────────────────────────────────────────
-# Earliest date for any data records in the system.
-# All backfills, queries, and validations should respect this boundary.
-# Data before this date is considered irrelevant or an outlier.
-DATA_START_DATE = date(2021, 1, 1)
+# DEPRECATED: evaluated once at import time and therefore stale in a
+# long-running process. Use ``trading_signals.utils.retention.data_start_date()``
+# (rolling 20-quarter window, decision 2026-10-05) instead.
+DATA_START_DATE: date = data_start_date()
 
 
 class Settings(BaseSettings):
@@ -39,8 +40,14 @@ class Settings(BaseSettings):
     ALPACA_API_KEY: str = ""
     ALPACA_SECRET_KEY: str = ""
     ALPACA_ENDPOINT: str = "https://paper-api.alpaca.markets"
+    # Market-data feed for daily bars: "sip" (consolidated, all US venues –
+    # free tier allows it when end >= 15 min ago) or "iex" (~2-3% of volume).
+    ALPACA_DATA_FEED: str = "sip"
 
     # ── SEC EDGAR ─────────────────────────────────────────────────
+    # SEC fair-access policy: must identify a real, reachable contact
+    # ("App/Version (email)"). Override via env if the mailbox changes;
+    # generic/fake values get the IP rate-limited or blocked (HTTP 403).
     SEC_USER_AGENT: str = "TradingSignals/1.0 (sebastian.ganser@hotmail.com)"
 
     # ── FRED (St. Louis Fed) ─────────────────────────────────────
@@ -51,6 +58,16 @@ class Settings(BaseSettings):
 
     # ── Context Pack Output ──────────────────────────────────────
     CONTEXT_PACK_PATH: str = "/mnt/user/Workfiles/AlpacaBroker/context_packs"
+
+    # ── API Security ─────────────────────────────────────────────
+    # If set, mutating /ops/* and /analysis/trigger endpoints require the
+    # header ``X-API-Key: <API_KEY>``. If empty, they still require the
+    # header ``X-Requested-With`` (CSRF protection for cross-site requests).
+    API_KEY: str = ""
+
+    # ── Alerting ─────────────────────────────────────────────────
+    # ntfy-compatible webhook URL for failed/partial job runs (optional).
+    ALERT_WEBHOOK_URL: str = ""
 
     # ── Logging ───────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"

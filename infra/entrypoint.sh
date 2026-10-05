@@ -15,7 +15,9 @@ done
 echo "==> Database is ready."
 
 echo "==> Running Alembic migrations..."
-uv run alembic upgrade head || echo "WARN: Alembic migration failed (may be first run)"
+# Fail hard: starting the app on a half-migrated / outdated schema corrupts
+# data silently. The container restarts (restart: unless-stopped) and retries.
+.venv/bin/alembic upgrade head || { echo "ERROR: Alembic migration failed - aborting startup"; exit 1; }
 
 echo "==> Starting Alpaca-Broker (FastAPI + Scheduler)..."
 exec "$@"

@@ -2,11 +2,15 @@
 
 Provides a decorator for automatic retry with exponential backoff,
 designed for transient network failures (timeouts, connection errors)
-and transient HTTP errors (429 Too Many Requests, 503 Service Unavailable).
+and transient HTTP errors (429 Too Many Requests, 5xx gateway errors).
+A ``Retry-After`` header (seconds or HTTP date) is honoured, capped at
+``MAX_RETRY_AFTER`` seconds.
 """
 
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from functools import wraps
 from typing import Any
 
@@ -17,7 +21,10 @@ from trading_signals.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # HTTP status codes that indicate transient server issues worth retrying
-RETRYABLE_HTTP_CODES = {429, 503}
+RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+
+# Upper bound for a server-provided Retry-After delay (seconds)
+MAX_RETRY_AFTER = 120.0
 
 # Exceptions that indicate transient network issues worth retrying
 TRANSIENT_EXCEPTIONS = (
@@ -25,7 +32,32 @@ TRANSIENT_EXCEPTIONS = (
     TimeoutError,
     OSError,
     requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
 )
+
+
+def _retry_after_seconds(response: Any) -> float | None:
+    """Parse a ``Retry-After`` header (delta-seconds or HTTP-date)."""
+    if response is None:
+        return None
+    try:
+        value = response.headers.get("Retry-After")
+    except Exception:
+        return None
+    if not value or not isinstance(value, str):
+        return None
+    value = value.strip()
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        dt = parsedate_to_datetime(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return max(0.0, (dt - datetime.now(UTC)).total_seconds())
+    except (TypeError, ValueError, IndexError):
+        return None
 
 
 def retry(
@@ -59,7 +91,7 @@ def retry(
                 try:
                     return func(*args, **kwargs)
                 except requests.exceptions.HTTPError as e:
-                    # Only retry on transient HTTP codes (429, 503)
+                    # Only retry on transient HTTP codes (429, 5xx gateway errors)
                     status = e.response.status_code if e.response is not None else 0
                     if status not in RETRYABLE_HTTP_CODES:
                         raise  # 403, 404, etc. are not transient
@@ -71,6 +103,9 @@ def retry(
                         )
                         raise
                     delay = base_delay * (backoff_factor ** (attempt - 1))
+                    retry_after = _retry_after_seconds(e.response)
+                    if retry_after is not None:
+                        delay = max(delay, min(retry_after, MAX_RETRY_AFTER))
                     logger.warning(
                         f"{func.__name__} attempt {attempt}/{max_attempts} "
                         f"HTTP {status}. Retrying in {delay:.1f}s..."
@@ -85,8 +120,8 @@ def retry(
                         raise
                     delay = base_delay * (backoff_factor ** (attempt - 1))
                     logger.warning(
-                        f"{func.__name__} attempt {attempt}/{max_attempts} failed: {e}. "
-                        f"Retrying in {delay:.1f}s..."
+                        f"{func.__name__} attempt {attempt}/{max_attempts} "
+                        f"failed: {e}. Retrying in {delay:.1f}s..."
                     )
                     time.sleep(delay)
             # Should never reach here, but just in case

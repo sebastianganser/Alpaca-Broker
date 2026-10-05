@@ -5,82 +5,87 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** September 2026
+**Last updated:** October 2026 (review fixes: nightly chain, market-date labels, alerting)
 
 ---
 
-## Daily – Night Slot (00:00–03:30 CET)
+## Daily – Upstream Collectors (Europe/Berlin)
 
-| Time (CET) | Job | Description | Sprint |
-|---|---|---|---|
-| 00:00 | `news_collector` | News articles via Alpaca News API (~830 articles/day) | 8c ✅ |
-| 00:30 | `sentiment_computer` | FinBERT sentiment scoring on collected articles (~23s) | 8c ✅ |
-| 01:00 | `analyst_ratings_collector` | Analyst upgrades/downgrades via yfinance (~10 min) | 5 ✅ |
-| 01:30 | `estimates_collector` | EPS/Revenue consensus + revisions via yfinance (rolling 90-day window) | 9.5a ✅ |
-| 02:00 | `feature_pipeline` | Compute daily feature snapshots (after all collectors) | 8 ✅ |
-| 02:15 | `target_backfill` | Backfill return targets for older snapshots | 8 ✅ |
-| 02:30 | `context_pack_generator` | Daily Context Pack (Top Candidates + Features → Markdown) | 9.5c ✅ |
-| 03:30 | `log_retention` | Delete collection_logs older than 90 days | 8c ✅ |
+All collectors label their data with the **last completed NYSE session** (`utils/market_calendar.last_completed_session()`), not with the Berlin calendar date.
 
-## Daily – Early Morning Slot (04:00–07:30 CET)
+| Time | Job | Description |
+|---|---|---|
+| 22:30 | `price_collector` (`prices_alpaca`) | OHLCV via Alpaca (feed from `ALPACA_DATA_FEED`, default SIP), upsert of lookback window, automatic full-history refresh + TA/target recompute when Alpaca re-adjusted a ticker (split/dividend), gap repair |
+| 22:50 | `technical_indicators_computer` | TA indicators (also step 1 of the nightly chain as catch-up) |
+| 23:00 | `ark_holdings` | ARK ETF holdings + deltas |
+| 23:15 | `options_iv_collector` | Options IV snapshots (ATM IV, skew, term structure) |
+| 23:30 | `form4_collector` | Form 4 filings (accession-based dedup, 4/A amendments) |
+| 00:00 | `news_collector` | Alpaca News (watermark-based, per-page retry) |
+| 00:15 | `short_interest_collector` | Short volume via Massive API (~2.5 h, skips if session already stored) |
+| 00:30 | `sentiment_computer` | FinBERT scoring |
+| 01:00 | `analyst_ratings_collector` | Analyst upgrades/downgrades |
+| 01:30 | `estimates_collector` | EPS/revenue consensus + revisions (rolling 90-day window – critical, startup catch-up) |
+| 04:15 | `fred_collector` | FRED macro series |
 
-| Time (CET) | Job | Description | Sprint |
-|---|---|---|---|
-| 04:15 | `fred_collector` | FRED macro indicators (VIX, Yields, HY Spread, Dollar, Inflation) ~11s | 9.5b ✅ |
-| 04:30 | `options_iv_collector` | Options IV snapshots (ATM IV, Skew, Term Structure) ~20 min | 9.5b ✅ |
-| 04:45 | `short_interest_collector` | Short volume via Massive API (5 req/min) ~2.5h | 9.5c ✅ |
+## Daily – Nightly Chain (04:30)
 
-## Daily – Evening Slot (after US EOD)
+`nightly_chain` runs sequentially for the target session `last_completed_session()`:
 
-| Time (CET) | Job | Description | Sprint |
-|---|---|---|---|
-| 22:15 | `prices_alpaca` | OHLCV for entire universe (Alpaca Multi-Symbol Batch) | 1b ✅ |
-| 22:30 | `technical_indicators_computer` | Compute TA indicators from price data | 6 ✅ |
-| 23:00 | `ark_holdings` | ARK ETF holdings via arkfunds.io + delta computation | 2 ✅ |
-| 23:30 | `form4_collector` | New Form 4 filings (last 24h) + cluster computation | 3 ✅ |
+1. `technical_indicators_computer` (catch-up)
+2. `feature_pipeline` (skipped on non-trading days → status `skipped`)
+3. `target_backfill` (target = `close(d+h) / open(d+1) − 1`)
+4. `context_pack_generator`
+
+Before starting, the chain waits up to 2 h for upstream collectors that are still running. Inputs without a fresh run (started after 16:00 NY on the target session) are listed in the notes and the chain ends as `partial`. `feature_pipeline`, `target_backfill` and `context_pack_generator` are registered as **paused** jobs (no own schedule); a manual trigger runs a one-shot clone.
+
+## Maintenance
+
+| Time | Job | Description |
+|---|---|---|
+| daily 03:30 | `log_retention` | Delete collection_logs older than 90 days; mark stale `running` rows (> 6 h) as `failed` |
+| Sun 03:00 | `data_retention` | Rolling **20-quarter** retention (decision 2026-10-05, no backups). Savepoint per table; insider by `filing_date`, politicians by `disclosure_date`, news sentiment via cascade |
 
 ## Weekly (Sunday)
 
-| Time (CET) | Job | Description | Sprint |
-|---|---|---|---|
-| 01:00 | `fundamentals_collector` | Fundamental metrics via yfinance | 5 ✅ |
-| 01:00 | `analyst_ratings_collector` | Also runs on Sundays | 5 ✅ |
-| 02:00 | `earnings_calendar_collector` | Earnings dates via yfinance | 5 ✅ |
-| 10:00 | `form13f_collector` | New 13F filings (if quarter-end occurred) | 3 ✅ |
-| 11:00 | `politician_trades_collector` | Senate eFD PTR scraping + **auto-onboarding new tickers** | 4 ✅ |
+| Time | Job | Description |
+|---|---|---|
+| 01:00 | `fundamentals_collector` | Fundamentals via yfinance (incl. `most_recent_quarter`) |
+| 02:00 | `earnings_calendar_collector` | Earnings dates (BMO/AMC, `first_seen`/`last_seen`) |
+| 10:00 | `form13f_collector` | 13F filings (all filings in window, amendments, PUT/CALL separated) |
+| 11:00 | `politician_trades_collector` | Senate eFD PTRs (skips known source URLs) + auto-onboarding |
 
 ## Monthly (1st of month)
 
-| Time (CET) | Job | Description | Sprint |
-|---|---|---|---|
-| 03:00 | `index_sync` | S&P 500 / Nasdaq 100 membership update + **sector enrichment** for new tickers | 7+ ✅ |
-| 05:00 | `feature_analysis` | Correlations + ML Feature Importance (RF, LASSO) + hypothesis tests | 9 ✅ |
+| Time | Job | Description |
+|---|---|---|
+| 03:00 | `index_sync` | S&P 500 / Nasdaq 100 membership (sanity guard aborts on implausible scrapes) + sector enrichment |
+| 07:00 | `feature_analysis` | Rank-IC / purged walk-forward feature analysis |
 
 ## Manual (via UI)
 
+All `POST` endpoints under `/ops/*` and `/analysis/*` require the header `X-API-Key` (if `API_KEY` is configured) or at least `X-Requested-With` (CSRF guard). The UI sends both automatically; the key is entered under *Einstellungen*.
+
 | Action | Endpoint | Description |
 |---|---|---|
-| Price Backfill | `POST /ops/backfill/prices` | Load historical prices from 2021-01-01 (Settings > Backfill) |
-| Indicator Backfill | `POST /ops/backfill/indicators` | Recompute all TA indicators (Settings > Backfill) |
-| Target Backfill | `POST /ops/scheduler/target_backfill/trigger` | Manually trigger target return backfill (Settings > Scheduler) |
-| Sector Enrichment | `POST /ops/backfill/sectors` | Reload sectors/industries for ALL active tickers from yfinance + ETF blacklist check (Settings > Sectors) |
-| DB Reset | `POST /ops/db/reset` | Factory reset: delete all data tables (Settings > Factory Reset) |
-| VACUUM/ANALYZE | `POST /ops/db/vacuum` | PostgreSQL VACUUM + ANALYZE (Settings > VACUUM) |
-| Trigger Job | `POST /ops/scheduler/{job_id}/trigger` | Manually trigger any scheduled job (Settings > Scheduler) |
+| Price Backfill | `POST /ops/backfill/prices` | Full-history refresh from `data_start_date()` (rolling 20 quarters) |
+| Indicator Backfill | `POST /ops/backfill/indicators` | Recompute all TA indicators |
+| Sector Enrichment | `POST /ops/backfill/sectors` | Reload sectors/industries + ETF blacklist check |
+| DB Reset | `POST /ops/db/reset?confirm=RESET` | Factory reset (all data tables except universe/blacklist) |
+| VACUUM/ANALYZE | `POST /ops/db/vacuum` | PostgreSQL maintenance |
+| Trigger Job | `POST /ops/scheduler/{job_id}/trigger` | Trigger any job (chain steps as one-shot clone) |
+| Feature Analysis | `POST /analysis/trigger` | Async (202), 409 if already running |
 
 ---
 
 ## Job Configuration
 
-Jobs are registered in `src/trading_signals/scheduler/jobs.py`.
+Jobs are registered in `src/trading_signals/scheduler/setup.py`; job → collector-name mapping in `scheduler/registry.py`; the shared wrapper `run_logged_job` in `scheduler/runner.py`.
 
 **Key design choices:**
-- **APScheduler** (not cron) – integrated Python logging, error handling, dynamic control
-- **BackgroundScheduler** – runs alongside FastAPI in the same process
-- **CronTrigger** – timezone-aware (`Europe/Berlin`)
-- **JobTracker** – APScheduler event listener provides live running status to the UI
-- **CollectorLogCapture** – every job captures WARNING/ERROR + collector-specific INFO lines
-- **Log Retention** – automatic cleanup of collection_logs older than 90 days (daily 03:30)
-- **Warning Demotion** – known harmless third-party warnings (e.g., HF Hub token) are automatically downgraded to INFO level
+- **APScheduler** – BackgroundScheduler in the FastAPI process, CronTrigger in `Europe/Berlin`, `coalesce`, `max_instances=1`
+- **run_logged_job** – every job writes a `collection_log` row (status constants from `utils/job_status.py`: running/success/partial/failed/skipped), captures logs (thread-filtered, secrets redacted) and holds a per-collector lock
+- **Alerting** – `partial`/`failed` runs, `EVENT_JOB_ERROR` and `EVENT_JOB_MISSED` trigger a push via `ALERT_WEBHOOK_URL` (ntfy-compatible, optional)
+- **Startup catch-up** – price collector, estimates and nightly chain are re-run after a restart if their last run was missed
+- **Warning Demotion** – known harmless third-party warnings are downgraded to INFO
 
 See [DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) for the rationale behind these choices.
