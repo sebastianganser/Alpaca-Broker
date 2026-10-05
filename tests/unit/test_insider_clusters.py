@@ -4,7 +4,6 @@ import math
 from datetime import date
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from trading_signals.derived.insider_clusters import (
     InsiderClusterComputer,
@@ -143,3 +142,109 @@ class TestClusterScore:
         trade.transaction_date = transaction_date
         trade.total_value = total_value
         return trade
+
+
+# ── Review 2026-10: known_date + delete-and-rebuild (C2 / M5) ────────────
+
+
+class TestKnownDate:
+    """known_date = last day a member trade became public."""
+
+    @staticmethod
+    def _t(name, txn, filed=None, value=100_000):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            insider_name=name, transaction_date=txn, filing_date=filed,
+            total_value=value,
+        )
+
+    def test_known_date_is_max_filing_date(self):
+        from trading_signals.derived.insider_clusters import find_clusters
+
+        clusters = find_clusters([
+            self._t("A", date(2026, 3, 2), date(2026, 3, 20)),
+            self._t("B", date(2026, 3, 5), date(2026, 3, 6)),
+        ])
+        assert len(clusters) == 1
+        assert clusters[0]["cluster_end"] == date(2026, 3, 5)
+        assert clusters[0]["known_date"] == date(2026, 3, 20)
+
+    def test_known_date_fallback_lag(self):
+        from trading_signals.derived.insider_clusters import (
+            FALLBACK_FILING_LAG_DAYS,
+            find_clusters,
+        )
+
+        clusters = find_clusters([
+            self._t("A", date(2026, 3, 2)),
+            self._t("B", date(2026, 3, 5)),
+        ])
+        expected = date(2026, 3, 5).toordinal() + FALLBACK_FILING_LAG_DAYS
+        assert clusters[0]["known_date"].toordinal() == expected
+
+    def test_unsorted_input(self):
+        from trading_signals.derived.insider_clusters import find_clusters
+
+        clusters = find_clusters([
+            self._t("B", date(2026, 3, 5), date(2026, 3, 6)),
+            self._t("A", date(2026, 3, 2), date(2026, 3, 3)),
+        ])
+        assert clusters[0]["cluster_start"] == date(2026, 3, 2)
+
+    def test_acceptance_after_close_is_next_day(self):
+        from datetime import UTC, datetime
+
+        from trading_signals.derived.insider_clusters import availability_date
+
+        t = self._t("A", date(2026, 3, 2), date(2026, 3, 4))
+        # 21:30 UTC = 16:30 EST → after the close → public on 03-05
+        t.acceptance_datetime = datetime(2026, 3, 4, 21, 30, tzinfo=UTC)
+        assert availability_date(t) == date(2026, 3, 5)
+        # 20:00 UTC = 15:00 EST → before the close → public on 03-04
+        t.acceptance_datetime = datetime(2026, 3, 4, 20, 0, tzinfo=UTC)
+        assert availability_date(t) == date(2026, 3, 4)
+
+    def test_acceptance_missing_falls_back_to_filing_date(self):
+        from trading_signals.derived.insider_clusters import availability_date
+
+        t = self._t("A", date(2026, 3, 2), date(2026, 3, 4))
+        t.acceptance_datetime = None
+        assert availability_date(t) == date(2026, 3, 4)
+
+
+class TestRebuildAnchor:
+    def test_since_date_clamped_to_retention(self):
+        """compute_new never looks before data_start_date()."""
+        from trading_signals.derived import insider_clusters as ic
+
+        session = MagicMock()
+        session.execute.return_value.all.return_value = [("AAA",)]
+        computer = InsiderClusterComputer(session)
+        with (
+            patch.object(ic, "data_start_date", return_value=date(2021, 1, 1)),
+            patch.object(computer, "_compute_for_ticker", return_value=2) as cft,
+        ):
+            assert computer.compute_new(date(2000, 1, 1)) == 2
+        cft.assert_called_once_with("AAA", date(2021, 1, 1))
+
+    def test_rebuild_window_starts_at_overlapping_cluster(self):
+        """Anchor = earliest start of a stored cluster overlapping since_date."""
+        session = MagicMock()
+        session.execute.return_value.scalar.return_value = date(2026, 2, 20)
+        anchor = InsiderClusterComputer(session)._rebuild_anchor(
+            "AAA", date(2026, 3, 1)
+        )
+        assert anchor == date(2026, 2, 20)
+
+    def test_rebuild_deletes_before_insert(self):
+        """Stale clusters in the window are deleted even if nothing is rebuilt."""
+        session = MagicMock()
+        session.execute.return_value.scalar.return_value = None
+        session.execute.return_value.scalars.return_value.all.return_value = []
+        written = InsiderClusterComputer(session)._compute_for_ticker(
+            "AAA", date(2026, 3, 1)
+        )
+        assert written == 0
+        kinds = [c[0][0].__visit_name__ for c in session.execute.call_args_list]
+        assert "delete" in kinds

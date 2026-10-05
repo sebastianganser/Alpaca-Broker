@@ -628,3 +628,108 @@ class TestEdgeCases:
         for col in result.columns:
             valid = pd.to_numeric(result[col].dropna(), errors="coerce")
             assert np.isfinite(valid.values).all(), f"{col} has non-finite values"
+
+
+# ── Review 2026-10: bulk rows / ticker set (M1, H7) ─────────────────────
+
+
+class TestIndicatorRows:
+    def _df(self):
+        idx = pd.to_datetime(["2026-05-01", "2026-05-04", "2026-05-05"])
+        return pd.DataFrame(
+            {"sma_20": [1.234567, np.nan, 3.0], "rsi_14": [50.0, 0.0, None]},
+            index=idx,
+        )
+
+    def test_nan_to_none_and_rounding(self):
+        from trading_signals.derived.technical_indicators import (
+            INDICATOR_COLS,
+            indicator_rows,
+        )
+
+        rows = indicator_rows("AAA", self._df())
+        assert len(rows) == 3
+        assert rows[0]["sma_20"] == 1.2346
+        assert rows[1]["sma_20"] is None
+        assert rows[1]["rsi_14"] == 0.0  # 0.0 is a value
+        assert rows[2]["rsi_14"] is None
+        assert rows[0]["macd"] is None  # missing column -> None
+        assert set(INDICATOR_COLS) <= set(rows[0])
+        assert rows[0]["trade_date"] == date(2026, 5, 1)
+
+    def test_date_filter(self):
+        from trading_signals.derived.technical_indicators import indicator_rows
+
+        rows = indicator_rows(
+            "AAA", self._df(), start=date(2026, 5, 2), end=date(2026, 5, 4)
+        )
+        assert [r["trade_date"] for r in rows] == [date(2026, 5, 4)]
+
+    def test_empty(self):
+        from trading_signals.derived.technical_indicators import indicator_rows
+
+        assert indicator_rows("AAA", pd.DataFrame()) == []
+        assert indicator_rows("AAA", None) == []
+
+
+class TestComputeAllDefaults:
+    def test_default_date_is_last_completed_session(self):
+        session = MagicMock()
+        comp = TechnicalIndicatorsComputer(session)
+        with (
+            patch(
+                "trading_signals.utils.market_calendar.last_completed_session",
+                return_value=date(2026, 5, 1),
+            ),
+            patch.object(
+                comp, "_tickers_with_prices", return_value=["AAA", "SPY"]
+            ) as twp,
+            patch.object(comp, "_ensure_spy"),
+            patch.object(comp, "_compute_for_date", return_value=True) as cfd,
+        ):
+            assert comp.compute_all() == 2
+        twp.assert_called_once_with(date(2026, 5, 1), date(2026, 5, 1))
+        cfd.assert_any_call("AAA", date(2026, 5, 1))
+
+    def test_backfill_ticker_window_starts_at_retention(self):
+        from trading_signals.derived import technical_indicators as ti
+
+        session = MagicMock()
+        comp = TechnicalIndicatorsComputer(session)
+        with (
+            patch.object(ti, "data_start_date", return_value=date(2021, 7, 1)),
+            patch.object(comp, "_tickers_with_prices", return_value=[]) as twp,
+            patch.object(comp, "_ensure_spy"),
+        ):
+            comp.compute_all(target_date=date(2026, 5, 1), backfill=True)
+        twp.assert_called_once_with(date(2021, 7, 1), date(2026, 5, 1))
+
+    def test_store_rows_chunks_and_upserts(self):
+        from sqlalchemy.dialects import postgresql
+
+        from trading_signals.derived import technical_indicators as ti
+
+        session = MagicMock()
+        comp = TechnicalIndicatorsComputer(session)
+        rows = [
+            {"ticker": "AAA", "trade_date": date(2026, 5, 1), **{
+                c: 1.0 for c in ti.INDICATOR_COLS
+            }}
+        ] * 3
+        with patch.object(ti, "BULK_CHUNK", 2):
+            assert comp._store_rows(rows) == 3
+        assert session.execute.call_count == 2
+        sql = str(
+            session.execute.call_args[0][0].compile(dialect=postgresql.dialect())
+        )
+        assert "ON CONFLICT (ticker, trade_date) DO UPDATE" in sql
+
+    def test_recompute_ticker_deletes_first(self):
+        session = MagicMock()
+        comp = TechnicalIndicatorsComputer(session)
+        with (
+            patch.object(comp, "_ensure_spy"),
+            patch.object(comp, "_compute_backfill", return_value=5),
+        ):
+            assert comp.recompute_ticker("AAA") == 5
+        assert session.execute.call_args_list[0][0][0].__visit_name__ == "delete"

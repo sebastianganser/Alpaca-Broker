@@ -16,8 +16,14 @@ Indicators computed:
 
 Design:
   - Runs after PriceCollectorAlpaca (daily at 22:30 MEZ)
-  - Computes indicators for a single target date (daily mode)
-  - Can also backfill all historical dates (backfill mode)
+  - Computes indicators for a single target date (daily mode) or a date
+    range (catch-up) – loading only ~400 sessions of history (P3)
+  - Can also backfill all historical dates (backfill mode, bulk UPSERT)
+  - Ticker set = every ticker with (non-extrapolated) prices in the
+    window, not only ``is_active`` ones, so delisted point-in-time members
+    get indicators too (review finding M1)
+  - Rows flagged ``is_extrapolated`` (gap filler) are excluded from all
+    computations; no indicator row is written for such dates (H7)
   - Min-data checks: indicators only computed when enough history exists
   - SPY prices cached once, reused for all tickers
   - Idempotent: UPSERT pattern (ON CONFLICT DO UPDATE)
@@ -27,19 +33,26 @@ from datetime import date, timedelta
 
 import pandas as pd
 import pandas_ta as ta
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from trading_signals.db.models.prices import PriceDaily
 from trading_signals.db.models.technical_indicators import TechnicalIndicator
-from trading_signals.db.models.universe import Universe
 from trading_signals.utils.logging import get_logger
+from trading_signals.utils.retention import data_start_date
 
 logger = get_logger(__name__)
 
 # Maximum lookback needed (SMA 200 + buffer for EMA warmup)
 MAX_LOOKBACK_DAYS = 250
+
+# Calendar days of history loaded for daily / range mode (~400 sessions;
+# enough for SMA200 and for EMA/RSI recursions to converge).
+HISTORY_CALENDAR_DAYS = 600
+
+# Rows per bulk UPSERT statement
+BULK_CHUNK = 1000
 
 # Minimum data requirements per indicator group
 MIN_DAYS_SMA20 = 20
@@ -55,6 +68,46 @@ MIN_DAYS_RELATIVE_STRENGTH = 20
 # SPY ticker for relative strength calculation
 SPY_TICKER = "SPY"
 
+INDICATOR_COLS = [
+    "sma_20", "sma_50", "sma_200", "ema_12", "ema_26",
+    "rsi_14", "macd", "macd_signal", "macd_histogram",
+    "bollinger_upper", "bollinger_lower", "atr_14",
+    "volume_sma_20", "relative_strength_spy",
+]
+
+
+def _not_extrapolated():
+    """SQL filter: real (non gap-filled) price rows; NULL counts as real."""
+    return PriceDaily.is_extrapolated.is_not(True)
+
+
+def indicator_rows(
+    ticker: str,
+    indicators_df: pd.DataFrame,
+    start: date | None = None,
+    end: date | None = None,
+) -> list[dict]:
+    """Convert an indicator DataFrame into UPSERT dicts (pure function).
+
+    NaN → None, values rounded to 4 decimals, optional [start, end] filter.
+    """
+    rows: list[dict] = []
+    if indicators_df is None or indicators_df.empty:
+        return rows
+    for ts, rec in indicators_df.iterrows():
+        d = ts.date() if isinstance(ts, pd.Timestamp) else ts
+        if start is not None and d < start:
+            continue
+        if end is not None and d > end:
+            continue
+        row = {"ticker": ticker, "trade_date": d}
+        for col in INDICATOR_COLS:
+            val = rec.get(col)
+            ok = val is not None and pd.notna(val)
+            row[col] = round(float(val), 4) if ok else None
+        rows.append(row)
+    return rows
+
 
 class TechnicalIndicatorsComputer:
     """Compute technical analysis indicators from price data."""
@@ -63,15 +116,40 @@ class TechnicalIndicatorsComputer:
         self.session = session
         self._spy_df: pd.DataFrame | None = None  # Cached SPY prices
 
+    # ── Ticker selection ─────────────────────────────────────────────
+
+    def _tickers_with_prices(self, start: date, end: date) -> list[str]:
+        """All tickers with real price rows in [start, end] (M1)."""
+        stmt = (
+            select(PriceDaily.ticker)
+            .where(PriceDaily.trade_date.between(start, end))
+            .where(_not_extrapolated())
+            .distinct()
+            .order_by(PriceDaily.ticker)
+        )
+        return [row[0] for row in self.session.execute(stmt).all()]
+
+    def _ensure_spy(self) -> None:
+        if self._spy_df is None:
+            self._spy_df = self._load_price_history(SPY_TICKER)
+        if self._spy_df is None or len(self._spy_df) == 0:
+            logger.warning(
+                "[technical_indicators] No SPY data found – "
+                "relative_strength_spy will be NULL"
+            )
+
+    # ── Public entry points ──────────────────────────────────────────
+
     def compute_all(
         self,
         target_date: date | None = None,
         backfill: bool = False,
     ) -> int:
-        """Compute indicators for all active tickers.
+        """Compute indicators for all tickers with prices.
 
         Args:
-            target_date: Date to compute indicators for. Defaults to today.
+            target_date: Date to compute indicators for. Defaults to the
+                last completed NYSE session.
             backfill: If True, compute indicators for ALL dates with price
                       data (used for initial historical computation).
 
@@ -79,27 +157,22 @@ class TechnicalIndicatorsComputer:
             Total number of indicator records written.
         """
         if target_date is None:
-            target_date = date.today()
+            from trading_signals.utils.market_calendar import last_completed_session
 
-        # Get all active tickers
-        stmt = (
-            select(Universe.ticker)
-            .where(Universe.is_active.is_(True))
-            .order_by(Universe.ticker)
-        )
-        tickers = [row[0] for row in self.session.execute(stmt).all()]
+            target_date = last_completed_session()
+
+        if backfill:
+            tickers = self._tickers_with_prices(data_start_date(), target_date)
+        else:
+            tickers = self._tickers_with_prices(target_date, target_date)
         logger.info(
             f"[technical_indicators] Computing for {len(tickers)} tickers "
             f"(target_date={target_date}, backfill={backfill})"
         )
 
         # Pre-load SPY prices for relative strength calculation
-        self._spy_df = self._load_price_history(SPY_TICKER)
-        if self._spy_df is None or len(self._spy_df) == 0:
-            logger.warning(
-                "[technical_indicators] No SPY data found – "
-                "relative_strength_spy will be NULL"
-            )
+        self._spy_df = None
+        self._ensure_spy()
 
         total_written = 0
         errors = 0
@@ -133,6 +206,48 @@ class TechnicalIndicatorsComputer:
         )
         return total_written
 
+    def compute_range(self, start: date, end: date) -> int:
+        """Compute indicators for every session in [start, end] (catch-up).
+
+        Loads per ticker only ``HISTORY_CALENDAR_DAYS`` before ``start``
+        and writes all rows in the range with one bulk UPSERT.
+        """
+        tickers = self._tickers_with_prices(start, end)
+        self._spy_df = None
+        self._ensure_spy()
+        since = start - timedelta(days=HISTORY_CALENDAR_DAYS)
+        total = 0
+        errors = 0
+        for i, ticker in enumerate(tickers, 1):
+            try:
+                df = self._load_price_history(ticker, since=since, until=end)
+                if df is None or len(df) < MIN_DAYS_RSI:
+                    continue
+                ind = self._calculate_indicators_dataframe(df)
+                total += self._store_rows(indicator_rows(ticker, ind, start, end))
+            except Exception as e:
+                errors += 1
+                logger.error(f"[technical_indicators] Error for {ticker}: {e}")
+            if i % 100 == 0:
+                self.session.flush()
+        self.session.flush()
+        logger.info(
+            f"[technical_indicators] Range {start}→{end}: {total} records, "
+            f"{len(tickers)} tickers ({errors} errors)"
+        )
+        return total
+
+    def recompute_ticker(self, ticker: str) -> int:
+        """Delete and fully recompute all indicator rows of one ticker.
+
+        Used after a price-history refresh. Does not commit.
+        """
+        self._ensure_spy()
+        self.session.execute(
+            delete(TechnicalIndicator).where(TechnicalIndicator.ticker == ticker)
+        )
+        return self._compute_backfill(ticker)
+
     def compute_catchup(self) -> int:
         """Compute indicators for all missing or incomplete dates.
 
@@ -140,26 +255,25 @@ class TechnicalIndicatorsComputer:
         1. NEW dates: dates in prices_daily that are entirely absent from
            technical_indicators (standard catchup via MAX comparison).
         2. INCOMPLETE dates: dates where the number of TA records is
-           significantly lower than the number of price records,
+           significantly lower than the number of (real) price records,
            indicating a partial write (e.g., job crashed mid-run,
            or ran before all prices were available).
 
         Returns:
             Total number of indicator records written.
         """
-        from trading_signals.db.models.prices import PriceDaily
-        from trading_signals.db.models.technical_indicators import TechnicalIndicator
-
         # Find latest dates in both tables
         last_ta = self.session.execute(
             select(func.max(TechnicalIndicator.trade_date))
         ).scalar()
         last_price = self.session.execute(
-            select(func.max(PriceDaily.trade_date))
+            select(func.max(PriceDaily.trade_date)).where(_not_extrapolated())
         ).scalar()
 
         if last_price is None:
-            logger.warning("[technical_indicators] No price data found – nothing to compute")
+            logger.warning(
+                "[technical_indicators] No price data found – nothing to compute"
+            )
             return 0
 
         if last_ta is None:
@@ -178,6 +292,7 @@ class TechnicalIndicatorsComputer:
                 select(PriceDaily.trade_date)
                 .where(PriceDaily.trade_date > last_ta)
                 .where(PriceDaily.trade_date <= last_price)
+                .where(_not_extrapolated())
                 .distinct()
                 .order_by(PriceDaily.trade_date)
             )
@@ -187,12 +302,15 @@ class TechnicalIndicatorsComputer:
             dates_to_compute.extend(new_dates)
 
         # Phase 2: Find incomplete dates (last 5 trading days)
-        # Compare TA record count vs price record count per date
+        # Compare TA record count vs real price record count per date
         incomplete_stmt = select(
             PriceDaily.trade_date,
             func.count(PriceDaily.ticker.distinct()).label("price_count"),
         ).where(
-            PriceDaily.trade_date > last_price - timedelta(days=7)  # Check last ~5 trading days
+            # Check last ~5 trading days
+            PriceDaily.trade_date > last_price - timedelta(days=7)
+        ).where(
+            _not_extrapolated()
         ).group_by(
             PriceDaily.trade_date
         ).order_by(
@@ -238,20 +356,14 @@ class TechnicalIndicatorsComputer:
             f"dates ({dates_to_compute[0]} → {dates_to_compute[-1]})"
         )
 
-        total_written = 0
-        for target_date in dates_to_compute:
-            written = self.compute_all(target_date=target_date)
-            total_written += written
-            logger.info(
-                f"[technical_indicators] Catch-up {target_date}: "
-                f"{written} records"
-            )
+        # One pass per ticker over the whole catch-up range (P3)
+        return self.compute_range(dates_to_compute[0], dates_to_compute[-1])
 
-        return total_written
+    # ── Per-ticker computation ───────────────────────────────────────
 
     def _compute_backfill(self, ticker: str) -> int:
         """Compute indicators for all available dates for a single ticker."""
-        df = self._load_price_history(ticker)
+        df = self._load_price_history(ticker, since=data_start_date())
         if df is None or len(df) < MIN_DAYS_RSI:
             return 0
 
@@ -260,19 +372,19 @@ class TechnicalIndicatorsComputer:
         if indicators_df is None or indicators_df.empty:
             return 0
 
-        written = 0
-        for _, row in indicators_df.iterrows():
-            if self._store_indicators(ticker, row):
-                written += 1
-
-        return written
+        return self._store_rows(indicator_rows(ticker, indicators_df))
 
     def _compute_for_date(self, ticker: str, target_date: date) -> bool:
         """Compute indicators for a single ticker on a single date.
 
-        Returns True if a record was written.
+        Loads only ~400 sessions of history (P3). Returns True if a record
+        was written.
         """
-        df = self._load_price_history(ticker)
+        df = self._load_price_history(
+            ticker,
+            since=target_date - timedelta(days=HISTORY_CALENDAR_DAYS),
+            until=target_date,
+        )
         if df is None or len(df) == 0:
             return False
 
@@ -280,11 +392,11 @@ class TechnicalIndicatorsComputer:
         # (target_date from SQL is datetime.date, df.index is DatetimeIndex)
         ts = pd.Timestamp(target_date)
 
-        # Check if target_date has price data
+        # Check if target_date has (real) price data
         if ts not in df.index:
             return False
 
-        # Calculate all indicators on full history
+        # Calculate all indicators on the loaded history
         indicators_df = self._calculate_indicators_dataframe(df)
         if indicators_df is None or ts not in indicators_df.index:
             return False
@@ -293,17 +405,21 @@ class TechnicalIndicatorsComputer:
         return self._store_indicators(ticker, row)
 
     def _load_price_history(
-        self, ticker: str, since: date | None = None
+        self, ticker: str, since: date | None = None, until: date | None = None
     ) -> pd.DataFrame | None:
         """Load OHLCV price history for a ticker from the database.
+
+        Extrapolated (gap-filled) rows are excluded (H7).
 
         Returns a DataFrame indexed by trade_date with columns:
         open, high, low, close, volume.
         Returns None if no data found.
         """
-        conditions = [PriceDaily.ticker == ticker]
+        conditions = [PriceDaily.ticker == ticker, _not_extrapolated()]
         if since is not None:
             conditions.append(PriceDaily.trade_date >= since)
+        if until is not None:
+            conditions.append(PriceDaily.trade_date <= until)
 
         stmt = (
             select(
@@ -333,6 +449,20 @@ class TechnicalIndicatorsComputer:
         df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0)
 
         return df
+
+    def _store_rows(self, rows: list[dict]) -> int:
+        """Bulk UPSERT indicator rows (chunked multi-row INSERT)."""
+        if not rows:
+            return 0
+        for i in range(0, len(rows), BULK_CHUNK):
+            chunk = rows[i:i + BULK_CHUNK]
+            stmt = pg_insert(TechnicalIndicator).values(chunk)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["ticker", "trade_date"],
+                set_={c: stmt.excluded[c] for c in INDICATOR_COLS},
+            )
+            self.session.execute(stmt)
+        return len(rows)
 
     def _calculate_indicators_dataframe(
         self, df: pd.DataFrame

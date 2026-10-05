@@ -24,17 +24,20 @@ until R1/F1 provide ML-based importance rankings.
 
 from __future__ import annotations
 
-import os
-from datetime import date, timedelta
+import math
+from datetime import date
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from trading_signals.config import get_settings
-from trading_signals.db.models.features import FeatureSnapshot
-from trading_signals.db.models.fundamentals import FundamentalsSnapshot
+from trading_signals.db.models.features import (
+    KEY_COLUMNS,
+    META_COLUMNS,
+    FeatureSnapshot,
+)
 from trading_signals.db.models.prices import PriceDaily
 from trading_signals.db.models.universe import Universe
 from trading_signals.utils.logging import get_logger
@@ -42,8 +45,18 @@ from trading_signals.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-# Preliminary score weights — based on Sprint 9 ML analysis top features.
-# Will be replaced by ML-importance from R1 (October 2026).
+# PROVISIONAL score weights — NOT validated.
+# Originally taken from the Sprint 9 ML analysis top features, but that
+# analysis was biased (pooled correlations, row-iid tests, leaky CV; see
+# review finding H4). Treat these purely as a hand-tuned placeholder until
+# the rebuilt analysis (daily rank IC / purged CV) or R1/F1 provide
+# validated importances.
+#
+# Weights are applied to per-date cross-sectional percentile ranks
+# (centered: pct_rank - 0.5), never to raw values, so the scale of a
+# feature does not matter. Market-wide features (macro_*, breadth_*) were
+# removed: they are identical for all tickers on a date and cannot rank
+# candidates (they would be skipped automatically anyway).
 PRELIMINARY_WEIGHTS = {
     "analyst_rating_score": 0.15,
     "insider_net_buy_count_30d": 0.12,
@@ -54,10 +67,95 @@ PRELIMINARY_WEIGHTS = {
     "rsi_14": -0.07,  # negative = oversold is bullish
     "relative_strength_spy": 0.10,
     "sector_relative_return_20d": 0.08,
-    "breadth_advance_decline": 0.05,
-    "macro_vix_regime": -0.05,  # negative = low vol is bullish
     "volume_ratio_20d": 0.04,
 }
+
+#: Minimum number of contributing (non-constant, non-null) features.
+MIN_CONTRIBUTING_FEATURES = 3
+
+
+def _numeric(val: Any) -> float | None:
+    """Float value of a snapshot entry (bool -> 0/1), None if not numeric."""
+    if val is None or isinstance(val, (str, date)):
+        return None
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def compute_preliminary_scores(
+    snapshots: list[dict],
+    weights: dict[str, float] | None = None,
+    min_features: int = MIN_CONTRIBUTING_FEATURES,
+) -> list[dict]:
+    """Rank-based preliminary score for one date's snapshots (pure function).
+
+    For every weighted feature the cross-sectional percentile rank over the
+    snapshots that have a value is computed (average ties,
+    ``(rank-1)/(n-1)``) and centered (``- 0.5`` -> range [-0.5, 0.5]).
+    The score is ``sum(weight * centered_rank)`` over the features a ticker
+    has; missing features count as neutral (0).
+
+    Features with fewer than 2 distinct values on that date (e.g.
+    market-wide features, or all-equal values) carry no information and get
+    NO weight (they do not count as contributing).
+
+    Args:
+        snapshots: Feature dicts of ONE snapshot date (must contain "ticker").
+        weights: Feature -> weight (default :data:`PRELIMINARY_WEIGHTS`).
+        min_features: Tickers with fewer contributing features get
+            ``score = None``.
+
+    Returns:
+        New dicts (input is not mutated) with ``score``,
+        ``score_features_used`` and ``score_contributions``
+        (``{feature: {value, pct_rank, weight, contribution}}``).
+    """
+    weights = PRELIMINARY_WEIGHTS if weights is None else weights
+    out = [dict(s) for s in snapshots]
+
+    # feature -> {row index: centered pct rank}
+    ranks: dict[str, dict[int, float]] = {}
+    for feature in weights:
+        vals = [(i, _numeric(s.get(feature))) for i, s in enumerate(out)]
+        vals = [(i, v) for i, v in vals if v is not None]
+        if len({v for _, v in vals}) < 2:
+            continue  # constant / empty on this date -> no weight
+        sorted_vals = sorted(v for _, v in vals)
+        n = len(sorted_vals)
+        # average rank for ties (1-based)
+        first_pos: dict[float, int] = {}
+        counts: dict[float, int] = {}
+        for pos, v in enumerate(sorted_vals, start=1):
+            first_pos.setdefault(v, pos)
+            counts[v] = counts.get(v, 0) + 1
+        ranks[feature] = {
+            i: ((first_pos[v] + (counts[v] - 1) / 2.0) - 1.0) / (n - 1) - 0.5
+            for i, v in vals
+        }
+
+    for i, snap in enumerate(out):
+        contributions: dict[str, dict[str, float]] = {}
+        score = 0.0
+        for feature, weight in weights.items():
+            r = ranks.get(feature, {}).get(i)
+            if r is None:
+                continue
+            contrib = weight * r
+            score += contrib
+            contributions[feature] = {
+                "value": _numeric(snap.get(feature)),
+                "pct_rank": r + 0.5,
+                "weight": weight,
+                "contribution": contrib,
+            }
+        enough = len(contributions) >= min_features
+        snap["score"] = round(score, 6) if enough else None
+        snap["score_features_used"] = len(contributions)
+        snap["score_contributions"] = contributions
+    return out
 
 # Features used for display in candidate files
 DISPLAY_FEATURES = [
@@ -129,7 +227,9 @@ class ContextPackGenerator:
 
         # 6. Generate overview
         universe_size = len(snapshots)
-        self._write_overview(day_dir, target_date, top, candidates, percentiles, universe_size)
+        self._write_overview(
+            day_dir, target_date, top, candidates, percentiles, universe_size
+        )
 
         # 7. Generate per-candidate files
         for rank, candidate in enumerate(top, 1):
@@ -146,38 +246,41 @@ class ContextPackGenerator:
         return len(top)
 
     def _load_snapshots(self, target_date: date) -> list[dict]:
-        """Load all feature snapshots for a given date."""
+        """Load all feature snapshots for a given date.
+
+        Key and metadata columns (snapshot_date, ticker, computed_at,
+        feature_version) keep their native types; numeric feature/target
+        values (Decimal/int) become float, bools stay bool.
+        """
         rows = self.session.execute(
             select(FeatureSnapshot)
             .where(FeatureSnapshot.snapshot_date == target_date)
         ).scalars().all()
 
+        passthrough = set(KEY_COLUMNS) | set(META_COLUMNS)
         results = []
         for row in rows:
             d = {}
             for col in FeatureSnapshot.__table__.columns:
                 val = getattr(row, col.name, None)
-                d[col.name] = float(val) if val is not None and col.name not in ("snapshot_date", "ticker", "computed_at") and not isinstance(val, (str, bool, date)) else val
+                convert = (
+                    val is not None
+                    and col.name not in passthrough
+                    and not isinstance(val, (str, bool, date))
+                )
+                d[col.name] = float(val) if convert else val
             results.append(d)
         return results
 
     def _compute_scores(self, snapshots: list[dict]) -> list[dict]:
-        """Compute preliminary score for each snapshot."""
-        for snap in snapshots:
-            score = 0.0
-            contributing = 0
-            for feature, weight in PRELIMINARY_WEIGHTS.items():
-                val = snap.get(feature)
-                if val is not None and isinstance(val, (int, float)):
-                    score += float(val) * weight
-                    contributing += 1
-            snap["score"] = round(score, 6) if contributing >= 3 else None
-            snap["score_features_used"] = contributing
-        return snapshots
+        """Compute the rank-based preliminary score for each snapshot."""
+        return compute_preliminary_scores(snapshots, PRELIMINARY_WEIGHTS)
 
-    def _compute_percentiles(self, snapshots: list[dict]) -> dict[str, dict[str, float]]:
+    def _compute_percentiles(
+        self, snapshots: list[dict]
+    ) -> dict[str, dict[str, float]]:
         """Compute cross-sectional percentiles for each feature.
-        
+
         Returns: {ticker: {feature_name: percentile_0_to_100, ...}}
         """
         if not snapshots:
@@ -231,13 +334,16 @@ class ContextPackGenerator:
         ).scalar()
         return float(val) if val else None
 
-    def _write_overview(self, day_dir, target_date, top, all_candidates, percentiles, universe_size):
+    def _write_overview(
+        self, day_dir, target_date, top, all_candidates, percentiles, universe_size
+    ):
         """Write the daily overview file."""
         lines = [
             f"# Tagesübersicht — {target_date.isoformat()}",
             "",
-            f"Universum: {universe_size} Ticker · Scorbare Kandidaten: {len(all_candidates)}",
-            f"Preliminary Score (Platzhalter bis F1 Composite Score, Okt 2026)",
+            f"Universum: {universe_size} Ticker · "
+            f"Scorbare Kandidaten: {len(all_candidates)}",
+            "Preliminary Score (Platzhalter bis F1 Composite Score, Okt 2026)",
             "",
             "## Top-Kandidaten",
             "",
@@ -253,6 +359,11 @@ class ContextPackGenerator:
 
         # Market context
         macro = top[0] if top else {}
+        regime = macro.get('macro_vix_regime')
+        regime_str = (
+            ['Low Vol', 'Medium', 'High Vol'][int(regime)]
+            if regime is not None else '–'
+        )
         lines.extend([
             "",
             "## Marktkontext",
@@ -262,23 +373,29 @@ class ContextPackGenerator:
             f"| VIX | {macro.get('macro_vix', '–')} |",
             f"| Yield Spread (10Y-2Y) | {macro.get('macro_yield_spread', '–')} |",
             f"| HY Spread | {macro.get('macro_hy_spread', '–')} |",
-            f"| Breadth (Advance/Decline) | {macro.get('breadth_advance_decline', '–')} |",
+            "| Breadth (Advance/Decline) | "
+            f"{macro.get('breadth_advance_decline', '–')} |",
             f"| % über SMA50 | {macro.get('breadth_pct_above_sma50', '–')} |",
-            f"| VIX Regime | {['Low Vol', 'Medium', 'High Vol'][int(macro.get('macro_vix_regime', 1))] if macro.get('macro_vix_regime') is not None else '–'} |",
+            f"| VIX Regime | {regime_str} |",
             "",
             "## Datenqualität",
             "",
-            "Preliminary Score basiert auf fest gewichteten Features.",
+            "Preliminary Score = gewichtete Summe der Perzentil-Ränge im "
+            "Tagesquerschnitt",
+            "(zentriert). Die Gewichte sind VORLÄUFIG und nicht validiert.",
             "Ab Oktober 2026 (R1): ML-gewichteter Composite Score mit Guardrails.",
             "",
             "---",
-            f"*Generiert {target_date.isoformat()} · Sprint 9.5c F2 MVP · Keine Anlageberatung*",
+            f"*Generiert {target_date.isoformat()} · Sprint 9.5c F2 MVP · "
+            "Keine Anlageberatung*",
         ])
 
         filepath = day_dir / "00_uebersicht.md"
         filepath.write_text("\n".join(lines), encoding="utf-8-sig")
 
-    def _write_candidate(self, day_dir, target_date, rank, candidate, pctiles, universe_size):
+    def _write_candidate(
+        self, day_dir, target_date, rank, candidate, pctiles, universe_size
+    ):
         """Write a single candidate Markdown file with YAML frontmatter."""
         ticker = candidate["ticker"]
         info = self._get_universe_info(ticker)
@@ -326,26 +443,36 @@ class ContextPackGenerator:
         for feature in DISPLAY_FEATURES:
             val = candidate.get(feature)
             pct = pctiles.get(feature)
-            val_str = f"{val:.4f}" if isinstance(val, float) else str(val) if val is not None else "–"
+            if isinstance(val, float):
+                val_str = f"{val:.4f}"
+            else:
+                val_str = str(val) if val is not None else "–"
             pct_str = f"{pct:.0f}" if pct is not None else "–"
             body.append(f"| {feature} | {val_str} | {pct_str} |")
 
-        # Score attribution
+        # Score attribution (rank-based; contributions sum to the score)
         body.extend([
             "",
-            "## 2. Score-Attribution (Preliminary Weights)",
+            "## 2. Score-Attribution (vorläufige Gewichte, nicht validiert)",
             "",
-            "| Feature | Wert | Gewicht | Beitrag |",
-            "|---|---|---|---|",
+            "Beitrag = Gewicht × (Perzentil-Rang im Tagesquerschnitt − 0.5). "
+            "Features ohne Querschnitts-Varianz an diesem Tag zählen nicht.",
+            "",
+            "| Feature | Wert | Perzentil-Rang | Gewicht | Beitrag |",
+            "|---|---|---|---|---|",
         ])
-        for feature, weight in sorted(PRELIMINARY_WEIGHTS.items(), key=lambda x: abs(x[1]), reverse=True):
-            val = candidate.get(feature)
-            if val is not None and isinstance(val, (int, float)):
-                contribution = float(val) * weight
-                body.append(
-                    f"| {feature} | {float(val):.4f} | {weight:+.2f} "
-                    f"| {contribution:+.4f} |"
-                )
+        contributions = candidate.get("score_contributions", {})
+        for feature, c in sorted(
+            contributions.items(),
+            key=lambda kv: abs(kv[1]["contribution"]),
+            reverse=True,
+        ):
+            val = c.get("value")
+            val_str = f"{val:.4f}" if val is not None else "–"
+            body.append(
+                f"| {feature} | {val_str} | {c['pct_rank'] * 100:.0f} "
+                f"| {c['weight']:+.2f} | {c['contribution']:+.4f} |"
+            )
 
         # Market context
         body.extend([
@@ -362,9 +489,11 @@ class ContextPackGenerator:
             "",
             "## 4. Datenqualität",
             "",
-            f"Vollständigkeit: {completeness:.0%} ({filled}/{len(DISPLAY_FEATURES)} Features verfügbar)",
+            f"Vollständigkeit: {completeness:.0%} "
+            f"({filled}/{len(DISPLAY_FEATURES)} Features verfügbar)",
             "",
-            "> **Hinweis:** Preliminary Score (Sprint 9.5c MVP). Ab Oktober 2026: ML-gewichteter Composite Score.",
+            "> **Hinweis:** Preliminary Score (Sprint 9.5c MVP, vorläufige "
+            "Gewichte). Ab Oktober 2026: ML-gewichteter Composite Score.",
             "",
             "---",
             f"*Generiert {target_date.isoformat()} · Keine Anlageberatung*",

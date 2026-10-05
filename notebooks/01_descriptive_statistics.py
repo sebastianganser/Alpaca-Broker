@@ -3,20 +3,33 @@
 # Exploratory Data Analysis (EDA) of feature snapshots.
 
 # %%
-import os, sys
-import pandas as pd
-import numpy as np
+import os
+import sys
+
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
 
 # Setup plotting style
 sns.set_theme(style="whitegrid")
 plt.rcParams['figure.figsize'] = (10, 6)
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath('__file__')), '..', 'src'))
-from trading_signals.config import get_settings
-from sqlalchemy import create_engine
-from IPython.display import display
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath('__file__')), '..', 'src')
+)
+from IPython.display import display  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy import inspect as sa_inspect  # noqa: E402
+
+from trading_signals.analysis.feature_groups import group_features  # noqa: E402
+from trading_signals.analysis.feature_report import build_load_query  # noqa: E402
+from trading_signals.config import get_settings  # noqa: E402
+from trading_signals.db.models.features import (  # noqa: E402
+    FEATURE_COLUMNS,
+    TARGET_COLUMNS,
+)
+from trading_signals.utils.retention import ml_start_date  # noqa: E402
 
 # %% [markdown]
 # ## 1. Daten Laden & Überblick (Data Loading & Overview)
@@ -26,30 +39,27 @@ from IPython.display import display
 settings = get_settings()
 engine = create_engine(settings.database_url)
 print("Loading data from database...")
-df = pd.read_sql('SELECT * FROM signals.feature_snapshots ORDER BY snapshot_date, ticker', engine)
-print("Data loaded successfully.")
+# Explicit columns (keys + FEATURE_COLUMNS + TARGET_COLUMNS) from ml_start_date() on
+_table_cols = [
+    c['name']
+    for c in sa_inspect(engine).get_columns('feature_snapshots', schema='signals')
+]
+_sql, _params = build_load_query(_table_cols, ml_start_date())
+df = pd.read_sql(_sql, engine, params=_params)
+print(f"Data loaded successfully (snapshot_date >= {ml_start_date()}).")
 
-# Feature Groups Definition
-feature_groups = {
-    'ARK': ['ark_in_etf_count', 'ark_total_weight', 'ark_weight_delta_1d', 'ark_weight_delta_5d', 'ark_weight_delta_20d', 'ark_conviction_score', 'ark_multi_etf_signal', 'ark_increase_days_10d', 'ark_increase_days_20d', 'ark_conviction_streak', 'ark_weight_trend_20d'],
-    'Insider': ['insider_net_buy_count_30d', 'insider_buy_value_30d', 'insider_cluster_active', 'insider_cluster_score', 'cluster_count_30d', 'cluster_count_60d', 'cluster_score_sum_60d', 'days_since_last_cluster'],
-    'Analyst': ['analyst_rating_score', 'analyst_upgrades_30d', 'analyst_price_target_upside', 'analyst_downgrades_30d', 'analyst_net_sentiment_30d', 'analyst_net_sentiment_60d', 'analyst_upgrade_streak'],
-    'Politician': ['politician_buy_count_60d_disclosure', 'politician_distinct_90d_disclosure', 'politician_buy_count_60d_transaction', 'politician_distinct_90d_transaction'],
-    'Fundamentals': ['pe_ratio', 'forward_pe', 'ps_ratio', 'revenue_growth_yoy', 'profit_margin', 'debt_to_equity', 'pe_trend_4w', 'margin_trend_4w'],
-    'Technical': ['price_vs_sma50', 'price_vs_sma200', 'rsi_14', 'relative_strength_spy', 'volume_ratio_20d', 'atr_14_pct'],
-    'Earnings': ['earnings_days_until', 'consecutive_beats', 'surprise_trend_3q'],
-    'Sentiment': ['sentiment_avg_7d', 'sentiment_avg_30d', 'sentiment_momentum', 'sentiment_neg_count_7d', 'sentiment_article_count_7d', 'market_sentiment_7d'],
-}
+# Feature Groups Definition (derived from the ORM model, every feature included)
+feature_groups = group_features(FEATURE_COLUMNS)
 
-targets = ['return_1d', 'return_5d', 'return_20d']
-# Excluding return_60d and 13F features
+targets = list(TARGET_COLUMNS)
 
 # Convert snapshot_date to datetime if not already
 if not pd.api.types.is_datetime64_any_dtype(df['snapshot_date']):
     df['snapshot_date'] = pd.to_datetime(df['snapshot_date'])
 
 print(f"Dataset Shape: {df.shape}")
-print(f"Date Range: {df['snapshot_date'].min().date()} to {df['snapshot_date'].max().date()}")
+print(f"Date Range: {df['snapshot_date'].min().date()} to "
+      f"{df['snapshot_date'].max().date()}")
 print(f"Unique Tickers: {df['ticker'].nunique()}")
 print(f"Total Snapshots: {len(df)}")
 print("\n--- DataFrame Info ---")
@@ -65,7 +75,8 @@ missing_rates = missing_rates[missing_rates > 0]
 
 if not missing_rates.empty:
     plt.figure(figsize=(12, 14))
-    sns.barplot(x=missing_rates.values, y=missing_rates.index, hue=missing_rates.index, palette="viridis", legend=False)
+    sns.barplot(x=missing_rates.values, y=missing_rates.index,
+                hue=missing_rates.index, palette="viridis", legend=False)
     plt.title("Missing Rates per Feature (%)")
     plt.xlabel("Missing Rate (%)")
     plt.ylabel("Feature")
@@ -78,12 +89,17 @@ else:
 # Missing rate per feature x month heatmap
 df['month'] = df['snapshot_date'].dt.to_period('M')
 # Drop non-feature columns before grouping
-feat_cols = [c for c in df.columns if c not in ['month', 'snapshot_date', 'ticker', 'id']]
+feat_cols = [
+    c for c in df.columns if c not in ['month', 'snapshot_date', 'ticker', 'id']
+]
 if feat_cols:
-    missing_by_month = df.groupby('month')[feat_cols].apply(lambda x: x.isnull().mean()) * 100
-    
+    missing_by_month = (
+        df.groupby('month')[feat_cols].apply(lambda x: x.isnull().mean()) * 100
+    )
+
     plt.figure(figsize=(20, 10))
-    sns.heatmap(missing_by_month.T, cmap="YlOrRd", cbar_kws={'label': 'Missing Rate (%)'})
+    sns.heatmap(missing_by_month.T, cmap="YlOrRd",
+                cbar_kws={'label': 'Missing Rate (%)'})
     plt.title("Missing Rate Heatmap: Feature vs. Month")
     plt.xlabel("Month")
     plt.ylabel("Feature")
@@ -125,19 +141,19 @@ for group_name, features in feature_groups.items():
     available_features = [f for f in features if f in df.columns]
     if not available_features:
         continue
-    
+
     num_features = len(available_features)
     cols = 3
     rows = int(np.ceil(num_features / cols))
-    
+
     fig, axes = plt.subplots(rows, cols, figsize=(15, 4 * rows))
     fig.suptitle(f"Distributions: {group_name} Features", fontsize=16)
-    
+
     # Handle scalar axes case
     if rows == 1 and cols == 1:
         axes = np.array([axes])
     axes = axes.flatten()
-    
+
     for i, feature in enumerate(available_features):
         data = df[feature].dropna()
         if not data.empty:
@@ -145,10 +161,10 @@ for group_name, features in feature_groups.items():
         axes[i].set_title(feature)
         axes[i].set_xlabel('')
         axes[i].set_ylabel('')
-        
+
     for j in range(i + 1, len(axes)):
         fig.delaxes(axes[j])
-        
+
     plt.tight_layout()
     plt.show()
 
@@ -163,7 +179,7 @@ for col in numeric_cols:
     IQR = Q3 - Q1
     lower_bound = Q1 - 1.5 * IQR
     upper_bound = Q3 + 1.5 * IQR
-    
+
     non_null_count = df[col].notnull().sum()
     if non_null_count > 0:
         outliers = ((df[col] < lower_bound) | (df[col] > upper_bound)).sum()
@@ -183,9 +199,11 @@ for feature, pct in sorted(outlier_report.items(), key=lambda x: x[1], reverse=T
 # Distribution plots for returns
 available_targets = [t for t in targets if t in df.columns]
 if available_targets:
-    fig, axes = plt.subplots(1, len(available_targets), figsize=(6 * len(available_targets), 5))
+    fig, axes = plt.subplots(
+        1, len(available_targets), figsize=(6 * len(available_targets), 5)
+    )
     fig.suptitle("Target Return Distributions", fontsize=16)
-    
+
     if len(available_targets) == 1:
         axes = [axes]
 
@@ -222,18 +240,22 @@ if available_targets:
 # Returns by month
 if available_targets:
     df['calendar_month'] = df['snapshot_date'].dt.month
-    fig, axes = plt.subplots(1, len(available_targets), figsize=(6 * len(available_targets), 6))
+    fig, axes = plt.subplots(
+        1, len(available_targets), figsize=(6 * len(available_targets), 6)
+    )
     fig.suptitle("Returns by Calendar Month", fontsize=16)
-    
+
     if len(available_targets) == 1:
         axes = [axes]
-    
+
     for i, target in enumerate(available_targets):
-        sns.boxplot(x='calendar_month', y=target, data=df, ax=axes[i], palette="Set3", showfliers=False, hue='calendar_month', legend=False)
+        sns.boxplot(x='calendar_month', y=target, data=df, ax=axes[i],
+                    palette="Set3", showfliers=False, hue='calendar_month',
+                    legend=False)
         axes[i].set_title(target)
         axes[i].set_xlabel('Month')
         axes[i].set_ylabel('Return')
-        
+
     plt.tight_layout()
     plt.show()
 
@@ -246,27 +268,29 @@ for group_name, features in feature_groups.items():
     available = [f for f in features if f in df.columns]
     if not available:
         continue
-    
+
     print(f"\n{'='*50}\nGroup: {group_name}\n{'='*50}")
-    
+
     for feature in available:
         # Check if feature is boolean or pseudo-boolean
         is_bool = False
         non_null_vals = df[feature].dropna()
-        if not non_null_vals.empty and set(non_null_vals.unique()).issubset({0, 1, 0.0, 1.0}):
+        values = set(non_null_vals.unique())
+        if not non_null_vals.empty and values.issubset({0, 1, 0.0, 1.0}):
             is_bool = True
-            
+
         coverage = df[feature].notnull().mean() * 100
         print(f"\nFeature: {feature}")
         print(f"Coverage: {coverage:.2f}%")
-        
+
         if is_bool:
             counts = df[feature].value_counts(normalize=True) * 100
             print(f"Boolean Frequencies:\n{counts.to_string()}")
         else:
             desc = df[feature].describe()
-            print(f"Mean: {desc['mean']:.4f} | Std: {desc['std']:.4f} | Min: {desc['min']:.4f} | Max: {desc['max']:.4f}")
-            
+            print(f"Mean: {desc['mean']:.4f} | Std: {desc['std']:.4f} | "
+                  f"Min: {desc['min']:.4f} | Max: {desc['max']:.4f}")
+
             # Top 5 highest values
             top_5 = df.nlargest(5, feature)[['ticker', 'snapshot_date', feature]]
             print(f"Top 5 Tickers by value:\n{top_5.to_string(index=False)}")

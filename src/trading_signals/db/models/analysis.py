@@ -13,7 +13,6 @@ from sqlalchemy import (
     Float,
     Index,
     Integer,
-    String,
     Text,
     func,
 )

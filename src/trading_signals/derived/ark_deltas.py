@@ -12,7 +12,7 @@ Run after each ARKHoldingsCollector run to keep deltas up to date.
 
 from datetime import date
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -76,22 +76,31 @@ class ARKDeltaComputer:
             if delta_type == "unchanged":
                 continue
 
+            def _num(obj, attr):
+                val = getattr(obj, attr) if obj is not None else None
+                return float(val) if val is not None else None
+
+            values = dict(
+                delta_date=target_date,
+                etf_ticker=etf_ticker,
+                ticker=ticker,
+                delta_type=delta_type,
+                shares_prev=_num(prev, "shares"),
+                shares_curr=_num(curr, "shares"),
+                shares_delta=shares_delta,
+                weight_prev=_num(prev, "weight_pct"),
+                weight_curr=_num(curr, "weight_pct"),
+                weight_delta=weight_delta,
+            )
             stmt = (
                 pg_insert(ARKDelta)
-                .values(
-                    delta_date=target_date,
-                    etf_ticker=etf_ticker,
-                    ticker=ticker,
-                    delta_type=delta_type,
-                    shares_prev=float(prev.shares) if prev and prev.shares else None,
-                    shares_curr=float(curr.shares) if curr and curr.shares else None,
-                    shares_delta=shares_delta,
-                    weight_prev=float(prev.weight_pct) if prev and prev.weight_pct else None,
-                    weight_curr=float(curr.weight_pct) if curr and curr.weight_pct else None,
-                    weight_delta=weight_delta,
-                )
-                .on_conflict_do_nothing(
-                    index_elements=["delta_date", "etf_ticker", "ticker"]
+                .values(**values)
+                .on_conflict_do_update(
+                    index_elements=["delta_date", "etf_ticker", "ticker"],
+                    set_={
+                        k: v for k, v in values.items()
+                        if k not in ("delta_date", "etf_ticker", "ticker")
+                    },
                 )
             )
             result = self.session.execute(stmt)
@@ -160,12 +169,22 @@ class ARKDeltaComputer:
 
         Returns:
             Tuple of (delta_type, shares_delta, weight_delta).
+            New positions: deltas = +current values; closed positions:
+            deltas = -previous values (review finding M6).
         """
         if curr and not prev:
-            return ("new_position", None, None)
+            return (
+                "new_position",
+                float(curr.shares) if curr.shares is not None else None,
+                float(curr.weight_pct) if curr.weight_pct is not None else None,
+            )
 
         if prev and not curr:
-            return ("closed", None, None)
+            return (
+                "closed",
+                -float(prev.shares) if prev.shares is not None else None,
+                -float(prev.weight_pct) if prev.weight_pct is not None else None,
+            )
 
         # Both exist – compare shares
         curr_shares = float(curr.shares) if curr.shares else 0

@@ -83,8 +83,9 @@ class FeatureSnapshot(Base):
     cluster_count_60d: Mapped[int | None] = mapped_column(Integer)
     cluster_score_sum_60d: Mapped[float | None] = mapped_column(Numeric(10, 4))
     days_since_last_cluster: Mapped[int | None] = mapped_column(Integer)
-    insider_buy_ratio_30d: Mapped[float | None] = mapped_column(Numeric(6, 4))  # Sprint 9.5b E2
-    insider_buy_ratio_90d: Mapped[float | None] = mapped_column(Numeric(6, 4))  # Sprint 9.5b E2
+    # Sprint 9.5b E2
+    insider_buy_ratio_30d: Mapped[float | None] = mapped_column(Numeric(6, 4))
+    insider_buy_ratio_90d: Mapped[float | None] = mapped_column(Numeric(6, 4))
 
     # ── Analyst Features (point-in-time) ─────────────────────────────
     analyst_rating_score: Mapped[float | None] = mapped_column(Numeric(10, 4))
@@ -118,8 +119,9 @@ class FeatureSnapshot(Base):
     # ── 13F Features ─────────────────────────────────────────────────
     form13f_top_holder_count: Mapped[int | None] = mapped_column(Integer)
     form13f_new_positions_count: Mapped[int | None] = mapped_column(Integer)
-    form13f_exited_positions_count: Mapped[int | None] = mapped_column(Integer)  # Sprint 9.5b E1
-    form13f_holder_delta_qoq: Mapped[float | None] = mapped_column(Numeric(10, 4))  # Sprint 9.5b E1
+    # Sprint 9.5b E1
+    form13f_exited_positions_count: Mapped[int | None] = mapped_column(Integer)
+    form13f_holder_delta_qoq: Mapped[float | None] = mapped_column(Numeric(10, 4))
 
     # ── Fundamentals (point-in-time) ─────────────────────────────────
     pe_ratio: Mapped[float | None] = mapped_column(Numeric(16, 4))
@@ -146,7 +148,8 @@ class FeatureSnapshot(Base):
     consecutive_beats: Mapped[int | None] = mapped_column(Integer)
     surprise_trend_3q: Mapped[float | None] = mapped_column(Numeric(10, 4))
     sue_last: Mapped[float | None] = mapped_column(Numeric(10, 4))  # Sprint 9.5b B2
-    days_since_last_earnings: Mapped[int | None] = mapped_column(Integer)  # Sprint 9.5b B2
+    # Sprint 9.5b B2
+    days_since_last_earnings: Mapped[int | None] = mapped_column(Integer)
 
     # ── Sentiment Features (news-based, Sprint 8c) ───────────────────
     sentiment_avg_7d: Mapped[float | None] = mapped_column(Numeric(6, 4))
@@ -155,7 +158,8 @@ class FeatureSnapshot(Base):
     sentiment_neg_count_7d: Mapped[int | None] = mapped_column(Integer)
     sentiment_article_count_7d: Mapped[int | None] = mapped_column(Integer)
     market_sentiment_7d: Mapped[float | None] = mapped_column(Numeric(6, 4))
-    news_volume_ratio_7d: Mapped[float | None] = mapped_column(Numeric(10, 4))  # Sprint 9.5b E3
+    # Sprint 9.5b E3
+    news_volume_ratio_7d: Mapped[float | None] = mapped_column(Numeric(10, 4))
 
     # ── Liquidity Features (Sprint 9.5b E4) ──────────────────────────
     dollar_volume_20d: Mapped[float | None] = mapped_column(Numeric(20, 0))
@@ -196,6 +200,11 @@ class FeatureSnapshot(Base):
     eps_revisions_net_30d: Mapped[int | None] = mapped_column(Integer)
 
     # ── Target Variables (backfilled retrospectively) ────────────────
+    # Definition (FEATURE_VERSION >= 2026.10-1, see target_backfill.py):
+    #   return_h = close(d+h) / open(d+1) - 1
+    # i.e. entry at the OPEN of the next session after d (features of d
+    # are only available after the close of d), exit at the CLOSE of the
+    # h-th session after d.
     return_1d: Mapped[float | None] = mapped_column(Numeric(10, 6))
     return_5d: Mapped[float | None] = mapped_column(Numeric(10, 6))
     return_20d: Mapped[float | None] = mapped_column(Numeric(10, 6))
@@ -205,6 +214,9 @@ class FeatureSnapshot(Base):
     computed_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
+    # Version of the feature definitions that produced this row
+    # (derived.feature_pipeline.FEATURE_VERSION, migration 030).
+    feature_version: Mapped[str | None] = mapped_column(String(20))
 
     def __repr__(self) -> str:
         return (
@@ -213,3 +225,17 @@ class FeatureSnapshot(Base):
             f"ark_score={self.ark_conviction_score}, "
             f"insider_active={self.insider_cluster_active})>"
         )
+
+
+#: Primary-key columns of feature_snapshots.
+KEY_COLUMNS: tuple[str, ...] = ("snapshot_date", "ticker")
+#: Forward-return target columns (never use as model inputs).
+TARGET_COLUMNS: tuple[str, ...] = ("return_1d", "return_5d", "return_20d", "return_60d")
+#: Bookkeeping columns that are neither features nor targets.
+META_COLUMNS: tuple[str, ...] = ("computed_at", "feature_version")
+#: All feature columns, derived from the model (single source of truth).
+FEATURE_COLUMNS: tuple[str, ...] = tuple(
+    c.name
+    for c in FeatureSnapshot.__table__.columns
+    if c.name not in KEY_COLUMNS + TARGET_COLUMNS + META_COLUMNS
+)

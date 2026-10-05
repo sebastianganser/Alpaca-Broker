@@ -12,7 +12,6 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
-    Text,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column

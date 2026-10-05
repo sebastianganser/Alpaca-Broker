@@ -4,21 +4,21 @@ Run inside the Docker container:
     docker exec -it alpaca-broker uv run python scripts/backfill_insider_clusters.py
 
 This computes clusters across the full insider_trades history
-(since 2023-01-01), not just the default 90-day window.
+(since ``data_start_date()`` – rolling 20-quarter window), not just the
+default 90-day window.
 Uses UPSERT so it's safe to run multiple times.
 """
 
-from datetime import date
-
 from trading_signals.db.session import get_session
 from trading_signals.derived.insider_clusters import InsiderClusterComputer
+from trading_signals.utils.retention import data_start_date
 
 
 def main():
-    since_date = date(2023, 1, 1)
+    since_date = data_start_date()
 
     print(f"\n{'='*60}")
-    print(f"  Insider Cluster Backfill")
+    print("  Insider Cluster Backfill")
     print(f"  Computing clusters from {since_date} to today")
     print(f"{'='*60}\n")
 
@@ -28,7 +28,7 @@ def main():
         session.commit()
 
     print(f"\n✅ Done: {written} clusters computed/updated")
-    print(f"   (UPSERT — existing clusters were updated, new ones inserted)")
+    print("   (UPSERT — existing clusters were updated, new ones inserted)")
 
 
 if __name__ == "__main__":

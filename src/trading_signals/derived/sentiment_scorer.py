@@ -63,18 +63,40 @@ class FinBERTScorer(SentimentScorer):
     Runs on CPU, loaded lazily on first use.
 
     Labels: 'positive', 'negative', 'neutral'
+
+    Scoring modes (review finding M9):
+      * ``"top_label"`` (default, ``model_version="finbert-v1"``): signed
+        probability of the winning label; neutral → 0.0. Discards how
+        positive/negative a "neutral" headline was.
+      * ``"prob_diff"`` (opt-in, ``model_version="finbert-v2-probdiff"``):
+        score = P(positive) − P(negative) from all three class
+        probabilities (pipeline ``top_k=None``); continuous in [-1, 1].
+        Stored under a different ``model_version`` so both can coexist;
+        switching the feature pipeline requires re-scoring the history
+        and updating ``feature_pipeline.SENTIMENT_MODEL_VERSION``.
     """
 
     model_version = "finbert-v1"
 
-    def __init__(self, batch_size: int = 32) -> None:
+    TOP_LABEL = "top_label"
+    PROB_DIFF = "prob_diff"
+    PROB_DIFF_MODEL_VERSION = "finbert-v2-probdiff"
+
+    def __init__(self, batch_size: int = 32, mode: str = TOP_LABEL) -> None:
         """Initialize FinBERT scorer.
 
         Args:
             batch_size: Number of texts to process per inference batch.
                         32 is optimal for CPU (balances throughput vs latency).
+            mode: ``"top_label"`` (default, finbert-v1) or ``"prob_diff"``.
         """
+        if mode not in (self.TOP_LABEL, self.PROB_DIFF):
+            raise ValueError(f"Unknown FinBERT scoring mode: {mode!r}")
         self._batch_size = batch_size
+        self._mode = mode
+        if mode == self.PROB_DIFF:
+            # Instance attribute shadows the class default
+            self.model_version = self.PROB_DIFF_MODEL_VERSION
         self._pipe = None  # Lazy-loaded
 
     def _ensure_model(self) -> None:
@@ -88,11 +110,15 @@ class FinBERTScorer(SentimentScorer):
         )
         from transformers import pipeline
 
+        kwargs = {}
+        if self._mode == self.PROB_DIFF:
+            kwargs["top_k"] = None  # return all class probabilities
         self._pipe = pipeline(
             "sentiment-analysis",
             model="ProsusAI/finbert",
             device=-1,  # CPU
             batch_size=self._batch_size,
+            **kwargs,
         )
         logger.info(f"[{self.model_version}] FinBERT model loaded successfully")
 
@@ -136,16 +162,34 @@ class FinBERTScorer(SentimentScorer):
         return results
 
 
-def _normalize_finbert_result(raw: dict) -> SentimentResult:
+def _normalize_finbert_result(raw: dict | list[dict]) -> SentimentResult:
     """Normalize a FinBERT pipeline result to a SentimentResult.
 
-    FinBERT returns:
+    FinBERT returns (default pipeline):
       {"label": "positive"|"negative"|"neutral", "score": 0.0-1.0}
 
     We normalize to:
       score: -1.0 (negative) to +1.0 (positive), 0.0 (neutral)
       confidence: the raw model confidence (0.0-1.0)
+
+    With ``top_k=None`` the pipeline returns a list of label dicts (all
+    classes); then score = P(positive) − P(negative), label/confidence =
+    the most probable class (prob-diff mode, M9).
     """
+    if isinstance(raw, list):
+        probs = {
+            str(r.get("label", "")).lower(): float(r.get("score", 0.0)) for r in raw
+        }
+        if not probs:
+            return SentimentResult(label="neutral", score=0.0, confidence=0.0)
+        label = max(probs, key=probs.get)
+        score = probs.get("positive", 0.0) - probs.get("negative", 0.0)
+        return SentimentResult(
+            label=label,
+            score=round(score, 4),
+            confidence=round(probs[label], 4),
+        )
+
     label = raw.get("label", "neutral").lower()
     confidence = float(raw.get("score", 0.0))
 

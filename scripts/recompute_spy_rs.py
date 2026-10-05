@@ -24,7 +24,7 @@ with get_session() as session:
     # Verify SPY data is available
     computer._spy_df = computer._load_price_history("SPY")
     if computer._spy_df is None or len(computer._spy_df) == 0:
-        print("ERROR: No SPY price data! Run backfill_spy.py first.")
+        print("ERROR: No SPY price data! Run scripts/repair/collectors_refetch_prices.py --apply --tickers SPY first.")
         exit(1)
     
     print(f"SPY data: {len(computer._spy_df)} rows")

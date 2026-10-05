@@ -1,7 +1,7 @@
 """Tests for ARKDeltaComputer."""
 
 from datetime import date
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -24,13 +24,32 @@ class TestClassification:
         curr = MockHolding("TSLA", 1000, 5.0)
         delta_type, shares_delta, weight_delta = ARKDeltaComputer._classify(curr, None)
         assert delta_type == "new_position"
-        assert shares_delta is None
+        # New position: full size is the (positive) delta
+        assert shares_delta == 1000
+        assert weight_delta == pytest.approx(5.0)
 
     def test_closed_position(self):
         prev = MockHolding("TSLA", 1000, 5.0)
         delta_type, shares_delta, weight_delta = ARKDeltaComputer._classify(None, prev)
         assert delta_type == "closed"
+        # Closed position: full previous size is the (negative) delta
+        assert shares_delta == -1000
+        assert weight_delta == pytest.approx(-5.0)
+
+    def test_new_position_with_missing_values(self):
+        curr = MockHolding("TSLA", None, None)
+        delta_type, shares_delta, weight_delta = ARKDeltaComputer._classify(curr, None)
+        assert delta_type == "new_position"
         assert shares_delta is None
+        assert weight_delta is None
+
+    def test_zero_weight_is_not_treated_as_missing(self):
+        """0.0 weights must yield a 0.0 delta (not None) - `is not None` checks."""
+        curr = MockHolding("TSLA", 1000, 0.0)
+        prev = MockHolding("TSLA", 1000, 0.0)
+        _, shares_delta, weight_delta = ARKDeltaComputer._classify(curr, prev)
+        assert shares_delta == 0
+        assert weight_delta == pytest.approx(0.0)
 
     def test_increased(self):
         curr = MockHolding("TSLA", 1500, 6.0)

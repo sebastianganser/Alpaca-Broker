@@ -1,9 +1,8 @@
 """Tests for FeaturePipeline and TargetBackfillComputer."""
 
-from datetime import date, timedelta
-from unittest.mock import MagicMock, patch, PropertyMock
+from datetime import date
+from unittest.mock import MagicMock
 
-import pytest
 
 from trading_signals.derived.feature_pipeline import FeaturePipeline
 
@@ -110,28 +109,55 @@ class TestRatingScores:
 class TestUpsert:
     """Test UPSERT logic."""
 
-    def test_upsert_skips_empty_features(self):
-        """If all features are None, upsert should be skipped."""
+    def test_upsert_deletes_row_for_empty_features(self):
+        """If all features are None, no row is written and a stale row is deleted."""
         session = MagicMock()
         pipeline = FeaturePipeline(session)
 
-        pipeline._upsert("AAPL", date(2026, 5, 1), {
+        written = pipeline._upsert("AAPL", date(2026, 5, 1), {
             "ark_in_etf_count": None,
             "insider_net_buy_count_30d": None,
         })
-        # No execute call should happen since all values are None
-        session.execute.assert_not_called()
+        assert written is False
+        session.execute.assert_called_once()
+        stmt = session.execute.call_args[0][0]
+        assert stmt.__visit_name__ == "delete"
 
     def test_upsert_calls_execute_with_data(self):
         """If features have values, upsert should call execute."""
         session = MagicMock()
         pipeline = FeaturePipeline(session)
 
-        pipeline._upsert("AAPL", date(2026, 5, 1), {
+        written = pipeline._upsert("AAPL", date(2026, 5, 1), {
             "ark_in_etf_count": 3,
             "ark_total_weight": 5.5,
         })
+        assert written is True
         session.execute.assert_called_once()
+
+    def test_upsert_zero_is_a_value(self):
+        """0 / 0.0 / False are values, not missing (no truthiness checks)."""
+        session = MagicMock()
+        pipeline = FeaturePipeline(session)
+        assert pipeline._upsert("AAPL", date(2026, 5, 1), {"cluster_count_30d": 0})
+
+    def test_upsert_overwrites_all_columns_and_version(self):
+        """ON CONFLICT updates every feature column + feature_version + computed_at."""
+        from sqlalchemy.dialects import postgresql
+
+        from trading_signals.db.models.features import FEATURE_COLUMNS
+
+        session = MagicMock()
+        pipeline = FeaturePipeline(session)
+        pipeline._upsert("AAPL", date(2026, 5, 1), {"rsi_14": 55.0})
+        stmt = session.execute.call_args[0][0]
+        sql = str(stmt.compile(dialect=postgresql.dialect()))
+        assert "ON CONFLICT (snapshot_date, ticker) DO UPDATE" in sql
+        update_part = sql.split("DO UPDATE SET", 1)[1]
+        for col in FEATURE_COLUMNS:
+            assert f"{col} = excluded.{col}" in update_part
+        assert "feature_version = excluded.feature_version" in update_part
+        assert "computed_at = now()" in update_part
 
 
 # ── TargetBackfillComputer Tests ─────────────────────────────────────────
