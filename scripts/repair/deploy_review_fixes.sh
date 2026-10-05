@@ -48,7 +48,7 @@ if [ "$APPLY" != "--apply" ]; then
 fi
 
 echo "==> 5/5 Reparatur im Hintergrund starten (Preis-Refetch -> Feature-Rebuild)"
-docker exec "$CONTAINER" mkdir -p /app/repair_logs
+docker exec -u 0 "$CONTAINER" sh -c 'mkdir -p /app/repair_logs && chown 99:100 /app/repair_logs'
 docker exec -d "$CONTAINER" sh -c '
   .venv/bin/python scripts/repair/collectors_refetch_prices.py --apply > /app/repair_logs/1_refetch.log 2>&1 &&
   .venv/bin/python scripts/repair/features_rebuild.py --apply > /app/repair_logs/2_rebuild.log 2>&1;

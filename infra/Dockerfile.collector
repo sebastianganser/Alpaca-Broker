@@ -82,6 +82,10 @@ COPY --from=uv /uv /usr/local/bin/uv
 # Copy and set entrypoint (auto-migration on startup)
 COPY --chmod=755 infra/entrypoint.sh /app/entrypoint.sh
 
+# WORKDIR creates /app as root; COPY --chown only covers the copied contents.
+# Let the runtime user create directories in /app (e.g. repair_logs).
+RUN chown ${APP_UID}:${APP_GID} /app
+
 USER ${APP_UID}:${APP_GID}
 
 # Expose the API + UI port
