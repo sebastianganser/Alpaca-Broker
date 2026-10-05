@@ -39,6 +39,7 @@ class Form13FHolding(Base):
             name="uq_13f_holding_key",
         ),
         Index("idx_13f_ticker", "ticker"),
+        Index("idx_13f_ticker_period", "ticker", "report_period"),
         Index("idx_13f_filer_period", "filer_cik", "report_period"),
         {"schema": "signals"},
     )

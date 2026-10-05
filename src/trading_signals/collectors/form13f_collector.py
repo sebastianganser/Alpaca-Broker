@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 from trading_signals.collectors._db import release_transaction
 from trading_signals.collectors._parsing import parse_date, safe_float
 from trading_signals.collectors.base import BaseCollector
+from trading_signals.collectors.cusip_resolver import CusipResolver
 from trading_signals.collectors.sec_client import SECClient
 from trading_signals.db.models.form13f import Form13FHolding
 from trading_signals.utils.logging import get_logger
@@ -157,15 +158,29 @@ class Form13FCollector(BaseCollector):
     # store(); set by fetch() (instance attribute), consumed by store().
     _replace_keys: frozenset = frozenset()
 
-    def __init__(self, lookback_days: int = 90) -> None:
+    def __init__(
+        self,
+        lookback_days: int = 90,
+        filers: dict[str, str] | None = None,
+        cusip_resolver: CusipResolver | None = None,
+        until_date: date | None = None,
+    ) -> None:
         """Initialize with a lookback window.
 
         Args:
             lookback_days: How far back to look for new filings.
                           Default 90 covers a full quarter.
+            filers: Optional subset of TOP_FILERS (CIK → name), e.g. for a
+                    filer-by-filer history backfill. Default: all.
+            cusip_resolver: CUSIP → ticker resolver (injectable for tests).
+            until_date: Optional upper bound for the filing date (history
+                        backfills in windows to bound memory).
         """
         self.lookback_days = lookback_days
+        self.filers = dict(filers) if filers is not None else dict(TOP_FILERS)
         self.sec_client = SECClient()
+        self.cusip_resolver = cusip_resolver or CusipResolver()
+        self.until_date = until_date
 
     def fetch(self, session: Session) -> list[dict]:
         """Fetch 13F holdings for all top filers.
@@ -188,7 +203,7 @@ class Form13FCollector(BaseCollector):
         filers_with_filings = 0
         errors = 0
 
-        for cik, name in TOP_FILERS.items():
+        for cik, name in self.filers.items():
             filers_processed += 1
 
             try:
@@ -203,6 +218,13 @@ class Form13FCollector(BaseCollector):
                 self.record_error()
                 errors += 1
                 continue
+
+            if self.until_date is not None:
+                filings = [
+                    f for f in filings
+                    if (parse_date(f.get("filing_date") or "") or date.min)
+                    <= self.until_date
+                ]
 
             if not filings:
                 logger.debug(
@@ -233,7 +255,28 @@ class Form13FCollector(BaseCollector):
             f"({filers_with_filings} with filings in window). "
             f"Found {len(all_holdings)} total holdings. Errors: {errors}"
         )
+        self._resolve_tickers(session, all_holdings)
         return all_holdings
+
+    def _resolve_tickers(self, session: Session, holdings: list[dict]) -> None:
+        """Set ``ticker`` on the fetched rows via the CUSIP resolver.
+
+        Never raises – unresolved rows keep ``ticker`` NULL and are filled
+        later by ``CusipResolver.apply_to_holdings``.
+        """
+        if not holdings:
+            return
+        try:
+            mapping = self.cusip_resolver.resolve(
+                session, (h.get("cusip") for h in holdings)
+            )
+        except Exception as e:
+            logger.warning(f"[{self.name}] CUSIP resolution failed: {e}")
+            session.rollback()
+            return
+        for h in holdings:
+            if not h.get("ticker"):
+                h["ticker"] = mapping.get(h.get("cusip") or "")
 
     def store(
         self, session: Session, data: list[dict]
@@ -265,6 +308,13 @@ class Form13FCollector(BaseCollector):
         )
 
         session.flush()
+        try:
+            # Older rows whose CUSIP got resolved in the meantime (savepoint:
+            # a failure must not abort the insert transaction)
+            with session.begin_nested():
+                self.cusip_resolver.apply_to_holdings(session)
+        except Exception as e:
+            logger.warning(f"[{self.name}] ticker back-fill failed: {e}")
 
         logger.info(
             f"[{self.name}] Stored {records_written}/{len(rows)} aggregated "
@@ -283,7 +333,7 @@ class Form13FCollector(BaseCollector):
         stmt = (
             select(Form13FHolding.accession_number)
             .where(
-                Form13FHolding.filer_cik.in_(list(TOP_FILERS)),
+                Form13FHolding.filer_cik.in_(list(self.filers)),
                 Form13FHolding.filing_date >= since_date,
                 Form13FHolding.accession_number.isnot(None),
                 Form13FHolding.form_type.isnot(None),

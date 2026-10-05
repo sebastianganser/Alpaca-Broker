@@ -302,3 +302,12 @@
 - **Migrationen:** 029 (Collector-Integrität), 030 (Feature-Store), 031 (timestamptz, Cascade-FK, Indizes)
 - **Tests:** 352 → 695 passed (Baseline hatte 6 Fehler)
 - **Offen:** Deployment + Reparatur-Skripte auf Unraid ausführen, danach R1 (Feature-Analyse) neu
+
+### Session 26 – 5 October 2026 – Deployment, Reparatur, 13F-Ticker + ARK-Universe
+- **Deployment:** Migrationen 029–031 live, Preis-Refetch (923k Zeilen, SIP) + Feature-Rebuild (605k Snapshots) erfolgreich, Feature-Analyse auf 510k Snapshots (07/2022–10/2026)
+- **Befund:** 13F-Features waren immer leer – Collector speicherte nur CUSIPs (	icker = None)
+- **Fix:** collectors/cusip_resolver.py (Cache cusip_map → ARK/Universe → OpenFIGI, optional OPENFIGI_API_KEY), Collector setzt Ticker beim Fetch, scripts/repair/form13f_resolve_tickers.py (Dry-Run, --apply, --backfill 13F-Historie)
+- **Universe:** get_universe_as_of = Indexmitglieder ∪ ARK-Holdings der letzten 30 Tage (point-in-time, nur Universe-Ticker) → ARK-Ticker außerhalb der Indizes bekommen wieder Features
+- **Docker:** /app gehört dem App-User (mkdir im Container war nicht möglich)
+- **Migration:** 032 (cusip_map, Index orm13f_holdings(ticker, report_period))
+- **Tests:** 713 passed

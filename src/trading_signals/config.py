@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # ntfy-compatible webhook URL for failed/partial job runs (optional).
     ALERT_WEBHOOK_URL: str = ""
 
+    # ── OpenFIGI (CUSIP → ticker for 13F holdings) ────────────────────
+    # Optional. Without a key: 10 CUSIPs/request, 25 requests/minute;
+    # with a free key (openfigi.com/api): 100 CUSIPs/request, 25 req/6 s.
+    OPENFIGI_API_KEY: str = ""
+
     # ── Logging ───────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
 

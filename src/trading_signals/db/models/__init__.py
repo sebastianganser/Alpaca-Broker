@@ -4,6 +4,7 @@ from trading_signals.db.models.analysis import AnalysisReport
 from trading_signals.db.models.ark import ARKDelta, ARKHolding
 from trading_signals.db.models.blacklist import TickerBlacklist
 from trading_signals.db.models.collection_log import CollectionLog
+from trading_signals.db.models.cusip_map import CusipMap
 from trading_signals.db.models.estimates import EstimatesSnapshot
 from trading_signals.db.models.features import FeatureSnapshot
 from trading_signals.db.models.form13f import Form13FHolding
@@ -28,6 +29,7 @@ __all__ = [
     "ARKDelta",
     "ARKHolding",
     "CollectionLog",
+    "CusipMap",
     "EarningsCalendar",
     "EstimatesSnapshot",
     "FeatureSnapshot",

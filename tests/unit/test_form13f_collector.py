@@ -218,7 +218,7 @@ class TestForm13FCollectorUnit:
         return h
 
     def test_store_writes_holdings(self):
-        collector = Form13FCollector()
+        collector = Form13FCollector(cusip_resolver=MagicMock())
         session = MagicMock()
         mock_result = MagicMock()
         mock_result.rowcount = 1
@@ -236,7 +236,7 @@ class TestForm13FCollectorUnit:
         )
 
     def test_store_aggregates_and_bulk_inserts(self):
-        collector = Form13FCollector()
+        collector = Form13FCollector(cusip_resolver=MagicMock())
         session = MagicMock()
         session.execute.return_value.rowcount = 2
         data = [
@@ -253,7 +253,7 @@ class TestForm13FCollectorUnit:
         assert params["put_call_m1"] == "CALL"
 
     def test_store_replaces_flagged_periods(self):
-        collector = Form13FCollector()
+        collector = Form13FCollector(cusip_resolver=MagicMock())
         collector._replace_keys = {("0001067983", date(2025, 12, 31))}
         session = MagicMock()
         session.execute.return_value.rowcount = 1
@@ -284,7 +284,7 @@ class TestForm13FPeriodLogic:
         }
 
     def _collector(self, amendment_types=None):
-        collector = Form13FCollector()
+        collector = Form13FCollector(cusip_resolver=MagicMock())
         client = MagicMock()
         client.find_infotable_document.return_value = "infotable.xml"
         client.download_filing_document.return_value = self.INFOTABLE

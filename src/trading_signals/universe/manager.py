@@ -16,6 +16,10 @@ from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+#: ARK-held tickers stay in the point-in-time universe for this many calendar
+#: days after their last ARK snapshot (captures exits / weight deltas).
+ARK_UNIVERSE_WINDOW_DAYS = 30
+
 
 class UniverseManager:
     """Manage the dynamic ticker universe."""
@@ -138,6 +142,7 @@ class UniverseManager:
         self,
         target_date: date,
         index_name: str | None = None,
+        include_ark: bool = True,
     ) -> list[str]:
         """Return tickers that were active index members on target_date.
 
@@ -153,6 +158,10 @@ class UniverseManager:
             index_name: If given, only return members of this index
                         (e.g. 'sp500', 'nasdaq100'). If None, returns
                         the union of all indexes.
+            include_ark: If True and no ``index_name`` is given, also
+                        include universe tickers held by an ARK ETF in the
+                        ``ARK_UNIVERSE_WINDOW_DAYS`` before target_date
+                        (point-in-time, see ``_ark_tickers_as_of``).
 
         Returns:
             Sorted list of ticker symbols.
@@ -200,9 +209,39 @@ class UniverseManager:
 
         tickers = [r[0] for r in self.session.execute(stmt).all()]
 
+        if include_ark and not index_name:
+            ark = self._ark_tickers_as_of(target_date)
+            extra = sorted(set(ark) - set(tickers))
+            if extra:
+                tickers = sorted(set(tickers) | set(extra))
+
         logger.debug(
             f"[universe] get_universe_as_of({target_date}, {index_name}): "
             f"{len(tickers)} tickers"
         )
         return tickers
+
+    def _ark_tickers_as_of(self, target_date: date) -> list[str]:
+        """Universe tickers held by an ARK ETF in the window before target_date.
+
+        Point-in-time: only ARK snapshots dated ``<= target_date`` count, so
+        the set is known on that day (no survivorship bias). The window keeps
+        a ticker for ``ARK_UNIVERSE_WINDOW_DAYS`` after ARK sold it, so exit
+        signals (negative weight deltas) are still observed.
+        """
+        from datetime import timedelta
+
+        from trading_signals.db.models.ark import ARKHolding
+
+        start = target_date - timedelta(days=ARK_UNIVERSE_WINDOW_DAYS)
+        stmt = (
+            select(ARKHolding.ticker)
+            .join(Universe, Universe.ticker == ARKHolding.ticker)
+            .where(
+                ARKHolding.snapshot_date <= target_date,
+                ARKHolding.snapshot_date >= start,
+            )
+            .distinct()
+        )
+        return [r[0] for r in self.session.execute(stmt).all()]
 
