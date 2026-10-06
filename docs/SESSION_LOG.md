@@ -318,3 +318,11 @@
 - **Fix:** scripts/repair/fix_market_date_collision.py (Relabel 05.10. → 02.10., Rerun, Context Packs); Host `chown -R 99:100 /mnt/user/Workfiles/AlpacaBroker`
 - **Ergebnis:** IV 657 + Estimates 2984 Zeilen für 05.10. nachgeholt, Features 02.–05.10. neu, Context Packs 02.10./05.10. erzeugt
 - **Tests:** 720 passed
+
+### Session 28 – 6 October 2026 – Kurzfrist-Ziel, Barrier-Backtest (K1) + Barrier-Label (K2)
+- **Ziel:** 0–5 Long-Kandidaten/Tag, „keine Kandidaten“ erlaubt, Haltedauer ≤ 14 Tage; Hauptkonfiguration +1 % / −2 % / 14 Handelstage ([Konzept](2026-10-06_Konzept_Kurzfrist_Kandidaten.md))
+- **K1:** `analysis/barrier.py` + `scripts/analysis/backtest_barrier.py` – aktueller Context-Pack-Score ≈ Zufall (siehe LEARNINGS)
+- **K2 (Schritt A):** Migration 033 (`return_barrier_14d`, `barrier_outcome`, `barrier_ambiguous`), `target_backfill.compute_barrier_labels`, Feature-Analyse nutzt das Barrier-Label als Modellziel (Fallback `return_20d` bei < 50 % Abdeckung)
+- **Plan:** A Label → B ML P(Treffer) mit Walk-forward + Schwelle → C Hyperopt nur für Trade-Parameter → D neue Quellen
+- **Ergebnis Analyse (527k Snapshots):** kein signifikantes Feature für das Barrier-Ziel, LASSO wählt nichts, RF-Importance ≈ 0
+- **Tests:** 740 passed

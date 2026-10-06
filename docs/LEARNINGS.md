@@ -223,3 +223,10 @@ Backtest 07/2022–10/2026 (1,051 signal dates, 515k universe trades), entry `op
 - **Top 5 of the provisional score:** no advantage over the universe under the OHLC rule (the "significantly worse" result under the conservative rule was an artefact of more volatile picks → more ambiguous days). **Bottom 5** slightly worse (−0.03 %, significant in 3/6 combos) → at most a weak signal at the bottom end.
 - **Filters (ATR 1–3 %, no earnings in window):** +0.05 % significant only under the conservative rule, +0.00–0.02 % n.s. under OHLC → mostly fewer ambiguous days, not a proven edge. **Regime filter** (SPY > SMA200, VIX < 25): no improvement.
 - **Lesson:** Evaluate TP/SL trades under both ambiguity rules; prefer barriers ≥ 1 % (ambiguity 1–5 %) when only daily bars exist. Hand-tuned weights are not a selection model – candidates must come from validated rankers (K2).
+
+### [2026-10-06] 📊 Feature Analysis on the Barrier Label (K2): No Robust Signal Yet
+First analysis run with `return_barrier_14d` (+1 % / −2 % / 14 sessions, net) as model target: 527k snapshots, 684 tickers, 07/2022–10/2026, purged walk-forward (purge 14 dates).
+- **Daily rank IC:** 0 of 74 features significant (same as for `return_20d`). Best feature with full history: `atr_14_pct` ρ = −0.025 (t_NW −3.1, p 0.002 – not significant after multiple-testing correction; partly mechanical, calmer stocks touch the −2 % stop less often). Sector-relative momentum ρ ≈ +0.007 (t ≈ 1.8).
+- **Large |t| only for short histories:** options IV (11 dates), fundamentals/ARK (~105 dates) → flagged `reliable=False`, not usable yet.
+- **Models:** LASSO selects no feature; RF permutation importance ≤ 0.0004 → no exploitable linear or non-linear structure in the current features.
+- **Lesson:** Step B (ML P(hit)) can only add value once features carry signal. Priority shifts to (1) letting short alt-data histories grow, (2) features for documented short-term effects (short-term reversal, PEAD/SUE, pre-earnings drift) and (3) new event sources (8-K buybacks, index additions) – each measured against this baseline.
