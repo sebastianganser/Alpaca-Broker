@@ -583,6 +583,11 @@ CREATE TABLE signals.feature_snapshots (
   sentiment_article_count_7d INTEGER,    -- Total articles in last 7 days
   market_sentiment_7d NUMERIC(10,4),     -- Global market sentiment (no ticker)
   
+  -- ═══ SHORT-TERM PRICE FEATURES (migration 034, derived/short_term_features.py) ═══
+  st_return_1d, st_return_5d, st_gap, st_close_location, st_dist_52w_high,
+  st_rsi_2, st_bollinger_pctb, st_signed_volume_shock,
+  st_earnings_reaction NUMERIC(12,6),    -- definitions: concept 2026-10-06 §7.1
+
   -- ═══ TARGET VARIABLES (backfilled retrospectively) ═══
   return_1d NUMERIC(10,6),               -- 1-day forward return
   return_5d NUMERIC(10,6),               -- 5-day forward return
@@ -623,7 +628,7 @@ CREATE TABLE signals.collection_log (
 
 ## Migrations
 
-Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–033.
+Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–034.
 
 | Migration | Description |
 |---|---|
@@ -660,4 +665,5 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 | 031 | Ops integrity (timestamptz for logs/news, cascade FK, `collection_log` indexes) |
 | 032 | Table `cusip_map` (CUSIP → ticker cache for 13F) |
 | 033 | Barrier trade label on `feature_snapshots`: `return_barrier_14d`, `barrier_outcome`, `barrier_ambiguous` |
+| 034 | Nine short-term price features `st_*` on `feature_snapshots` (concept 2026-10-06 §7.1) |
 

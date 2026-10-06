@@ -34,6 +34,7 @@ GROUP_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "Technical",
         ("price_vs_", "rsi_", "relative_strength_", "volume_ratio_", "atr_"),
     ),
+    ("Short Term", ("st_",)),
     (
         "Earnings",
         (

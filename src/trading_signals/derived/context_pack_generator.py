@@ -171,6 +171,8 @@ DISPLAY_FEATURES = [
     "sector_relative_return_20d", "sector_relative_momentum",
     "dollar_volume_20d", "amihud_illiquidity_20d",
     "volume_ratio_20d", "atr_14_pct",
+    "st_return_1d", "st_return_5d", "st_gap", "st_dist_52w_high", "st_rsi_2",
+    "st_earnings_reaction",
 ]
 
 

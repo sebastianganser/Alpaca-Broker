@@ -112,12 +112,31 @@ Neue Quellen erst nach Phase 2, damit ihr Beitrag messbar ist.
 | Phase | Inhalt | Ergebnis / Kriterium |
 |---|---|---|
 | **P1** ✅ | Barrier-Backtest-Skript (`scripts/analysis/backtest_barrier.py`) für den **aktuellen** Score | Ergebnis: Ist-Score ≈ Zufall (siehe `LEARNINGS.md`), handgesetzte Gewichte tragen nicht |
-| **A** (K2) | Barrier-Label (`return_barrier_14d`, `barrier_outcome`, `barrier_ambiguous`) in `feature_snapshots` (Migration 033), Zielgröße der Feature-Analyse | Welche Features hängen mit dem Trade-Ergebnis zusammen? |
+| **A** (K2) ✅ | Barrier-Label (`return_barrier_14d`, `barrier_outcome`, `barrier_ambiguous`) in `feature_snapshots` (Migration 033), Zielgröße der Feature-Analyse | Ergebnis: kein robustes Signal in den vorhandenen 74 Kennzahlen (siehe `LEARNINGS.md`) |
+| **A2** | Kurzfrist-Kennzahlen aus vorhandenen Tageskursen (§7.1), Migration 034, vektorisierter Backfill, Analyse neu | Bringt eine der neuen Kennzahlen ein belastbares Signal gegenüber dem Stand nach A? |
 | **B** (Sprint 10) | ML-Modell (erst LASSO, dann Gradient Boosting) schätzt P(Treffer); Purged Walk-forward (Training 2022–2024, Validierung 2025–2026) | Kandidat nur, wenn P(Treffer) deutlich über Break-even → „keine Kandidaten“ ergibt sich automatisch |
 | **C** | Hyperopt **nur** für wenige Trade-Parameter (Ziel/Stop, Schwelle, Filter), Bestätigung auf Holdout-Zeitraum | Stabile Parameter statt Überanpassung |
 | **D** | Neue Quellen aus §6 (8-K-Rückkäufe, Index-Aufnahmen, Reddit), jeweils mit Vorher/Nachher-Messung | Nur behalten, was messbar hilft |
 
 > Warum kein Hyperopt auf ~80 Gewichte: bei ~1000 Handelstagen und einem Signal nahe null würde die Optimierung vor allem Rauschen anpassen. Das ML-Modell lernt die Gewichtung mit Regularisierung und wird außerhalb der Trainingszeit geprüft.
+
+## 7.1 Kurzfrist-Kennzahlen (Schritt A2)
+
+Alle aus `prices_daily` (adjustiert, ohne extrapolierte Zeilen), Stand Schlusskurs von Tag d, Fenster in Handelstagen. Präfix `st_` → eigene Gruppe „Short-Term“.
+
+| Spalte | Definition | Hintergrund (Literatur) |
+|---|---|---|
+| `st_return_1d` | close(d) / close(d−1) − 1 | Kurzfrist-Reversal |
+| `st_return_5d` | close(d) / close(d−5) − 1 | Wochen-Reversal (Jegadeesh 1990, Lehmann 1990) |
+| `st_gap` | open(d) / close(d−1) − 1 | Gap-Fortsetzung bzw. -Schließung |
+| `st_close_location` | (close − low) / (high − low) von d | Schluss nahe Tageshoch/-tief |
+| `st_dist_52w_high` | close(d) / max(high der letzten 252 Tage) − 1 | 52-Wochen-Hoch-Effekt (George/Hwang 2004) |
+| `st_rsi_2` | RSI über 2 Tage (einfacher Mittelwert, ohne Rekursion) | Überverkauft-Signal kurzfristig |
+| `st_bollinger_pctb` | Lage im Bollinger-Band (20 Tage, 2σ) | Mean Reversion |
+| `st_signed_volume_shock` | ln(Volumen(d) / Ø Volumen der 20 Vortage) × Vorzeichen der Tagesrendite | Volumen bestätigt Bewegung (Gervais et al. 2001) |
+| `st_earnings_reaction` | close(Tag nach Earnings) / close(Tag vor Earnings) − 1, gültig bis 60 Kalendertage nach dem Termin | Post-Earnings-Drift über die Kursreaktion |
+
+Umsetzung: eine gemeinsame vektorisierte Funktion für Tageslauf und Backfill (identische Werte), Backfill nur der neuen Spalten (Minuten statt 7–12 h Komplett-Neuaufbau), Neuberechnung auch nach Split-/Dividenden-Readjustierung.
 
 ## 8. Risiken und Grenzen
 

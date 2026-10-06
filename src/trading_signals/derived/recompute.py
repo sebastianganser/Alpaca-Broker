@@ -8,7 +8,10 @@ Contract (owned by the derived/ML layer):
     recompute_after_price_refresh(session, tickers) -> dict[str, int]
 must, for every ticker:
     1. recompute ``technical_indicators`` for the full history,
-    2. recompute all forward-return targets in ``feature_snapshots``.
+    2. recompute all forward-return targets in ``feature_snapshots``,
+    3. recompute the short-term price features ``st_*`` (they are pure
+       price functions, so this is cheap and keeps them consistent with the
+       re-adjusted history).
 It must not commit; the caller controls the transaction.
 
 Note: price-ratio features stored in ``feature_snapshots`` (price_vs_sma*,
@@ -23,6 +26,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from trading_signals.derived.short_term_features import ShortTermBackfill
 from trading_signals.derived.target_backfill import TargetBackfillComputer
 from trading_signals.derived.technical_indicators import (
     SPY_TICKER,
@@ -39,11 +43,13 @@ def recompute_after_price_refresh(
     """Recompute TA + targets for tickers whose price history changed.
 
     Returns a dict with counters
-    ``{"tickers": n, "ta_rows": x, "targets": y, "errors": e}``.
+    ``{"tickers": n, "ta_rows": x, "targets": y, "short_term_rows": z,
+    "errors": e}``.
     """
     unique = sorted({t for t in tickers if t})
     if not unique:
-        return {"tickers": 0, "ta_rows": 0, "targets": 0, "errors": 0}
+        return {"tickers": 0, "ta_rows": 0, "targets": 0, "short_term_rows": 0,
+                "errors": 0}
 
     ta = TechnicalIndicatorsComputer(session)
     ta_rows = 0
@@ -68,10 +74,20 @@ def recompute_after_price_refresh(
     targets = TargetBackfillComputer(session).recompute_tickers(unique)
     session.flush()
 
+    short_term = 0
+    try:
+        with session.begin_nested():
+            short_term = ShortTermBackfill(session).recompute_tickers(unique)
+    except Exception as e:  # features stay as they were; targets are done
+        errors += 1
+        logger.error(f"[recompute] short-term features failed: {e}")
+    session.flush()
+
     result = {
         "tickers": len(unique),
         "ta_rows": ta_rows,
         "targets": targets,
+        "short_term_rows": short_term,
         "errors": errors,
     }
     logger.info(f"[recompute] {result}")

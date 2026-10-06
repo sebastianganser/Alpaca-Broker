@@ -200,6 +200,18 @@ class FeatureSnapshot(Base):
     eps_revisions_net_7d: Mapped[int | None] = mapped_column(Integer)
     eps_revisions_net_30d: Mapped[int | None] = mapped_column(Integer)
 
+    # ── Short-Term Price Features (concept 2026-10-06 §7.1, migration 034) ──
+    # Definitions: derived/short_term_features.py
+    st_return_1d: Mapped[float | None] = mapped_column(Numeric(12, 6))
+    st_return_5d: Mapped[float | None] = mapped_column(Numeric(12, 6))
+    st_gap: Mapped[float | None] = mapped_column(Numeric(12, 6))
+    st_close_location: Mapped[float | None] = mapped_column(Numeric(12, 6))
+    st_dist_52w_high: Mapped[float | None] = mapped_column(Numeric(12, 6))
+    st_rsi_2: Mapped[float | None] = mapped_column(Numeric(12, 6))
+    st_bollinger_pctb: Mapped[float | None] = mapped_column(Numeric(12, 6))
+    st_signed_volume_shock: Mapped[float | None] = mapped_column(Numeric(12, 6))
+    st_earnings_reaction: Mapped[float | None] = mapped_column(Numeric(12, 6))
+
     # ── Target Variables (backfilled retrospectively) ────────────────
     # Definition (FEATURE_VERSION >= 2026.10-1, see target_backfill.py):
     #   return_h = close(d+h) / open(d+1) - 1

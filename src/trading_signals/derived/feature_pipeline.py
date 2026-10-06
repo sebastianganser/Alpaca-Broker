@@ -13,6 +13,9 @@ Feature Groups:
   - Fundamentals (8): Valuation ratios, margins, temporal trends
   - Technical (6): Price vs SMA, RSI, volume ratio, ATR
   - Liquidity (2): Dollar volume 20d, Amihud illiquidity (Sprint 9.5b E4)
+  - Short Term (9): 1d/5d return, gap, close location, 52w-high distance,
+    RSI(2), Bollinger %B, signed volume shock, earnings reaction
+    (concept 2026-10-06 §7.1, derived/short_term_features.py)
   - Earnings (5): Days until, beats, surprise trend, SUE, PEAD (Sprint 9.5b B2)
   - Sentiment (7): News sentiment, momentum, attention, volume ratio (Sprint 9.5b E3)
   - Macro (6): VIX, yields, HY spread, dollar, inflation (Sprint 9.5b D1)
@@ -90,6 +93,10 @@ from trading_signals.derived.insider_clusters import (
     FALLBACK_FILING_LAG_DAYS,
     find_clusters,
 )
+from trading_signals.derived.short_term_features import (
+    load_short_term_inputs,
+    short_term_features_at,
+)
 from trading_signals.utils.logging import get_logger
 from trading_signals.utils.market_calendar import (
     is_trading_day,
@@ -102,7 +109,9 @@ logger = get_logger(__name__)
 
 #: Version of the feature definitions; stored in every row. Bump whenever
 #: the semantics of any feature (or of the targets) change.
-FEATURE_VERSION = "2026.10-1"
+#: 2026.10-2: + short-term price features ``st_*`` (concept 2026-10-06
+#: §7.1); all other definitions unchanged from 2026.10-1.
+FEATURE_VERSION = "2026.10-2"
 
 #: News sentiment model whose scores feed the features (M9). Must match
 #: ``SentimentScorer.model_version`` of the active scorer.
@@ -587,6 +596,7 @@ class FeaturePipeline:
             ("fundamentals", self._fundamentals_features),
             ("technical", self._technical_features),
             ("liquidity", self._liquidity_features),
+            ("short_term", self._short_term_features),
             ("earnings", self._earnings_features),
             ("sentiment", self._sentiment_features),
             ("macro", self._macro_features),
@@ -1081,6 +1091,17 @@ class FeaturePipeline:
         )
         rows = [tuple(r) for r in reversed(rows)]
         return liquidity_from_prices(rows)
+
+    # ── Short-Term Price Features (9, concept 2026-10-06 §7.1) ───────
+
+    def _short_term_features(self, ticker: str, d: date) -> dict:
+        """``st_*`` features of session d (NULL if d has no real price row).
+
+        Same computation as the historical backfill
+        (:mod:`trading_signals.derived.short_term_features`).
+        """
+        prices, earnings = load_short_term_inputs(self.session, ticker, d)
+        return short_term_features_at(prices, earnings, d)
 
     # ── Earnings Features (5, Sprint 9.5b) ───────────────────────────
 
