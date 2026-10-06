@@ -311,3 +311,10 @@
 - **Docker:** /app gehört dem App-User (mkdir im Container war nicht möglich)
 - **Migration:** 032 (cusip_map, Index orm13f_holdings(ticker, report_period))
 - **Tests:** 713 passed
+
+### Session 27 – 6 October 2026 – Analyse-Guard + Log-Check 48 h
+- **Analyse:** `MIN_INDEPENDENT_PERIODS=10` – Korrelationen mit `reliable`-Flag, Hypothesen mit zu wenig unabhängigen Perioden → `insufficient_data`; aktuell kein robustes Signal
+- **Log-Check:** options_iv (05.10.) und estimates (06.10.) lieferten 0 Items – alte Läufe hatten Freitagsdaten unter dem Label 2026-10-05 gespeichert, neuer Code (`last_completed_session`) übersprang deshalb Montag. Context Pack scheiterte an Host-Rechten (Container 99:100)
+- **Fix:** scripts/repair/fix_market_date_collision.py (Relabel 05.10. → 02.10., Rerun, Context Packs); Host `chown -R 99:100 /mnt/user/Workfiles/AlpacaBroker`
+- **Ergebnis:** IV 657 + Estimates 2984 Zeilen für 05.10. nachgeholt, Features 02.–05.10. neu, Context Packs 02.10./05.10. erzeugt
+- **Tests:** 720 passed
