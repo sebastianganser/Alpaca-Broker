@@ -107,12 +107,17 @@ Neue Quellen erst nach Phase 2, damit ihr Beitrag messbar ist.
 
 ## 7. Vorgehen
 
+**Hauptkonfiguration (2026-10-06):** Ziel **+1 %**, Stop **−2 %**, max. **14 Handelstage**, Kosten 0,05 % Round-Trip, Mehrdeutigkeit nach OHLC-Regel (`MAIN_BARRIER` in `analysis/barrier.py`).
+
 | Phase | Inhalt | Ergebnis / Kriterium |
 |---|---|---|
-| **P1** | Barrier-Backtest-Skript (`scripts/analysis/`) für den **aktuellen** Score, Raster aus §3 | Hat der Ist-Score einen Vorsprung? Welche Kombination passt? |
-| **P2** | Barrier-Ergebnis als Zielgröße in die Feature-Analyse (statt/zusätzlich zu festen Horizonten) | Welche Features erhöhen die Trefferquote? |
-| **P3** | Filter + Mindestschwelle im Context Pack, „keine Kandidaten“-Ausgabe | 0–5 Kandidaten/Tag mit dokumentierter Erwartung |
-| **P4** | Neue Quellen aus §6, jeweils mit Vorher/Nachher-Messung | Nur behalten, was messbar hilft |
+| **P1** ✅ | Barrier-Backtest-Skript (`scripts/analysis/backtest_barrier.py`) für den **aktuellen** Score | Ergebnis: Ist-Score ≈ Zufall (siehe `LEARNINGS.md`), handgesetzte Gewichte tragen nicht |
+| **A** (K2) | Barrier-Label (`return_barrier_14d`, `barrier_outcome`, `barrier_ambiguous`) in `feature_snapshots` (Migration 033), Zielgröße der Feature-Analyse | Welche Features hängen mit dem Trade-Ergebnis zusammen? |
+| **B** (Sprint 10) | ML-Modell (erst LASSO, dann Gradient Boosting) schätzt P(Treffer); Purged Walk-forward (Training 2022–2024, Validierung 2025–2026) | Kandidat nur, wenn P(Treffer) deutlich über Break-even → „keine Kandidaten“ ergibt sich automatisch |
+| **C** | Hyperopt **nur** für wenige Trade-Parameter (Ziel/Stop, Schwelle, Filter), Bestätigung auf Holdout-Zeitraum | Stabile Parameter statt Überanpassung |
+| **D** | Neue Quellen aus §6 (8-K-Rückkäufe, Index-Aufnahmen, Reddit), jeweils mit Vorher/Nachher-Messung | Nur behalten, was messbar hilft |
+
+> Warum kein Hyperopt auf ~80 Gewichte: bei ~1000 Handelstagen und einem Signal nahe null würde die Optimierung vor allem Rauschen anpassen. Das ML-Modell lernt die Gewichtung mit Regularisierung und wird außerhalb der Trainingszeit geprüft.
 
 ## 8. Risiken und Grenzen
 

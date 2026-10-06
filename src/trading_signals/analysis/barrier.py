@@ -50,6 +50,12 @@ class BarrierParams:
         return self.sl / (self.tp + self.sl)
 
 
+#: Main trade definition, persisted as label in feature_snapshots
+#: (``return_barrier_14d``, ``barrier_outcome``, ``barrier_ambiguous``).
+#: Barriers ≥ 1 % keep same-day ambiguity low with daily bars (K1 finding).
+MAIN_BARRIER = BarrierParams(tp=0.01, sl=0.02, max_days=14, cost=0.0005, ambiguous="ohlc")
+
+
 def simulate_windows(
     o: np.ndarray, h: np.ndarray, lo: np.ndarray, c: np.ndarray, p: BarrierParams
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:

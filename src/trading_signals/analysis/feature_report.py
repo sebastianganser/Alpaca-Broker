@@ -13,7 +13,9 @@ Methodology (rebuilt for review finding H4):
   come from a Newey-West t-stat with lag ``h-1`` (overlapping targets),
   significance is Bonferroni-corrected over all feature x target tests.
 * RF / LASSO use per-date ranked features, median imputation and scaling
-  inside purged walk-forward folds (purge = 20 dates for return_20d).
+  inside purged walk-forward folds (purge = model horizon in dates). The
+  model target is the barrier trade label ``return_barrier_14d`` (TP +1 % /
+  SL −2 % / 14 sessions) once back-filled, otherwise ``return_20d``.
 * Hypothesis tests use per-date group differences / daily IC differences
   with Newey-West t-stats instead of row-iid Welch t-tests.
 """
@@ -75,9 +77,27 @@ TARGET_RETURNS: list[str] = list(TARGET_COLUMNS)
 
 ALL_FEATURES: list[str] = list(FEATURE_COLUMNS)
 
-#: Target / horizon used for RF, LASSO and hypothesis tests.
-MODEL_TARGET = 'return_20d'
-MODEL_HORIZON = 20
+#: Target / horizon used for RF, LASSO, hypothesis tests and consensus:
+#: the barrier trade label (concept 2026-10-06). Until it is back-filled
+#: (less than MODEL_TARGET_MIN_COVERAGE of the return_20d rows) the
+#: analysis falls back to return_20d.
+MODEL_TARGET = 'return_barrier_14d'
+MODEL_HORIZON = 14
+FALLBACK_TARGET = 'return_20d'
+FALLBACK_HORIZON = 20
+MODEL_TARGET_MIN_COVERAGE = 0.5
+
+
+def resolve_model_target(df: pd.DataFrame) -> tuple[str, int]:
+    """``(target, horizon)`` for the model step – barrier label if filled."""
+    if MODEL_TARGET in df.columns:
+        n_main = int(df[MODEL_TARGET].notna().sum())
+        n_ref = int(df[FALLBACK_TARGET].notna().sum()) if FALLBACK_TARGET in df.columns else 0
+        if n_main > 0 and n_main >= MODEL_TARGET_MIN_COVERAGE * n_ref:
+            return MODEL_TARGET, MODEL_HORIZON
+    return FALLBACK_TARGET, FALLBACK_HORIZON
+
+
 #: Minimum cross-section per date for a daily IC.
 MIN_OBS_PER_DATE = 10
 #: Minimum number of daily ICs / daily differences for a test.
@@ -201,7 +221,23 @@ class FeatureAnalysisEngine:
         self.session = session
         self._model_cache: dict[tuple, Any] = {}
         self.diagnostics: dict[str, Any] = {}
+        #: Model target of the last analysed frame (None = not resolved yet).
+        self._last_target: str | None = None
         sns.set_theme(style='whitegrid')
+
+    def _target(self, df: pd.DataFrame) -> tuple[str, int]:
+        """Model target/horizon for ``df`` (see :func:`resolve_model_target`)."""
+        target, horizon = resolve_model_target(df)
+        self._last_target = target
+        return target, horizon
+
+    @property
+    def model_target(self) -> str:
+        return self._last_target or FALLBACK_TARGET
+
+    @property
+    def model_horizon(self) -> int:
+        return MODEL_HORIZON if self.model_target == MODEL_TARGET else FALLBACK_HORIZON
 
     def run(self) -> AnalysisReport | None:
         """Run the full analysis pipeline and store results."""
@@ -232,6 +268,8 @@ class FeatureAnalysisEngine:
             f"Loaded {snapshot_count} rows for {ticker_count} tickers "
             f"from {date_range_start} to {date_range_end}"
         )
+        target, horizon = self._target(df)
+        logger.info(f"Model target: {target} (horizon {horizon})")
 
         results = {
             'feature_correlations': {},
@@ -355,13 +393,14 @@ class FeatureAnalysisEngine:
         return prepare_frame(df)
 
     def _model_data(self, df: pd.DataFrame):
-        """Ranked model matrix for MODEL_TARGET (cached per frame)."""
-        key = (id(df), len(df))
+        """Ranked model matrix for the model target (cached per frame)."""
+        target, _ = self._target(df)
+        key = (id(df), len(df), target)
         if key not in self._model_cache:
             feats = available_features(df)
             self._model_cache = {
                 key: prepare_model_frame(
-                    df, feats, MODEL_TARGET, max_rows=MAX_MODEL_ROWS
+                    df, feats, target, max_rows=MAX_MODEL_ROWS
                 )
             }
         return self._model_cache[key]
@@ -409,12 +448,13 @@ class FeatureAnalysisEngine:
     def _compute_rf_importance(self, df: pd.DataFrame) -> dict:
         logger.info("Computing RF feature importance (purged walk-forward)...")
         df = self._ensure_prepared(df)
-        if MODEL_TARGET not in df.columns:
+        target, horizon = self._target(df)
+        if target not in df.columns:
             return {}
         x, y, dates = self._model_data(df)
         if len(y) < 100 or x.shape[1] == 0:
             return {}
-        out = walk_forward_rf(x, y, dates, horizon=MODEL_HORIZON, n_splits=N_SPLITS)
+        out = walk_forward_rf(x, y, dates, horizon=horizon, n_splits=N_SPLITS)
         self.diagnostics['rf_folds'] = out.get('folds', [])
         return {
             f: {'importance': _finite_or_none(v['importance']) or 0.0,
@@ -425,12 +465,13 @@ class FeatureAnalysisEngine:
     def _compute_lasso_importance(self, df: pd.DataFrame) -> dict:
         logger.info("Computing LASSO feature importance (purged walk-forward CV)...")
         df = self._ensure_prepared(df)
-        if MODEL_TARGET not in df.columns:
+        target, horizon = self._target(df)
+        if target not in df.columns:
             return {}
         x, y, dates = self._model_data(df)
         if len(y) < 100 or x.shape[1] == 0:
             return {}
-        out = purged_lasso(x, y, dates, horizon=MODEL_HORIZON, n_splits=N_SPLITS)
+        out = purged_lasso(x, y, dates, horizon=horizon, n_splits=N_SPLITS)
         self.diagnostics['lasso_alpha'] = out.get('alpha')
         self.diagnostics['lasso_folds'] = out.get('folds', [])
         return {
@@ -444,10 +485,10 @@ class FeatureAnalysisEngine:
         logger.info("Testing hypotheses (per-date differences, Newey-West)...")
         df = self._ensure_prepared(df)
         results: dict[str, dict] = {}
-        target = MODEL_TARGET
+        target, horizon = self._target(df)
         if target not in df.columns:
             return results
-        lag = nw_lag_for_horizon(MODEL_HORIZON)
+        lag = nw_lag_for_horizon(horizon)
 
         def has(*cols: str) -> bool:
             return all(c in df.columns for c in cols)
@@ -457,7 +498,7 @@ class FeatureAnalysisEngine:
             effect = _finite_or_none(test['mean'])
             n = int(test.get('n') or 0)
             results[hid] = {
-                'verdict': _verdict(pval, effect, n_dates=n, horizon=MODEL_HORIZON),
+                'verdict': _verdict(pval, effect, n_dates=n, horizon=horizon),
                 'pvalue': pval,
                 'effect_size': effect,
                 'n_dates': n,
@@ -578,7 +619,7 @@ class FeatureAnalysisEngine:
             return []
 
         def _sp_score(f: str) -> float:
-            c = correlations.get(f, {}).get('return_20d', {})
+            c = correlations.get(f, {}).get(self.model_target, {})
             if not c.get('reliable', True):  # too short history (see MIN_INDEPENDENT_PERIODS)
                 return 0.0
             return abs(c.get('rho', 0) or 0)
@@ -759,8 +800,8 @@ class FeatureAnalysisEngine:
         )
 
         ic20 = [
-            (f, v[MODEL_TARGET]) for f, v in correlations.items()
-            if MODEL_TARGET in v
+            (f, v[self.model_target]) for f, v in correlations.items()
+            if self.model_target in v
         ]
         ic20.sort(key=lambda fv: abs(fv[1].get('t_nw') or 0), reverse=True)
         ic_rows = "".join(
@@ -801,8 +842,8 @@ class FeatureAnalysisEngine:
             f"Correlations: {ic_label} (Spearman per date, averaged over dates); "
             "p-values from Newey-West t-stats with lag h-1; Bonferroni over all tests.",
             "RF / LASSO: per-date ranked features, imputer+scaler fit inside purged "
-            f"walk-forward folds (purge {MODEL_HORIZON} dates), "
-            f"target excess {MODEL_TARGET}.",
+            f"walk-forward folds (purge {self.model_horizon} dates), "
+            f"target excess {self.model_target}.",
             "Hypotheses: per-date group differences / daily IC differences, "
             "Newey-West t.",
             "Market-wide features (macro_*, breadth_*) have no cross-sectional "
@@ -858,7 +899,7 @@ class FeatureAnalysisEngine:
             </div>
 
             <div class="card">
-                <h2>Daily Rank IC – {MODEL_TARGET} (Top 20 by |t_NW|)</h2>
+                <h2>Daily Rank IC – {self.model_target} (Top 20 by |t_NW|)</h2>
                 <table>
                     {ic_header}
                     {ic_rows}

@@ -588,6 +588,10 @@ CREATE TABLE signals.feature_snapshots (
   return_5d NUMERIC(10,6),               -- 5-day forward return
   return_20d NUMERIC(10,6),              -- 20-day forward return
   return_60d NUMERIC(10,6),              -- 60-day forward return
+  -- Barrier trade label (migration 033): entry open d+1, TP +1 % / SL -2 % / max 14 sessions, net of 0.05 % costs
+  return_barrier_14d NUMERIC(10,6),      -- net trade return (model target of the feature analysis)
+  barrier_outcome SMALLINT,              -- 1 = take profit, -1 = stop, 0 = time stop
+  barrier_ambiguous BOOLEAN,             -- TP and SL touched on the same day (resolved via OHLC rule)
   
   computed_at TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (snapshot_date, ticker)
@@ -619,7 +623,7 @@ CREATE TABLE signals.collection_log (
 
 ## Migrations
 
-Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–020.
+Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–033.
 
 | Migration | Description |
 |---|---|
@@ -643,4 +647,17 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 | 018 | Table `feature_snapshots` (Sprint 8) |
 | 019 | Tables `news_articles` + `news_sentiment` (Sprint 8c) |
 | 020 | Add 6 sentiment columns to `feature_snapshots` (Sprint 8c) |
+| 021 | Table `analysis_reports` (monthly feature analysis) |
+| 022 | Table `estimates_snapshot` |
+| 023 | Table `index_membership` |
+| 024 | Table `macro_series` |
+| 025 | Sector-relative feature columns (Sprint 9.5b B4) |
+| 026 | Table `options_iv_snapshot` (Sprint 9.5b D3) |
+| 027 | Short-interest tables + feature columns (Sprint 9.5c B5) |
+| 028 | Options-IV and estimates features in `feature_snapshots` |
+| 029 | Collector data-integrity fixes (13F, Form 4, insider clusters, alt-data keys) |
+| 030 | Feature-store integrity (derived/ML layer) |
+| 031 | Ops integrity (timestamptz for logs/news, cascade FK, `collection_log` indexes) |
+| 032 | Table `cusip_map` (CUSIP → ticker cache for 13F) |
+| 033 | Barrier trade label on `feature_snapshots`: `return_barrier_14d`, `barrier_outcome`, `barrier_ambiguous` |
 

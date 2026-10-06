@@ -226,9 +226,10 @@
   - [ ] `candidate_selections` + `candidate_rejections` tables
 - [ ] **K1–K4:** Kurzfrist-Kandidaten ([Konzept 2026-10-06](2026-10-06_Konzept_Kurzfrist_Kandidaten.md))
   - [x] K1: Barrier-Backtest des aktuellen Scores (TP 0,5–1 %, SL 2–3×, max. 14 Tage) — Ergebnis: ≈ Zufall, siehe LEARNINGS 2026-10-06
-  - [ ] K2: Barrier-Label als Zielgröße in der Feature-Analyse
-  - [ ] K3: Mindestschwelle + Markt-/Volatilitäts-/Earnings-Filter → „keine Kandidaten“ möglich
-  - [ ] K4: Neue freie Quellen (8-K-Rückkäufe, Index-Aufnahmen, Reddit-Hype) mit Vorher/Nachher-Messung
+  - [x] K2 (Schritt A): Barrier-Label +1 %/−2 %/14d (`return_barrier_14d`, Migration 033) als Zielgröße der Feature-Analyse
+  - [ ] K3 (Schritt B, Sprint 10): ML-Modell P(Treffer) (LASSO → Gradient Boosting), Purged Walk-forward, Schwelle → 0–5 Kandidaten oder „keine Kandidaten“
+  - [ ] K3b (Schritt C): Hyperopt nur für Trade-Parameter (Ziel/Stop, Schwelle, Filter), Bestätigung auf Holdout
+  - [ ] K4 (Schritt D): Neue freie Quellen (8-K-Rückkäufe, Index-Aufnahmen, Reddit-Hype) mit Vorher/Nachher-Messung
 
 ### Sprint 10 – Signal Scoring
 - Weighted scoring model, optional LASSO/gradient boosting
