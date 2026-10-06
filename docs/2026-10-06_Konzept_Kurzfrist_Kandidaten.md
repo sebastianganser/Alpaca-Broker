@@ -182,7 +182,7 @@ Statt weiterer Querschnitts-Kennzahlen werden **seltene, datierbare Ereignisse**
 - **Quelle:** SEC EDGAR Volltextsuche (kostenlos, ab 2001), Formular 8-K, Suchphrasen „share repurchase program“, „stock repurchase program“, „share buyback program“, „repurchase authorization“; Treffer per CIK auf Universe-Ticker abgebildet.
 - **Klassifizierung:** Dokument laden; Ereignis nur, wenn ein Satz eine **neue oder erhöhte Genehmigung** beschreibt (Vorstand *authorized/approved* + *repurchase/buyback* + neu/zusätzlich/Betrag). Reine Vollzugsmeldungen („repurchased 1.2 million shares during the quarter“) zählen nicht. Betrag in USD, falls lesbar.
 - **Zeitpunkt:** Ereignisdatum = Einreichungsdatum des 8-K (konservativ – die Pressemitteilung kommt oft früher).
-- **Speicherung:** neue Tabelle `signals.corporate_events` (Migration 035, auch für spätere Ereignisarten), täglicher Collector + Backfill ab 2022-06.
+- **Speicherung:** Für die Studie nur als CSV (`scripts/analysis/collect_buyback_events.py`, liest das Universe, schreibt nichts in die DB; Stichprobe zur manuellen Prüfung der Klassifizierung). Tabelle `signals.corporate_events` (Migration 035) und täglicher Collector erst, **wenn bestanden**.
 - **Erfolgskriterium:** mindestens 150 Ereignisse, Ø Netto/Trade > 0 **und** 95 %-KI der Differenz zum Universum > 0 (OHLC-Regel).
 - **Getrennt berichtet:** mit/ohne gleichzeitige Quartalszahlen (Item 2.02 im selben 8-K).
 - **Wenn bestanden:** Kennzahlen `ev_buyback_*` in `feature_snapshots`, Hinweis im Context Pack, Bestätigung auf neuen Daten ab 2026-Q4.
