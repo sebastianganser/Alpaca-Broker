@@ -250,6 +250,10 @@ Every row stores `feature_version` (currently `2026.10-1`) and `computed_at`. Th
 ### [2026-10-05] Analysis Methodology
 Daily cross-sectional rank IC (mean, ICIR, Newey-West t with lag ≥ h−1), per-date quintiles, purged + embargoed walk-forward CV grouped by date, date-block bootstrap, imputer/scaler fitted inside folds. Analysis window starts at `ml_start_date()` (retention cutoff + indicator warm-up). Context-pack score uses per-date centered ranks; weights are **provisional** until R1 is re-run on the rebuilt feature store.
 
+### [2026-10-06] Trading Goal & Barrier Evaluation
+**Context:** The purpose is 0–5 long candidates per day for short trades (≤ 14 trading days, take profit +0.5–1 % net). The context pack always emits 5 candidates from unvalidated weights, and the analysis targets fixed-horizon returns, which do not match a take-profit/stop trade.
+**Decision:** Evaluate candidates with a barrier model: entry `open(d+1)`, take profit a ∈ {0.5, 0.75, 1.0} %, stop = 2–3 × a, time stop 14 trading days, same-day TP+SL → stop, gaps filled at open, 0.05 % round-trip costs. Benchmark = random hit rate b/(a+b) and the universe average. "No candidates" must be a valid output (threshold + market filter). See [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md).
+
 ### Known Limits
 - `universe.sector` is not point-in-time.
 - A 13F filed on day d counts as public on d.
