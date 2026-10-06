@@ -208,12 +208,17 @@ def walk_forward_predict(
         if max_train_rows and tr.size > max_train_rows:
             tr = np.sort(rng.choice(tr, size=max_train_rows, replace=False))
         y_tr = meta["y"].to_numpy()[tr]
+        x_tr = x.iloc[tr]
+        # inputs without variation in THIS training window (e.g. sources that
+        # start later) carry no information and break HGB binning
+        cols = [c for c in x.columns if x_tr[c].nunique(dropna=True) > 1]
+        x_tr, x_te = x_tr[cols], x.iloc[te][cols]
         part = meta.iloc[te].copy()
         part["quarter"] = quarter
         for name in models:
             model = make_model(name, seed)
-            model.fit(x.iloc[tr], y_tr)
-            p = model.predict_proba(x.iloc[te])[:, 1]
+            model.fit(x_tr, y_tr)
+            p = model.predict_proba(x_te)[:, 1]
             part[f"p_{name}"] = p
             y_te = part["y"].to_numpy()
             auc = float(roc_auc_score(y_te, p)) if 0 < y_te.sum() < y_te.size else float("nan")

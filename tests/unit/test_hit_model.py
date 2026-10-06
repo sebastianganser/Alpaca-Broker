@@ -154,3 +154,14 @@ class TestWalkForward:
         preds, _ = walk_forward_predict(x, meta, splits, ("logit",))
         rule, _ = choose_rule(preds, ("logit",), (1,), (0.999,), min_days=10)
         assert rule is None
+
+    def test_column_empty_in_training_window(self):
+        """A source that starts late (all NaN in early folds) must not break the GBM."""
+        df = _synthetic(n_dates=250, n_tickers=10)
+        late = df["snapshot_date"] >= df["snapshot_date"].unique()[200]
+        df["options_iv_late"] = np.where(late, np.random.default_rng(0).normal(size=len(df)), np.nan)
+        x, meta = build_design(df, ["sig", "options_iv_late"])
+        splits = quarter_splits(meta["snapshot_date"], "2023-07-01", min_train_dates=60)
+        preds, folds = walk_forward_predict(x, meta, splits, ("gbm", "logit"))
+        assert len(folds) == 2 * len(splits)
+        assert preds["p_gbm"].notna().all()
