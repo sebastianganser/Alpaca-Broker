@@ -116,7 +116,7 @@ Neue Quellen erst nach Phase 2, damit ihr Beitrag messbar ist.
 | **A2** ✅ | Kurzfrist-Kennzahlen aus vorhandenen Tageskursen (§7.1), Migration 034, vektorisierter Backfill, Analyse neu | Ergebnis: Richtung wie Literatur (`st_close_location`, `st_earnings_reaction`), Effekt zu klein, nicht signifikant |
 | **B** ✅ ❌ | ML-Modell (logistische Regression, Gradient Boosting) schätzt P(Treffer); Purged Walk-forward (§7.2) | Ergebnis: **Kriterium nicht erfüllt** – Tages-AUC ≈ 0,50, Holdout +0,06 %/Trade n. s. (§7.3) |
 | **C** ⏸ | Hyperopt **nur** für wenige Trade-Parameter (Ziel/Stop, Schwelle, Filter), Bestätigung auf Holdout-Zeitraum | Zurückgestellt: ohne Ranking-Signal würde Hyperopt nur Rauschen anpassen |
-| **D** | Neue Quellen aus §6 (8-K-Rückkäufe, Index-Aufnahmen, Reddit), jeweils mit Vorher/Nachher-Messung | Nur behalten, was messbar hilft |
+| **D** | Ereignisse als Signal (§7.4): D1 8-K-Rückkäufe, D2 Index-Aufnahmen; dazu Stufe 1 als Risiko-Vorfilter (§7.5) | Nur behalten, was in der Event-Studie messbar hilft |
 
 > Warum kein Hyperopt auf ~80 Gewichte: bei ~1000 Handelstagen und einem Signal nahe null würde die Optimierung vor allem Rauschen anpassen. Das ML-Modell lernt die Gewichtung mit Regularisierung und wird außerhalb der Trainingszeit geprüft.
 
@@ -168,6 +168,46 @@ Vollständiger Bericht: [reports/2026-10-06_hit_model_walkforward.md](reports/20
 - **Urteil: nicht bestanden.** Die Modelle können Aktien am selben Tag nicht besser als Zufall ordnen (AUC ≈ 0,5); die Kalibrierung ist flach (Trefferquote 65–70 % in allen P-Dezilen). Quartale gemischt (2025-Q3 −0,37 %, 2026-Q1 −0,14 %).
 - **Transparenz:** Ein früherer Testlauf (nur Logit, verkleinerte Trainingsmenge) hat den Holdout bereits gesehen und war ebenfalls negativ; die Auswahlregel wurde danach nicht verändert.
 - **Folge:** Schritt C (Hyperopt) zurückgestellt. Das Walk-forward-Skript bleibt als **Referenzmessung** für jede neue Datenquelle (Schritt D) und wird erneut ausgeführt, wenn die kurzen Alternativdaten-Historien (Optionen-IV, Fundamentaldaten, ARK) gewachsen sind. Ein neuer Holdout ist dann ab 2026-Q4 zu verwenden.
+
+## 7.4 Schritt D – Ereignisse als Signal (Event-Studien)
+
+Statt weiterer Querschnitts-Kennzahlen werden **seltene, datierbare Ereignisse** geprüft. Ein Ereignis ist nur an wenigen Tagen für wenige Aktien aktiv – genau passend zu „0–5 Kandidaten, oft keine“. Festgelegt **vor** Sicht auf die Ergebnisse (2026-10-06):
+
+**Gemeinsame Messung** (Skript `scripts/analysis/event_study.py`, nur lesend):
+- Signaltag *d* = erster Handelstag **≥** Ereignisdatum. Trade = vorhandenes Barrier-Label des Snapshots (Ticker, *d*): Einstieg `open(d+1)`, +1 % / −2 % / 14 Handelstage, 0,05 % Kosten.
+- Vergleich mit dem Universum **am selben Tag** (Differenz je Ereignis = Ereignis-Trade − Ø Universum an *d*), Datumsblock-Bootstrap (95 %-KI), Trefferquote gegen 68,3 % Break-even, OHLC-Regel und konservative Regel.
+- Zusätzlich berichtet (nicht entscheidend): Aufteilung nach Jahr, verspäteter Einstieg (*d*+1 … *d*+5, d. h. wie lange ein Ereignis als Signal gilt).
+
+**D1 – Aktienrückkauf-Ankündigungen (8-K)** – Hauptprüfung
+- **Quelle:** SEC EDGAR Volltextsuche (kostenlos, ab 2001), Formular 8-K, Suchphrasen „share repurchase program“, „stock repurchase program“, „share buyback program“, „repurchase authorization“; Treffer per CIK auf Universe-Ticker abgebildet.
+- **Klassifizierung:** Dokument laden; Ereignis nur, wenn ein Satz eine **neue oder erhöhte Genehmigung** beschreibt (Vorstand *authorized/approved* + *repurchase/buyback* + neu/zusätzlich/Betrag). Reine Vollzugsmeldungen („repurchased 1.2 million shares during the quarter“) zählen nicht. Betrag in USD, falls lesbar.
+- **Zeitpunkt:** Ereignisdatum = Einreichungsdatum des 8-K (konservativ – die Pressemitteilung kommt oft früher).
+- **Speicherung:** neue Tabelle `signals.corporate_events` (Migration 035, auch für spätere Ereignisarten), täglicher Collector + Backfill ab 2022-06.
+- **Erfolgskriterium:** mindestens 150 Ereignisse, Ø Netto/Trade > 0 **und** 95 %-KI der Differenz zum Universum > 0 (OHLC-Regel).
+- **Getrennt berichtet:** mit/ohne gleichzeitige Quartalszahlen (Item 2.02 im selben 8-K).
+- **Wenn bestanden:** Kennzahlen `ev_buyback_*` in `feature_snapshots`, Hinweis im Context Pack, Bestätigung auf neuen Daten ab 2026-Q4.
+
+**D2 – Index-Aufnahmen** – explorativ, vorhandene Daten
+- **Quelle:** `index_membership` (Wikipedia-Änderungen, S&P 500 + Nasdaq 100), Aufnahmen seit 07/2022: 73 + 44. Nur **Wirksamkeitsdatum** vorhanden, das Ankündigungsdatum fehlt.
+- **Test zweiseitig:** Laut Literatur ist der Ankündigungseffekt weitgehend verschwunden und nach Wirksamkeit droht Rückgang → Ergebnis kann auch ein **Warnfilter** sein.
+- Wegen geringer Fallzahl nur Hinweis, kein Erfolgskriterium.
+
+**D3 – Reddit-Hype** – zurückgestellt: Die freie Quelle (ApeWisdom) liefert nur den aktuellen Stand, keine Historie → rückwirkend nicht prüfbar.
+
+## 7.5 Stufe 1 als Risiko-Vorfilter (ab 2026-10-06)
+
+Solange kein Modell den Walk-forward besteht, liefert Alpaca-Broker **handelbare** statt „vorhergesagter“ Kandidaten. Die eigentliche Auswahl trifft der Claude-Broker in Stufe 2.
+
+| Regel | Wert | Grund |
+|---|---|---|
+| Liquidität | `dollar_volume_20d` > 0 (wie bisher) | Universe besteht aus Large Caps |
+| Schwankung passt zu Ziel/Stop | `atr_14_pct` zwischen 1 % und 3 % | Unter 1 %: +1 % kaum in 14 Tagen erreichbar; über 3 %: −2 %-Stop wird zufällig gerissen |
+| Keine Quartalszahlen im Haltefenster | `earnings_days_until` unbekannt, < 0 oder > 21 Kalendertage | Kurslücken über den Stop |
+
+- **Reihenfolge** der geeigneten Aktien weiter nach dem vorläufigen Score – im Context Pack deutlich als **nicht validiert** gekennzeichnet; zusätzlich Anzahl geeigneter Aktien.
+- **„Keine Kandidaten“**, wenn keine Aktie die Regeln erfüllt.
+- Kein Marktfilter (SPY/VIX): brachte im Backtest K1 keine Verbesserung.
+- Gleiche Filterdefinition wie im Backtest K1 (`backtest_barrier.py`), dort: konservativ +0,05 % signifikant, nach OHLC-Regel n. s. → Wirkung vor allem weniger Stop-Lücken, kein belegter Vorsprung.
 
 ## 8. Risiken und Grenzen
 
