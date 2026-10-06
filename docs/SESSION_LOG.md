@@ -332,3 +332,6 @@
 - **Schritt B:** `analysis/hit_model.py` + `scripts/analysis/walkforward_hit_model.py` (Design vorab in Konzept §7.2 festgelegt), Fix: Spaltenfilter je Fold für HGB
 - **Ergebnis B:** Tages-AUC ≈ 0,50, Holdout +0,062 %/Trade (konservativ −0,039 %), Differenz zum Universum n. s. → **nicht bestanden**; C (Hyperopt) zurückgestellt ([Bericht](reports/2026-10-06_hit_model_walkforward.md))
 - **Tests:** 766 passed
+- **Schritt D vorbereitet:** Konzept §7.4 (Event-Studien D1 8-K-Rückkäufe, D2 Index-Aufnahmen, vorab festgelegt) + §7.5 Risiko-Vorfilter
+- **Vorfilter (Stufe 1):** `context_pack_generator.prefilter_reasons` – ATR 1–3 %, keine Earnings ≤ 21 Kalendertage, Liquidität; Übersicht mit Ausschlussgründen und „Heute keine Kandidaten“, Frontmatter `selection: risk_prefilter`, `ranking_validated: false`; im Mittel 216–308 geeignete Aktien/Tag (2022–2026)
+- **Tests:** 781 passed

@@ -1,5 +1,6 @@
 """Unit tests for the rank-based preliminary score of the Context Pack (M7)."""
 
+import math
 from datetime import date
 from unittest.mock import MagicMock
 
@@ -93,10 +94,10 @@ def test_bools_strings_and_nan_handled():
     assert scored[0]["score"] > scored[1]["score"]
 
 
-def test_generate_daily_ranks_by_rank_score(tmp_path, monkeypatch):
+def _gen_snaps(n=10, **overrides):
     snaps = []
-    for i in range(10):
-        snaps.append({
+    for i in range(n):
+        snap = {
             "ticker": f"T{i}", "snapshot_date": date(2026, 10, 1),
             "feature_version": "2026.10-1",
             "price_vs_sma50": float(i),
@@ -104,12 +105,24 @@ def test_generate_daily_ranks_by_rank_score(tmp_path, monkeypatch):
             "rsi_14": 50.0 - i,
             "macro_vix_regime": 1.0,
             "dollar_volume_20d": 1e7,
-        })
+            "atr_14_pct": 0.02,
+        }
+        snap.update(overrides)
+        snaps.append(snap)
+    return snaps
+
+
+def _generator(tmp_path, monkeypatch, snaps):
     gen = ContextPackGenerator(MagicMock(), output_dir=str(tmp_path))
     monkeypatch.setattr(gen, "_load_snapshots", lambda d: [dict(s) for s in snaps])
     monkeypatch.setattr(gen, "_get_universe_info", lambda t: {"sector": "Tech",
                                                               "industry": "X"})
     monkeypatch.setattr(gen, "_get_latest_price", lambda t, d: 100.0)
+    return gen
+
+
+def test_generate_daily_ranks_by_rank_score(tmp_path, monkeypatch):
+    gen = _generator(tmp_path, monkeypatch, _gen_snaps())
     n = gen.generate_daily(date(2026, 10, 1), top_n=3)
     assert n == 3
     files = sorted(p.name for p in (tmp_path / "2026-10-01").iterdir())
@@ -117,6 +130,68 @@ def test_generate_daily_ranks_by_rank_score(tmp_path, monkeypatch):
     text = (tmp_path / "2026-10-01" / files[1]).read_text(encoding="utf-8-sig")
     assert "Perzentil-Rang" in text and "macro_vix_regime |" not in text.split(
         "## 2.")[1].split("## 3.")[0]
+    assert "ranking_validated: false" in text
+
+
+@pytest.mark.parametrize("overrides, reason", [
+    ({}, None),
+    ({"atr_14_pct": 0.005}, "ATR < 1 %"),
+    ({"atr_14_pct": 0.035}, "ATR > 3 %"),
+    ({"atr_14_pct": None}, "ATR fehlt"),
+    ({"dollar_volume_20d": 0.0}, "keine Liquidität"),
+    ({"earnings_days_until": 0}, "Earnings im Haltefenster"),
+    ({"earnings_days_until": 21}, "Earnings im Haltefenster"),
+    ({"earnings_days_until": 22}, None),
+    ({"earnings_days_until": -3}, None),  # stale date in the past
+    ({"earnings_days_until": None}, None),  # unknown -> allowed
+    ({"atr_14_pct": 0.01}, None),  # bounds inclusive
+    ({"atr_14_pct": 0.03}, None),
+])
+def test_prefilter_reasons(overrides, reason):
+    snap = {"dollar_volume_20d": 1e7, "atr_14_pct": 0.02, **overrides}
+    reasons = cpg.prefilter_reasons(snap)
+    assert reasons == ([] if reason is None else [reason])
+
+
+def test_prefilter_matches_barrier_backtest_definition():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).parents[2] / "scripts" / "analysis" / "backtest_barrier.py"
+    spec = importlib.util.spec_from_file_location("backtest_barrier", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.FILTER_ATR_MIN == cpg.FILTER_ATR_MIN
+    assert mod.FILTER_ATR_MAX == cpg.FILTER_ATR_MAX
+    assert int(math.ceil(14 * 7 / 5)) + 1 == cpg.EARNINGS_BLOCK_CAL_DAYS
+
+
+def test_generate_daily_skips_ineligible(tmp_path, monkeypatch):
+    snaps = _gen_snaps()
+    snaps[9]["atr_14_pct"] = 0.05  # best score, but too volatile
+    snaps[8]["earnings_days_until"] = 5  # earnings inside the window
+    gen = _generator(tmp_path, monkeypatch, snaps)
+    assert gen.generate_daily(date(2026, 10, 1), top_n=2) == 2
+    files = sorted(p.name for p in (tmp_path / "2026-10-01").iterdir())
+    assert files == ["00_uebersicht.md", "01_T7.md", "02_T6.md"]
+    overview = (tmp_path / "2026-10-01" / "00_uebersicht.md").read_text(
+        encoding="utf-8-sig")
+    assert "Geeignet nach Risiko-Vorfilter: 8" in overview
+    assert "| ATR > 3 % | 1 |" in overview
+
+
+def test_generate_daily_no_candidates_writes_overview(tmp_path, monkeypatch):
+    day_dir = tmp_path / "2026-10-01"
+    day_dir.mkdir()
+    (day_dir / "01_OLD.md").write_text("stale", encoding="utf-8")
+    gen = _generator(tmp_path, monkeypatch, _gen_snaps(atr_14_pct=0.06))
+    assert gen.generate_daily(date(2026, 10, 1)) == 0
+    files = sorted(p.name for p in day_dir.iterdir())
+    assert files == ["00_uebersicht.md"]  # stale candidate file removed
+    overview = (day_dir / "00_uebersicht.md").read_text(encoding="utf-8-sig")
+    assert "Heute keine Kandidaten" in overview
+    assert "| ATR > 3 % | 10 |" in overview
+    assert "VIX Regime | Medium" in overview  # market context still shown
 
 
 def test_load_snapshots_keeps_feature_version_string():

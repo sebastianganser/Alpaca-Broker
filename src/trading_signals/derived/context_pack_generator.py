@@ -73,6 +73,38 @@ PRELIMINARY_WEIGHTS = {
 #: Minimum number of contributing (non-constant, non-null) features.
 MIN_CONTRIBUTING_FEATURES = 3
 
+# Stage-1 risk pre-filter (concept §7.5). Same definition as the K1
+# barrier backtest (scripts/analysis/backtest_barrier.py): the daily range
+# must fit the +1 % / −2 % barriers and no earnings may fall inside the
+# 14-session holding window (≈ 14 × 7/5 calendar days + 1 for the entry gap).
+FILTER_ATR_MIN = 0.01
+FILTER_ATR_MAX = 0.03
+EARNINGS_BLOCK_CAL_DAYS = 21
+
+
+def prefilter_reasons(snap: dict) -> list[str]:
+    """Reasons why a snapshot fails the stage-1 risk pre-filter (pure).
+
+    Returns an empty list if the ticker is eligible. Missing ATR or
+    dollar volume excludes the ticker (unknown risk); an unknown earnings
+    date does not (most tickers without a scheduled date have none soon).
+    """
+    reasons: list[str] = []
+    dv = _numeric(snap.get("dollar_volume_20d"))
+    if dv is None or dv <= 0:
+        reasons.append("keine Liquidität")
+    atr = _numeric(snap.get("atr_14_pct"))
+    if atr is None:
+        reasons.append("ATR fehlt")
+    elif atr < FILTER_ATR_MIN:
+        reasons.append("ATR < 1 %")
+    elif atr > FILTER_ATR_MAX:
+        reasons.append("ATR > 3 %")
+    earn = _numeric(snap.get("earnings_days_until"))
+    if earn is not None and 0 <= earn <= EARNINGS_BLOCK_CAL_DAYS:
+        reasons.append("Earnings im Haltefenster")
+    return reasons
+
 
 def _numeric(val: Any) -> float | None:
     """Float value of a snapshot entry (bool -> 0/1), None if not numeric."""
@@ -207,31 +239,41 @@ class ContextPackGenerator:
         # 3. Compute cross-sectional percentiles
         percentiles = self._compute_percentiles(snapshots)
 
-        # 4. Rank and select top_n (filter: must have dollar_volume_20d > 0)
-        candidates = [
-            s for s in scored
-            if s["score"] is not None
-            and s.get("dollar_volume_20d") is not None
-            and float(s.get("dollar_volume_20d", 0)) > 0
-        ]
+        # 4. Stage-1 risk pre-filter (concept §7.5), then rank the eligible
+        #    tickers by the (unvalidated) preliminary score
+        excluded: dict[str, int] = {}
+        candidates = []
+        for s in scored:
+            reasons = prefilter_reasons(s)
+            if s["score"] is None:
+                reasons = [*reasons, "zu wenige Kennzahlen"]
+            for r in reasons:
+                excluded[r] = excluded.get(r, 0) + 1
+            if not reasons:
+                candidates.append(s)
         candidates.sort(key=lambda x: x["score"], reverse=True)
         top = candidates[:top_n]
 
-        if not top:
-            logger.warning(
-                f"[context_pack] No scorable candidates for {target_date}"
-            )
-            return 0
-
-        # 5. Create output directory
+        # 5. Create output directory (drop candidate files of earlier runs)
         day_dir = self.output_dir / target_date.isoformat()
         day_dir.mkdir(parents=True, exist_ok=True)
+        for old in day_dir.glob("[0-9][0-9]_*.md"):
+            if old.name != "00_uebersicht.md":
+                old.unlink()
 
-        # 6. Generate overview
+        # 6. Generate overview (also on days without candidates)
         universe_size = len(snapshots)
         self._write_overview(
-            day_dir, target_date, top, candidates, percentiles, universe_size
+            day_dir, target_date, top, candidates, percentiles, universe_size,
+            excluded=excluded, market=snapshots[0],
         )
+
+        if not top:
+            logger.warning(
+                f"[context_pack] No eligible candidates for {target_date} "
+                f"(excluded: {excluded})"
+            )
+            return 0
 
         # 7. Generate per-candidate files
         for rank, candidate in enumerate(top, 1):
@@ -243,7 +285,7 @@ class ContextPackGenerator:
 
         logger.info(
             f"[context_pack] Generated {len(top)} candidate files "
-            f"for {target_date} in {day_dir}"
+            f"for {target_date} in {day_dir} ({len(candidates)} eligible)"
         )
         return len(top)
 
@@ -337,21 +379,29 @@ class ContextPackGenerator:
         return float(val) if val else None
 
     def _write_overview(
-        self, day_dir, target_date, top, all_candidates, percentiles, universe_size
+        self, day_dir, target_date, top, all_candidates, percentiles, universe_size,
+        excluded: dict[str, int] | None = None, market: dict | None = None,
     ):
-        """Write the daily overview file."""
+        """Write the daily overview file (also on days without candidates)."""
         lines = [
             f"# Tagesübersicht — {target_date.isoformat()}",
             "",
             f"Universum: {universe_size} Ticker · "
-            f"Scorbare Kandidaten: {len(all_candidates)}",
-            "Preliminary Score (Platzhalter bis F1 Composite Score, Okt 2026)",
+            f"Geeignet nach Risiko-Vorfilter: {len(all_candidates)}",
             "",
             "## Top-Kandidaten",
             "",
-            "| Rang | Ticker | Score | Sektor | Features Used |",
-            "|---|---|---|---|---|",
         ]
+        if top:
+            lines.extend([
+                "| Rang | Ticker | Score | Sektor | Features Used |",
+                "|---|---|---|---|---|",
+            ])
+        else:
+            lines.append(
+                "**Heute keine Kandidaten** – keine Aktie erfüllt den "
+                "Risiko-Vorfilter."
+            )
         for rank, c in enumerate(top, 1):
             info = self._get_universe_info(c["ticker"])
             lines.append(
@@ -359,8 +409,23 @@ class ContextPackGenerator:
                 f"| {info.get('sector', '–')} | {c.get('score_features_used', 0)} |"
             )
 
-        # Market context
-        macro = top[0] if top else {}
+        # Pre-filter summary
+        lines.extend([
+            "",
+            "## Risiko-Vorfilter",
+            "",
+            "Geeignet = Dollar-Volumen > 0, ATR(14) zwischen 1 % und 3 %, "
+            f"keine Quartalszahlen in den nächsten {EARNINGS_BLOCK_CAL_DAYS} "
+            "Kalendertagen (Ziel +1 % / Stop −2 % / max. 14 Handelstage).",
+            "",
+        ])
+        if excluded:
+            lines.extend(["| Ausschlussgrund | Ticker |", "|---|---|"])
+            for reason, count in sorted(excluded.items(), key=lambda kv: -kv[1]):
+                lines.append(f"| {reason} | {count} |")
+
+        # Market context (market-wide features are identical for all tickers)
+        macro = market or (top[0] if top else {})
         regime = macro.get('macro_vix_regime')
         regime_str = (
             ['Low Vol', 'Medium', 'High Vol'][int(regime)]
@@ -382,14 +447,16 @@ class ContextPackGenerator:
             "",
             "## Datenqualität",
             "",
-            "Preliminary Score = gewichtete Summe der Perzentil-Ränge im "
-            "Tagesquerschnitt",
-            "(zentriert). Die Gewichte sind VORLÄUFIG und nicht validiert.",
-            "Ab Oktober 2026 (R1): ML-gewichteter Composite Score mit Guardrails.",
+            "Die Vorauswahl ist ein **Risikofilter, keine Vorhersage**. "
+            "Die Reihenfolge nach dem",
+            "Preliminary Score (gewichtete Perzentil-Ränge, vorläufige Gewichte) "
+            "ist **nicht validiert**:",
+            "Im Walk-forward-Test (2026-10-06) konnte kein Modell Aktien besser "
+            "als Zufall ordnen.",
+            "Die eigentliche Auswahl erfolgt in Stufe 2 mit Live-Daten.",
             "",
             "---",
-            f"*Generiert {target_date.isoformat()} · Sprint 9.5c F2 MVP · "
-            "Keine Anlageberatung*",
+            f"*Generiert {target_date.isoformat()} · Keine Anlageberatung*",
         ])
 
         filepath = day_dir / "00_uebersicht.md"
@@ -422,6 +489,11 @@ class ContextPackGenerator:
         ed = candidate.get("earnings_days_until")
         if ed is not None:
             frontmatter.append(f"earnings_in_days: {int(ed)}")
+        atr = _numeric(candidate.get("atr_14_pct"))
+        if atr is not None:
+            frontmatter.append(f"atr_14_pct: {atr:.4f}")
+        frontmatter.append("selection: risk_prefilter")
+        frontmatter.append("ranking_validated: false")
 
         # Data completeness: fraction of display features that have values
         filled = sum(1 for f in DISPLAY_FEATURES if candidate.get(f) is not None)
@@ -494,8 +566,9 @@ class ContextPackGenerator:
             f"Vollständigkeit: {completeness:.0%} "
             f"({filled}/{len(DISPLAY_FEATURES)} Features verfügbar)",
             "",
-            "> **Hinweis:** Preliminary Score (Sprint 9.5c MVP, vorläufige "
-            "Gewichte). Ab Oktober 2026: ML-gewichteter Composite Score.",
+            "> **Hinweis:** Auswahl = Risiko-Vorfilter (ATR 1–3 %, keine "
+            "Earnings im Haltefenster). Die Reihenfolge nach dem Preliminary "
+            "Score ist nicht validiert (Walk-forward 2026-10-06 ohne Vorsprung).",
             "",
             "---",
             f"*Generiert {target_date.isoformat()} · Keine Anlageberatung*",
