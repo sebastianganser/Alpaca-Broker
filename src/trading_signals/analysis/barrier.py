@@ -34,6 +34,11 @@ class BarrierParams:
     sl: float  # stop loss, fraction (0.02 = -2 %)
     max_days: int = 14
     cost: float = 0.0005  # round trip
+    #: Day on which TP and SL are both touched (no gap):
+    #:   "stop" – stop counts (conservative lower bound)
+    #:   "ohlc" – path heuristic: green candle O→L→H→C (stop first),
+    #:            red candle O→H→L→C (take profit first)
+    ambiguous: str = "stop"
 
     @property
     def label(self) -> str:
@@ -47,7 +52,7 @@ class BarrierParams:
 
 def simulate_windows(
     o: np.ndarray, h: np.ndarray, lo: np.ndarray, c: np.ndarray, p: BarrierParams
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Simulate trades on price windows.
 
     Args:
@@ -56,8 +61,9 @@ def simulate_windows(
         p: barrier parameters.
 
     Returns:
-        ``(outcome, net_return, days_held)`` each of shape ``(n,)``.
-        ``outcome`` ∈ {1 TP, -1 SL, 0 time stop}; ``days_held`` is 1-based.
+        ``(outcome, net_return, days_held, ambiguous)`` each of shape ``(n,)``.
+        ``outcome`` ∈ {1 TP, -1 SL, 0 time stop}; ``days_held`` is 1-based;
+        ``ambiguous`` marks exits on a day that touched both barriers.
     """
     n, m = o.shape
     entry = o[:, 0]
@@ -77,20 +83,30 @@ def simulate_windows(
     g_sl = gap_sl[rows, first]
     g_tp = gap_tp[rows, first]
     i_sl = hit_sl[rows, first]
+    i_tp = hit_tp[rows, first]
     open_j = o[rows, first]
+    close_j = c[rows, first]
+
+    ambiguous = has_event & ~g_sl & ~g_tp & i_sl & i_tp
+    if p.ambiguous == "ohlc":
+        sl_first = np.where(ambiguous, close_j >= open_j, i_sl)
+    elif p.ambiguous == "stop":
+        sl_first = i_sl
+    else:
+        raise ValueError(f"unknown ambiguous rule {p.ambiguous!r}")
 
     exit_px = np.where(
         ~has_event, c[:, m - 1],
         np.where(g_sl, open_j,
                  np.where(g_tp, open_j,
-                          np.where(i_sl, sl_px[:, 0], tp_px[:, 0]))),
+                          np.where(sl_first, sl_px[:, 0], tp_px[:, 0]))),
     )
     outcome = np.where(
         ~has_event, OUTCOME_TIME,
-        np.where(g_sl | (~g_tp & i_sl), OUTCOME_SL, OUTCOME_TP),
+        np.where(g_sl | (~g_tp & sl_first), OUTCOME_SL, OUTCOME_TP),
     )
     net = exit_px / entry - 1.0 - p.cost
-    return outcome.astype(np.int8), net, first + 1
+    return outcome.astype(np.int8), net, first + 1, ambiguous
 
 
 def simulate_signals(
@@ -136,17 +152,19 @@ def simulate_signals(
             continue
         sig = sig[complete]
         win = win[complete]
-        outcome, net, days = simulate_windows(
+        outcome, net, days, amb = simulate_windows(
             win[:, :, 0], win[:, :, 1], win[:, :, 2], win[:, :, 3], p
         )
         res = sig.copy()
         res["outcome"] = outcome
         res["net_return"] = net
         res["days_held"] = days
+        res["ambiguous"] = amb
         res["entry_date"] = dates[start[complete]]
         out.append(res)
     if not out:
-        cols = [*signals.columns, "outcome", "net_return", "days_held", "entry_date"]
+        cols = [*signals.columns, "outcome", "net_return", "days_held",
+                "ambiguous", "entry_date"]
         return pd.DataFrame(columns=cols)
     return pd.concat(out, ignore_index=True)
 
@@ -155,11 +173,13 @@ def summarize(trades: pd.DataFrame, p: BarrierParams) -> dict:
     """Date-weighted summary: every signal date counts equally."""
     if trades.empty:
         return {"n_trades": 0, "n_dates": 0}
+    amb = trades["ambiguous"] if "ambiguous" in trades else False
     t = trades.assign(hit=(trades["outcome"] == OUTCOME_TP).astype(float),
-                      time=(trades["outcome"] == OUTCOME_TIME).astype(float))
+                      time=(trades["outcome"] == OUTCOME_TIME).astype(float),
+                      amb=pd.Series(amb, index=trades.index).astype(float))
     per_date = t.groupby("snapshot_date").agg(
         hit=("hit", "mean"), net=("net_return", "mean"),
-        time=("time", "mean"), days=("days_held", "mean"),
+        time=("time", "mean"), days=("days_held", "mean"), amb=("amb", "mean"),
     )
     return {
         "n_trades": int(len(t)),
@@ -169,6 +189,7 @@ def summarize(trades: pd.DataFrame, p: BarrierParams) -> dict:
         "avg_net_return": float(per_date["net"].mean()),
         "time_stop_share": float(per_date["time"].mean()),
         "avg_days_held": float(per_date["days"].mean()),
+        "ambiguous_share": float(per_date["amb"].mean()),
         "worst_trade": float(t["net_return"].min()),
     }
 

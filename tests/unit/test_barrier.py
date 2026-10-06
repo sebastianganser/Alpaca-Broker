@@ -29,28 +29,48 @@ def _w(rows):
 def test_take_profit_intraday():
     o, h, lo, c = _w([[(100, 100.5, 99.5, 100), (100, 101.2, 99.8, 101)]
                       + [(101, 101, 101, 101)]])
-    out, net, days = simulate_windows(o, h, lo, c, P)
+    out, net, days, _ = simulate_windows(o, h, lo, c, P)
     assert out[0] == OUTCOME_TP and days[0] == 2
     assert net[0] == pytest.approx(0.01)
 
 
 def test_stop_wins_when_both_touched_same_day():
     o, h, lo, c = _w([[(100, 101.5, 97.5, 100), (100, 100, 100, 100), (100, 100, 100, 100)]])
-    out, net, days = simulate_windows(o, h, lo, c, P)
+    out, net, days, _ = simulate_windows(o, h, lo, c, P)
     assert out[0] == OUTCOME_SL and days[0] == 1
     assert net[0] == pytest.approx(-0.02)
 
 
+def test_ohlc_rule_resolves_ambiguous_day():
+    from dataclasses import replace
+
+    p = replace(P, ambiguous="ohlc")
+    # red candle (close < open): O→H→L→C → take profit first
+    o, h, lo, c = _w([[(100, 101.5, 97.5, 99), (100, 100, 100, 100), (100, 100, 100, 100)]])
+    out, net, _, amb = simulate_windows(o, h, lo, c, p)
+    assert amb[0] and out[0] == OUTCOME_TP and net[0] == pytest.approx(0.01)
+    # green candle (close ≥ open): O→L→H→C → stop first
+    o, h, lo, c = _w([[(100, 101.5, 97.5, 101), (100, 100, 100, 100), (100, 100, 100, 100)]])
+    out, _, _, amb = simulate_windows(o, h, lo, c, p)
+    assert amb[0] and out[0] == OUTCOME_SL
+
+
+def test_unambiguous_trade_not_flagged():
+    o, h, lo, c = _w([[(100, 101.2, 99.5, 101), (100, 100, 100, 100), (100, 100, 100, 100)]])
+    _, _, _, amb = simulate_windows(o, h, lo, c, P)
+    assert not amb[0]
+
+
 def test_gap_down_fills_at_open():
     o, h, lo, c = _w([[(100, 100.5, 99, 99.5), (95, 96, 94, 95), (95, 95, 95, 95)]])
-    out, net, days = simulate_windows(o, h, lo, c, P)
+    out, net, days, _ = simulate_windows(o, h, lo, c, P)
     assert out[0] == OUTCOME_SL and days[0] == 2
     assert net[0] == pytest.approx(-0.05)
 
 
 def test_gap_up_fills_at_open():
     o, h, lo, c = _w([[(100, 100.5, 99.5, 100), (103, 104, 102, 103), (103, 103, 103, 103)]])
-    out, net, _ = simulate_windows(o, h, lo, c, P)
+    out, net, _, _ = simulate_windows(o, h, lo, c, P)
     assert out[0] == OUTCOME_TP
     assert net[0] == pytest.approx(0.03)
 
@@ -58,7 +78,7 @@ def test_gap_up_fills_at_open():
 def test_time_stop_and_cost():
     p = BarrierParams(tp=0.01, sl=0.02, max_days=3, cost=0.001)
     o, h, lo, c = _w([[(100, 100.5, 99.5, 100), (100, 100.5, 99.5, 100.2), (100, 100.5, 99.5, 100.4)]])
-    out, net, days = simulate_windows(o, h, lo, c, p)
+    out, net, days, _ = simulate_windows(o, h, lo, c, p)
     assert out[0] == OUTCOME_TIME and days[0] == 3
     assert net[0] == pytest.approx(0.004 - 0.001)
 

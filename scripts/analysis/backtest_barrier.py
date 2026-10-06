@@ -175,52 +175,64 @@ def per_date_net(trades: pd.DataFrame) -> pd.Series:
     return trades.groupby("snapshot_date")["net_return"].mean()
 
 
-def run_combo(p, universe_trades: pd.DataFrame, groups: dict[str, pd.DataFrame],
+MODES = {"stop": "konservativ", "ohlc": "OHLC-Pfad"}
+
+
+def run_combo(p, universe: dict[str, pd.DataFrame], groups: dict[str, pd.DataFrame],
               block: int) -> list[str]:
+    """Report for one TP/SL combination; ``universe`` maps mode → trades."""
     from trading_signals.analysis.barrier import block_bootstrap_diff, summarize
 
     key = ["snapshot_date", "ticker"]
     lines = [f"## {p.label}", "",
              f"Zufalls-Trefferquote (Break-even brutto): **{fmt_pct(p.random_hit_rate, 1)}**", "",
-             "| Gruppe | Trades | Tage | Trefferquote | Ø Netto/Trade | Zeitstopp | Ø Haltedauer |",
-             "|---|---|---|---|---|---|---|"]
-    subsets: dict[str, pd.DataFrame] = {"Universum": universe_trades}
-    for name, sel in groups.items():
-        subsets[name] = universe_trades.merge(sel[key], on=key, how="inner")
-    for name, tr in subsets.items():
-        s = summarize(tr, p)
-        if not s.get("n_trades"):
-            lines.append(f"| {name} | 0 | 0 | – | – | – | – |")
+             "| Gruppe | Trades | Treffer kons. | Treffer OHLC | Ø Netto kons. | Ø Netto OHLC "
+             "| mehrdeutig | Zeitstopp | Ø Haltedauer |",
+             "|---|---|---|---|---|---|---|---|---|"]
+    subsets: dict[str, dict[str, pd.DataFrame]] = {}
+    for mode, uni in universe.items():
+        subsets[mode] = {"Universum": uni}
+        for name, sel in groups.items():
+            subsets[mode][name] = uni.merge(sel[key], on=key, how="inner")
+    names = ["Universum", *groups]
+    for name in names:
+        sk = summarize(subsets["stop"][name], p)
+        so = summarize(subsets["ohlc"][name], p)
+        if not sk.get("n_trades"):
+            lines.append(f"| {name} | 0 | – | – | – | – | – | – | – |")
             continue
         lines.append(
-            f"| {name} | {s['n_trades']} | {s['n_dates']} | {fmt_pct(s['hit_rate'], 1)} | "
-            f"{fmt_pct(s['avg_net_return'], 3)} | {fmt_pct(s['time_stop_share'], 1)} | "
-            f"{s['avg_days_held']:.1f} |"
+            f"| {name} | {sk['n_trades']} | {fmt_pct(sk['hit_rate'], 1)} | "
+            f"{fmt_pct(so['hit_rate'], 1)} | {fmt_pct(sk['avg_net_return'], 3)} | "
+            f"{fmt_pct(so['avg_net_return'], 3)} | {fmt_pct(sk['ambiguous_share'], 1)} | "
+            f"{fmt_pct(sk['time_stop_share'], 1)} | {sk['avg_days_held']:.1f} |"
         )
 
-    uni_net = per_date_net(universe_trades)
     lines += ["", "Differenz Ø Netto/Trade gegenüber Universum (Datumsblock-Bootstrap, 95 %-KI):", ""]
     for name in groups:
-        tr = subsets[name]
-        if tr.empty:
-            continue
-        diff, lo, hi = block_bootstrap_diff(per_date_net(tr), uni_net, block=block)
-        sig = "✅ signifikant" if lo > 0 else ("❌ signifikant schlechter" if hi < 0 else "nicht signifikant")
-        lines.append(f"- {name}: {fmt_pct(diff, 3)} [{fmt_pct(lo, 3)} … {fmt_pct(hi, 3)}] → {sig}")
+        parts = []
+        for mode, label in MODES.items():
+            tr = subsets[mode][name]
+            if tr.empty:
+                continue
+            diff, lo, hi = block_bootstrap_diff(
+                per_date_net(tr), per_date_net(subsets[mode]["Universum"]), block=block
+            )
+            sig = "✅" if lo > 0 else ("❌" if hi < 0 else "n.s.")
+            parts.append(f"{label} {fmt_pct(diff, 3)} [{fmt_pct(lo, 3)} … {fmt_pct(hi, 3)}] {sig}")
+        lines.append(f"- {name}: " + " · ".join(parts))
 
-    # per year: universe vs first group (top N)
-    first = next(iter(groups))
-    lines += ["", f"Pro Jahr ({first} vs. Universum):", "",
-              "| Jahr | Trefferquote Top | Trefferquote Univ. | Ø Netto Top | Ø Netto Univ. |",
-              "|---|---|---|---|---|"]
-    for year in sorted(universe_trades["snapshot_date"].dt.year.unique()):
-        u = universe_trades[universe_trades["snapshot_date"].dt.year == year]
-        t = subsets[first][subsets[first]["snapshot_date"].dt.year == year]
-        su, st = summarize(u, p), summarize(t, p)
-        lines.append(
-            f"| {year} | {fmt_pct(st.get('hit_rate'), 1)} | {fmt_pct(su.get('hit_rate'), 1)} | "
-            f"{fmt_pct(st.get('avg_net_return'), 3)} | {fmt_pct(su.get('avg_net_return'), 3)} |"
-        )
+    # per year (OHLC path): universe vs every group
+    ohlc = subsets["ohlc"]
+    lines += ["", "Pro Jahr (OHLC-Pfad, Ø Netto/Trade):", "",
+              "| Jahr | " + " | ".join(names) + " |",
+              "|---|" + "---|" * len(names)]
+    for year in sorted(ohlc["Universum"]["snapshot_date"].dt.year.unique()):
+        cells = []
+        for name in names:
+            tr = ohlc[name][ohlc[name]["snapshot_date"].dt.year == year]
+            cells.append(fmt_pct(summarize(tr, p).get("avg_net_return"), 3))
+        lines.append(f"| {year} | " + " | ".join(cells) + " |")
     lines.append("")
     return lines
 
@@ -270,18 +282,22 @@ def main(argv: list[str] | None = None) -> int:
         f"– {scored['snapshot_date'].max():%Y-%m-%d} · {n_dates} Tage · Kosten {fmt_pct(args.cost, 3)} "
         f"Round-Trip",
         "",
-        "Einstieg Open d+1 · gleicher Tag Ziel+Stop = Stop · Gap → Ausführung zum Open · "
-        "gewichtet je Signaltag gleich.",
+        "Einstieg Open d+1 · Gap → Ausführung zum Open · gewichtet je Signaltag gleich.",
+        "Tag mit Ziel **und** Stop berührt (mehrdeutig): *konservativ* = Stop zählt (Untergrenze); "
+        "*OHLC-Pfad* = grüne Kerze O→L→H→C (Stop zuerst), rote Kerze O→H→L→C (Ziel zuerst).",
         f"Filter: ATR {fmt_pct(FILTER_ATR_MIN, 0)}–{fmt_pct(FILTER_ATR_MAX, 0)}, keine Earnings in der "
         f"Haltedauer · Regime: SPY > SMA{SMA_REGIME} und VIX < {REGIME_VIX_MAX:.0f}.",
         "",
     ]
     for tp in parse_floats(args.tp):
         for mult in parse_floats(args.sl_mult):
-            p = BarrierParams(tp=tp, sl=tp * mult, max_days=args.max_days, cost=args.cost)
-            logger.info(f"Simulating {p.label} …")
-            uni = simulate_signals(signals, px, p)
-            lines += run_combo(p, uni, groups, args.block)
+            universe = {}
+            for mode in MODES:
+                p = BarrierParams(tp=tp, sl=tp * mult, max_days=args.max_days,
+                                  cost=args.cost, ambiguous=mode)
+                logger.info(f"Simulating {p.label} ({mode}) …")
+                universe[mode] = simulate_signals(signals, px, p)
+            lines += run_combo(p, universe, groups, args.block)
 
     report = "\n".join(lines)
     out_dir = Path(args.out)
