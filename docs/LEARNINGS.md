@@ -230,3 +230,11 @@ First analysis run with `return_barrier_14d` (+1 % / −2 % / 14 sessions, net) 
 - **Large |t| only for short histories:** options IV (11 dates), fundamentals/ARK (~105 dates) → flagged `reliable=False`, not usable yet.
 - **Models:** LASSO selects no feature; RF permutation importance ≤ 0.0004 → no exploitable linear or non-linear structure in the current features.
 - **Lesson:** Step B (ML P(hit)) can only add value once features carry signal. Priority shifts to (1) letting short alt-data histories grow, (2) features for documented short-term effects (short-term reversal, PEAD/SUE, pre-earnings drift) and (3) new event sources (8-K buybacks, index additions) – each measured against this baseline.
+
+### [2026-10-06] 📊 Short-Term Price Features (A2): First Hints, Still No Usable Edge
+Nine `st_*` features (migration 034, backfill 621k rows in 199 s), analysis rerun on the barrier label (+1 %/−2 %/14d).
+- **Best reliable features now come from A2:** `st_close_location` ρ = +0.011 (t_NW 3.5, p 0.0006 – close near the day's high → better trade outcome), `st_earnings_reaction` ρ = +0.009 (t 2.7, also t 2.5 on `return_1d` → post-earnings drift direction as in the literature), `st_dist_52w_high` ρ = +0.012 (t 1.9). None passes the multiple-testing correction.
+- **Reversal effects** (`st_return_5d`, `st_rsi_2`) point the expected way on `return_5d` (ρ ≈ −0.01, t ≈ −1.7) but are not significant – weak in large caps.
+- **Models:** LASSO still selects nothing; RF importance ≤ 0.00025.
+- **Scale:** an IC of 0.01 for the top 5 of ~680 stocks means roughly IC × σ × z ≈ 0.01 × 1.5 % × 2.7 ≈ 0.04 % extra per trade – far below the +1 % target.
+- **Lesson:** Literature effects are visible in direction but tiny in size. A combined model (step B) is the honest final test whether several weak signals add up to a hit rate clearly above break-even out of sample.

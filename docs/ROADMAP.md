@@ -227,7 +227,7 @@
 - [ ] **K1–K4:** Kurzfrist-Kandidaten ([Konzept 2026-10-06](2026-10-06_Konzept_Kurzfrist_Kandidaten.md))
   - [x] K1: Barrier-Backtest des aktuellen Scores (TP 0,5–1 %, SL 2–3×, max. 14 Tage) — Ergebnis: ≈ Zufall, siehe LEARNINGS 2026-10-06
   - [x] K2 (Schritt A): Barrier-Label +1 %/−2 %/14d (`return_barrier_14d`, Migration 033) als Zielgröße der Feature-Analyse — Ergebnis: kein robustes Signal, siehe LEARNINGS 2026-10-06
-  - [ ] K2b (Schritt A2): 9 Kurzfrist-Kennzahlen `st_*` aus Tageskursen (Migration 034, Backfill-Skript), Analyse neu und mit Stand A vergleichen
+  - [x] K2b (Schritt A2): 9 Kurzfrist-Kennzahlen `st_*` aus Tageskursen (Migration 034, Backfill-Skript), Analyse neu und mit Stand A vergleichen — Ergebnis: erste Hinweise (Schlusslage, Earnings-Reaktion), nicht signifikant
   - [ ] K3 (Schritt B, Sprint 10): ML-Modell P(Treffer) (LASSO → Gradient Boosting), Purged Walk-forward, Schwelle → 0–5 Kandidaten oder „keine Kandidaten“
   - [ ] K3b (Schritt C): Hyperopt nur für Trade-Parameter (Ziel/Stop, Schwelle, Filter), Bestätigung auf Holdout
   - [ ] K4 (Schritt D): Neue freie Quellen (8-K-Rückkäufe, Index-Aufnahmen, Reddit-Hype) mit Vorher/Nachher-Messung

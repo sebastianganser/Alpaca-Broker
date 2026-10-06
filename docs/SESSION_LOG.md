@@ -326,3 +326,6 @@
 - **Plan:** A Label → B ML P(Treffer) mit Walk-forward + Schwelle → C Hyperopt nur für Trade-Parameter → D neue Quellen
 - **Ergebnis Analyse (527k Snapshots):** kein signifikantes Feature für das Barrier-Ziel, LASSO wählt nichts, RF-Importance ≈ 0
 - **Tests:** 740 passed
+- **A2:** 9 Kurzfrist-Kennzahlen `st_*` (`derived/short_term_features.py`, Migration 034, `FEATURE_VERSION` 2026.10-2), Backfill-Skript `scripts/repair/backfill_short_term_features.py` (621k Zeilen in 199 s), Neuberechnung nach Kurs-Readjustierung
+- **Ergebnis A2:** `st_close_location` (t 3,5) und `st_earnings_reaction` (t 2,7) jetzt beste Kennzahlen, aber weiterhin nicht signifikant, LASSO leer → Effekt-Richtung wie Literatur, Größe zu klein
+- **Tests:** 755 passed
