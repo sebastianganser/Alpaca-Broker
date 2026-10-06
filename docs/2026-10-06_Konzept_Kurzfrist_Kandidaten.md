@@ -138,6 +138,20 @@ Alle aus `prices_daily` (adjustiert, ohne extrapolierte Zeilen), Stand Schlussku
 
 Umsetzung: eine gemeinsame vektorisierte Funktion für Tageslauf und Backfill (identische Werte), Backfill nur der neuen Spalten (Minuten statt 7–12 h Komplett-Neuaufbau), Neuberechnung auch nach Split-/Dividenden-Readjustierung.
 
+## 7.2 Schritt B – Trefferwahrscheinlichkeit per Modell (Walk-forward)
+
+Ziel: prüfen, ob die kombinierten Kennzahlen **außerhalb der Trainingszeit** Kandidaten liefern, deren Trades nach Kosten Gewinn bringen. Festgelegt **vor** Sicht auf die Ergebnisse:
+
+- **Label:** Treffer = `barrier_outcome = 1` (Ziel +1 % vor Stop −2 % binnen 14 Handelstagen, OHLC-Regel). Rendite = `return_barrier_14d` (netto). Break-even-Trefferquote ≈ (2 % + 0,05 %) / 3 % ≈ **68,3 %**.
+- **Eingaben:** alle Kennzahlen; tickerbezogene als Tagesrang (0–1), marktweite (VIX, Breadth, Makro) und `atr_14_pct` zusätzlich absolut – damit das Modell auch „heute lieber nichts“ lernen kann.
+- **Modelle mit fest gewählten Parametern** (kein Tuning): logistische Regression (L2) und Gradient Boosting (sklearn `HistGradientBoostingClassifier`, flache Bäume, starke Regularisierung).
+- **Walk-forward:** quartalsweise neu trainiert, wachsendes Trainingsfenster ab 07/2022, Purge 16 Handelstage vor jedem Testquartal (Label-Überlappung).
+  - **Entwicklung:** Testquartale 2023-Q3 … 2024-Q4 → Wahl von Modell, Schwelle P(Treffer) und max. Kandidaten (1–5).
+  - **Holdout:** Testquartale 2025-Q1 … 2026-Q3 → einmalige Prüfung mit der in der Entwicklung gewählten Regel, keine Änderung danach.
+- **Auswahlregel:** pro Tag die höchsten P(Treffer), höchstens k Stück, nur wenn P ≥ Schwelle → sonst **„keine Kandidaten“**.
+- **Erfolgskriterium (Holdout):** Ø Netto/Trade > 0 **und** 95 %-KI (Datumsblock-Bootstrap) der Differenz zum Universum > 0. Zusätzlich berichtet: Trefferquote, konservative Variante (mehrdeutige Tage = Stop), Kalibrierung, Tage ohne Kandidaten, Ergebnis je Quartal.
+- Code: `analysis/hit_model.py`, Skript `scripts/analysis/walkforward_hit_model.py` (nur lesend).
+
 ## 8. Risiken und Grenzen
 
 - Nur Tagesdaten → Reihenfolge Ziel/Stop innerhalb eines Tages unbekannt (konservativ gelöst).
