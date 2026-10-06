@@ -335,3 +335,6 @@
 - **Schritt D vorbereitet:** Konzept §7.4 (Event-Studien D1 8-K-Rückkäufe, D2 Index-Aufnahmen, vorab festgelegt) + §7.5 Risiko-Vorfilter
 - **Vorfilter (Stufe 1):** `context_pack_generator.prefilter_reasons` – ATR 1–3 %, keine Earnings ≤ 21 Kalendertage, Liquidität; Übersicht mit Ausschlussgründen und „Heute keine Kandidaten“, Frontmatter `selection: risk_prefilter`, `ranking_validated: false`; im Mittel 216–308 geeignete Aktien/Tag (2022–2026)
 - **Tests:** 781 passed
+- **Schritt D:** `collectors/buyback_events.py` (EDGAR-Volltextsuche + Satz-Klassifizierer), `analysis/event_study.py`, Skripte `scripts/analysis/collect_buyback_events.py` (CSV + Satz-Cache) und `scripts/analysis/event_study.py` (`--source buyback|index_add`), nur lesend
+- **Ergebnis D:** D1 Rückkäufe 648 Trades, Ø −0,063 %, Differenz n. s. → **nicht bestanden**; D2 Index-Aufnahmen −0,32 % vs. Universum (explorativ, nur Hinweis) ([Konzept §7.6](2026-10-06_Konzept_Kurzfrist_Kandidaten.md))
+- **Tests:** 822 passed

@@ -116,7 +116,7 @@ Neue Quellen erst nach Phase 2, damit ihr Beitrag messbar ist.
 | **A2** ✅ | Kurzfrist-Kennzahlen aus vorhandenen Tageskursen (§7.1), Migration 034, vektorisierter Backfill, Analyse neu | Ergebnis: Richtung wie Literatur (`st_close_location`, `st_earnings_reaction`), Effekt zu klein, nicht signifikant |
 | **B** ✅ ❌ | ML-Modell (logistische Regression, Gradient Boosting) schätzt P(Treffer); Purged Walk-forward (§7.2) | Ergebnis: **Kriterium nicht erfüllt** – Tages-AUC ≈ 0,50, Holdout +0,06 %/Trade n. s. (§7.3) |
 | **C** ⏸ | Hyperopt **nur** für wenige Trade-Parameter (Ziel/Stop, Schwelle, Filter), Bestätigung auf Holdout-Zeitraum | Zurückgestellt: ohne Ranking-Signal würde Hyperopt nur Rauschen anpassen |
-| **D** | Ereignisse als Signal (§7.4): D1 8-K-Rückkäufe, D2 Index-Aufnahmen; dazu Stufe 1 als Risiko-Vorfilter (§7.5) | Nur behalten, was in der Event-Studie messbar hilft |
+| **D** ✅ ❌ | Ereignisse als Signal (§7.4): D1 8-K-Rückkäufe, D2 Index-Aufnahmen; dazu Stufe 1 als Risiko-Vorfilter (§7.5) | Ergebnis: **D1 nicht bestanden** (Ø −0,06 %/Trade, n. s.); D2 nach Wirksamkeit schwächer als das Universum → nur Hinweis für Warnfilter (§7.6) |
 
 > Warum kein Hyperopt auf ~80 Gewichte: bei ~1000 Handelstagen und einem Signal nahe null würde die Optimierung vor allem Rauschen anpassen. Das ML-Modell lernt die Gewichtung mit Regularisierung und wird außerhalb der Trainingszeit geprüft.
 
@@ -208,6 +208,29 @@ Solange kein Modell den Walk-forward besteht, liefert Alpaca-Broker **handelbare
 - **„Keine Kandidaten“**, wenn keine Aktie die Regeln erfüllt.
 - Kein Marktfilter (SPY/VIX): brachte im Backtest K1 keine Verbesserung.
 - Gleiche Filterdefinition wie im Backtest K1 (`backtest_barrier.py`), dort: konservativ +0,05 % signifikant, nach OHLC-Regel n. s. → Wirkung vor allem weniger Stop-Lücken, kein belegter Vorsprung.
+
+## 7.6 Ergebnis Schritt D (2026-10-06)
+
+**D1 – 8-K-Rückkauf-Genehmigungen:** [Bericht](reports/2026-10-06_event_study_buyback.md), [Ereignisliste](reports/2026-10-06_buyback_events.csv), [Audit-Stichprobe](reports/2026-10-06_buyback_audit.md)
+
+- **Datenbasis:** EDGAR-Volltextsuche 06/2022–10/2026: 21.860 Dokument-Treffer, davon 5.145 von Universe-Firmen (4.456 Filings, 758 von 838 Tickern per CIK abgebildet) → 815 Ereignisse, nach Entdoppelung (5 Kalendertage) 798, mit Trade-Label 648 an 404 Tagen.
+- **Klassifizierung:** Stichprobe von 40 Positiven manuell geprüft, **≈ 90 % korrekt** (36/40; Fehler: wiederholte ältere Genehmigungen in Quartalsmeldungen). Recall nicht gemessen.
+- **Transparenz:** Die Regeln des Klassifizierers wurden an Text-Stichproben (Feb 2024, Apr/Mai 2025, erster Volllauf) nachgeschärft – **nur am Text, nie an Renditen**. Stand des Klassifizierers vor der Rendite-Auswertung eingecheckt (Commit `5c10690`).
+
+| | Ereignisse | Trefferquote | Ø Netto | Ø Universum | Differenz (95 %-KI) | Differenz konservativ |
+|---|---|---|---|---|---|---|
+| **Alle** | 648 | 66,2 % | −0,063 % | +0,005 % | −0,069 % [−0,210 … +0,048] n. s. | −0,203 % [−0,360 … −0,059] |
+| mit Quartalszahlen | 431 | 65,5 % | −0,085 % | +0,010 % | −0,094 % [−0,249 … +0,020] n. s. | −0,288 % (signifikant negativ) |
+| ohne Quartalszahlen | 217 | 68,1 % | −0,006 % | +0,009 % | −0,015 % [−0,296 … +0,195] n. s. | −0,072 % n. s. |
+
+- **Urteil: nicht bestanden** (Ø Netto < 0, KI der Differenz schließt 0 ein). Kein Jahr klar positiv (2022 +0,14 %, 2023–2026 negativ); verspäteter Einstieg (*d*+1 … *d*+5) ebenfalls n. s.
+- **Deutung:** Die Rückkauf-Drift der Literatur wirkt über Monate, nicht über 14 Tage mit +1 %-Ziel. Mit Quartalszahlen fällt der Einstieg in eine Phase hoher Schwankung → mehr Stop-Treffer (konservativ signifikant schlechter).
+- **Folge:** Keine Tabelle `corporate_events`, kein täglicher Collector, keine `ev_buyback_*`-Kennzahlen. Werkzeuge (`collectors/buyback_events.py`, `analysis/event_study.py`) bleiben für spätere Prüfungen.
+
+**D2 – Index-Aufnahmen (explorativ):** [Bericht](reports/2026-10-06_event_study_index_add.md)
+
+- 117 Aufnahmen, 108 mit Label an 53 Tagen. Einstieg nach dem Wirksamkeitsdatum: Ø Netto −0,27 % vs. Universum +0,05 %, Differenz −0,32 % (KI [−0,48 … −0,26] mit Block 20; [−0,63 … −0,10] mit Block 3). Nasdaq-100 −0,56 %, S&P 500 −0,12 % (n. s. mit Block 3); ab *d*+1 n. s.
+- **Deutung:** passt zur Literatur (Schwäche nach Aufnahme). Kleine Fallzahl, Ergebnis nach Sicht festgestellt → **nur Hinweis**: ein Warnhinweis „frisch in Index aufgenommen“ für Stufe 2 ist plausibel, aber nicht belegt.
 
 ## 8. Risiken und Grenzen
 

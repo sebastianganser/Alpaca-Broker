@@ -230,7 +230,7 @@
   - [x] K2b (Schritt A2): 9 Kurzfrist-Kennzahlen `st_*` aus Tageskursen (Migration 034, Backfill-Skript), Analyse neu und mit Stand A vergleichen — Ergebnis: erste Hinweise (Schlusslage, Earnings-Reaktion), nicht signifikant
   - [x] K3 (Schritt B): ML-Modell P(Treffer) (Logit L2 + Gradient Boosting), Purged Walk-forward, Schwelle → 0–5 Kandidaten oder „keine Kandidaten“ — Ergebnis: **nicht bestanden** (AUC ≈ 0,50, Holdout n. s.), siehe [Bericht](reports/2026-10-06_hit_model_walkforward.md)
   - [ ] K3b (Schritt C): Hyperopt nur für Trade-Parameter (Ziel/Stop, Schwelle, Filter), Bestätigung auf Holdout — ⏸ zurückgestellt, bis ein Modell den Walk-forward besteht
-  - [ ] K4 (Schritt D): Neue freie Quellen (8-K-Rückkäufe, Index-Aufnahmen, Reddit-Hype) mit Vorher/Nachher-Messung (Referenz: `scripts/analysis/walkforward_hit_model.py`)
+  - [x] K4 (Schritt D): Event-Studien 8-K-Rückkäufe (D1) und Index-Aufnahmen (D2) — Ergebnis: **D1 nicht bestanden** (648 Trades, Ø −0,06 %, n. s.), D2 nur Hinweis auf Schwäche nach Aufnahme; Reddit-Hype (D3) mangels Historie zurückgestellt, siehe [Konzept §7.6](2026-10-06_Konzept_Kurzfrist_Kandidaten.md)
 
 ### Sprint 10 – Signal Scoring
 - Weighted scoring model, optional LASSO/gradient boosting
