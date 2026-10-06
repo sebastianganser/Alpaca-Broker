@@ -216,3 +216,10 @@ First insider backfill (~30h) was interrupted by a Windows update killing the SS
 
 ### [2026-05-13] 🛠️ Dual-Endpoint Parity: Shared Serialization Prevents Silent Drift
 When the same data model is served by two endpoints (e.g., `/signals/politicians` and `/ticker/{symbol}/signals`), computed fields added to one are easily forgotten in the other. Pydantic's `Optional` defaults mask this. **Lesson:** Extract a shared `_serialize_politician_trade(t)` helper function to guarantee parity. Add integration tests that compare field completeness across equivalent endpoints.
+
+### [2026-10-06] 📊 Barrier-Backtest K1: Current Context-Pack Score ≈ Random
+Backtest 07/2022–10/2026 (1,051 signal dates, 515k universe trades), entry `open(d+1)`, TP 0.5–1 %, SL 2–3 × TP, max 14 sessions, 0.05 % costs ([concept](2026-10-06_Konzept_Kurzfrist_Kandidaten.md)).
+- **Daily bars cannot resolve tight barriers:** 24–36 % of 0.5 %/1 % trades touch TP and SL on the same day (avg. holding 1.0–1.2 days). The conservative "stop first" rule then dominates (universe hit rate 51 % vs. 66.7 % random). With the OHLC-path heuristic the universe matches the random-walk baseline almost exactly (hit rate ≈ b/(a+b), net ≈ −costs) → heuristic is well calibrated; truth lies between both rules.
+- **Top 5 of the provisional score:** no advantage over the universe under the OHLC rule (the "significantly worse" result under the conservative rule was an artefact of more volatile picks → more ambiguous days). **Bottom 5** slightly worse (−0.03 %, significant in 3/6 combos) → at most a weak signal at the bottom end.
+- **Filters (ATR 1–3 %, no earnings in window):** +0.05 % significant only under the conservative rule, +0.00–0.02 % n.s. under OHLC → mostly fewer ambiguous days, not a proven edge. **Regime filter** (SPY > SMA200, VIX < 25): no improvement.
+- **Lesson:** Evaluate TP/SL trades under both ambiguity rules; prefer barriers ≥ 1 % (ambiguity 1–5 %) when only daily bars exist. Hand-tuned weights are not a selection model – candidates must come from validated rankers (K2).

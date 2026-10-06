@@ -225,7 +225,7 @@
   - [ ] Min. liquidity, max 2/sector, pairwise correlation, churn lock, min-score
   - [ ] `candidate_selections` + `candidate_rejections` tables
 - [ ] **K1–K4:** Kurzfrist-Kandidaten ([Konzept 2026-10-06](2026-10-06_Konzept_Kurzfrist_Kandidaten.md))
-  - [ ] K1: Barrier-Backtest des aktuellen Scores (TP 0,5–1 %, SL 2–3×, max. 14 Tage)
+  - [x] K1: Barrier-Backtest des aktuellen Scores (TP 0,5–1 %, SL 2–3×, max. 14 Tage) — Ergebnis: ≈ Zufall, siehe LEARNINGS 2026-10-06
   - [ ] K2: Barrier-Label als Zielgröße in der Feature-Analyse
   - [ ] K3: Mindestschwelle + Markt-/Volatilitäts-/Earnings-Filter → „keine Kandidaten“ möglich
   - [ ] K4: Neue freie Quellen (8-K-Rückkäufe, Index-Aufnahmen, Reddit-Hype) mit Vorher/Nachher-Messung
