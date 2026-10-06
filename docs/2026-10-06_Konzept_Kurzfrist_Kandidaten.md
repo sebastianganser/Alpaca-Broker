@@ -113,9 +113,9 @@ Neue Quellen erst nach Phase 2, damit ihr Beitrag messbar ist.
 |---|---|---|
 | **P1** ✅ | Barrier-Backtest-Skript (`scripts/analysis/backtest_barrier.py`) für den **aktuellen** Score | Ergebnis: Ist-Score ≈ Zufall (siehe `LEARNINGS.md`), handgesetzte Gewichte tragen nicht |
 | **A** (K2) ✅ | Barrier-Label (`return_barrier_14d`, `barrier_outcome`, `barrier_ambiguous`) in `feature_snapshots` (Migration 033), Zielgröße der Feature-Analyse | Ergebnis: kein robustes Signal in den vorhandenen 74 Kennzahlen (siehe `LEARNINGS.md`) |
-| **A2** | Kurzfrist-Kennzahlen aus vorhandenen Tageskursen (§7.1), Migration 034, vektorisierter Backfill, Analyse neu | Bringt eine der neuen Kennzahlen ein belastbares Signal gegenüber dem Stand nach A? |
-| **B** (Sprint 10) | ML-Modell (erst LASSO, dann Gradient Boosting) schätzt P(Treffer); Purged Walk-forward (Training 2022–2024, Validierung 2025–2026) | Kandidat nur, wenn P(Treffer) deutlich über Break-even → „keine Kandidaten“ ergibt sich automatisch |
-| **C** | Hyperopt **nur** für wenige Trade-Parameter (Ziel/Stop, Schwelle, Filter), Bestätigung auf Holdout-Zeitraum | Stabile Parameter statt Überanpassung |
+| **A2** ✅ | Kurzfrist-Kennzahlen aus vorhandenen Tageskursen (§7.1), Migration 034, vektorisierter Backfill, Analyse neu | Ergebnis: Richtung wie Literatur (`st_close_location`, `st_earnings_reaction`), Effekt zu klein, nicht signifikant |
+| **B** ✅ ❌ | ML-Modell (logistische Regression, Gradient Boosting) schätzt P(Treffer); Purged Walk-forward (§7.2) | Ergebnis: **Kriterium nicht erfüllt** – Tages-AUC ≈ 0,50, Holdout +0,06 %/Trade n. s. (§7.3) |
+| **C** ⏸ | Hyperopt **nur** für wenige Trade-Parameter (Ziel/Stop, Schwelle, Filter), Bestätigung auf Holdout-Zeitraum | Zurückgestellt: ohne Ranking-Signal würde Hyperopt nur Rauschen anpassen |
 | **D** | Neue Quellen aus §6 (8-K-Rückkäufe, Index-Aufnahmen, Reddit), jeweils mit Vorher/Nachher-Messung | Nur behalten, was messbar hilft |
 
 > Warum kein Hyperopt auf ~80 Gewichte: bei ~1000 Handelstagen und einem Signal nahe null würde die Optimierung vor allem Rauschen anpassen. Das ML-Modell lernt die Gewichtung mit Regularisierung und wird außerhalb der Trainingszeit geprüft.
@@ -151,6 +151,23 @@ Ziel: prüfen, ob die kombinierten Kennzahlen **außerhalb der Trainingszeit** K
 - **Auswahlregel:** pro Tag die höchsten P(Treffer), höchstens k Stück, nur wenn P ≥ Schwelle → sonst **„keine Kandidaten“**.
 - **Erfolgskriterium (Holdout):** Ø Netto/Trade > 0 **und** 95 %-KI (Datumsblock-Bootstrap) der Differenz zum Universum > 0. Zusätzlich berichtet: Trefferquote, konservative Variante (mehrdeutige Tage = Stop), Kalibrierung, Tage ohne Kandidaten, Ergebnis je Quartal.
 - Code: `analysis/hit_model.py`, Skript `scripts/analysis/walkforward_hit_model.py` (nur lesend).
+
+## 7.3 Ergebnis Schritt B (2026-10-06)
+
+Vollständiger Bericht: [reports/2026-10-06_hit_model_walkforward.md](reports/2026-10-06_hit_model_walkforward.md). Daten: 515k Snapshots, 93 Eingaben, Labels bis 2026-09-15.
+
+| | Entwicklung (2023-Q3 … 2024-Q4) | Holdout (2025-Q1 … 2026-Q3) |
+|---|---|---|
+| Tages-AUC Logit / GBM | 0,497 / 0,495 | 0,503 / 0,502 |
+| Gewählte Regel | GBM, max. 1/Tag, P ≥ 0,65 | (unverändert angewendet) |
+| Ø Netto/Trade Auswahl | +0,144 % | +0,062 % (konservativ −0,039 %) |
+| Ø Netto/Trade Universum | +0,016 % | −0,012 % |
+| Differenz (95 %-KI) | – | +0,075 % [−0,047 … +0,175] n. s. |
+| Trefferquote | – | 69,9 % (Break-even 68,3 %) |
+
+- **Urteil: nicht bestanden.** Die Modelle können Aktien am selben Tag nicht besser als Zufall ordnen (AUC ≈ 0,5); die Kalibrierung ist flach (Trefferquote 65–70 % in allen P-Dezilen). Quartale gemischt (2025-Q3 −0,37 %, 2026-Q1 −0,14 %).
+- **Transparenz:** Ein früherer Testlauf (nur Logit, verkleinerte Trainingsmenge) hat den Holdout bereits gesehen und war ebenfalls negativ; die Auswahlregel wurde danach nicht verändert.
+- **Folge:** Schritt C (Hyperopt) zurückgestellt. Das Walk-forward-Skript bleibt als **Referenzmessung** für jede neue Datenquelle (Schritt D) und wird erneut ausgeführt, wenn die kurzen Alternativdaten-Historien (Optionen-IV, Fundamentaldaten, ARK) gewachsen sind. Ein neuer Holdout ist dann ab 2026-Q4 zu verwenden.
 
 ## 8. Risiken und Grenzen
 

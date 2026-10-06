@@ -329,3 +329,6 @@
 - **A2:** 9 Kurzfrist-Kennzahlen `st_*` (`derived/short_term_features.py`, Migration 034, `FEATURE_VERSION` 2026.10-2), Backfill-Skript `scripts/repair/backfill_short_term_features.py` (621k Zeilen in 199 s), Neuberechnung nach Kurs-Readjustierung
 - **Ergebnis A2:** `st_close_location` (t 3,5) und `st_earnings_reaction` (t 2,7) jetzt beste Kennzahlen, aber weiterhin nicht signifikant, LASSO leer → Effekt-Richtung wie Literatur, Größe zu klein
 - **Tests:** 755 passed
+- **Schritt B:** `analysis/hit_model.py` + `scripts/analysis/walkforward_hit_model.py` (Design vorab in Konzept §7.2 festgelegt), Fix: Spaltenfilter je Fold für HGB
+- **Ergebnis B:** Tages-AUC ≈ 0,50, Holdout +0,062 %/Trade (konservativ −0,039 %), Differenz zum Universum n. s. → **nicht bestanden**; C (Hyperopt) zurückgestellt ([Bericht](reports/2026-10-06_hit_model_walkforward.md))
+- **Tests:** 766 passed

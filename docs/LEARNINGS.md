@@ -238,3 +238,11 @@ Nine `st_*` features (migration 034, backfill 621k rows in 199 s), analysis reru
 - **Models:** LASSO still selects nothing; RF importance ≤ 0.00025.
 - **Scale:** an IC of 0.01 for the top 5 of ~680 stocks means roughly IC × σ × z ≈ 0.01 × 1.5 % × 2.7 ≈ 0.04 % extra per trade – far below the +1 % target.
 - **Lesson:** Literature effects are visible in direction but tiny in size. A combined model (step B) is the honest final test whether several weak signals add up to a hit rate clearly above break-even out of sample.
+
+### [2026-10-06] 📊 Walk-Forward Hit Model (Step B): Failed – Features Cannot Rank Stocks
+Pre-registered test ([concept §7.2/7.3](2026-10-06_Konzept_Kurzfrist_Kandidaten.md), [report](reports/2026-10-06_hit_model_walkforward.md)): P(hit) for +1 %/−2 %/14d via L2 logit and shallow HGB, quarterly expanding walk-forward with 16-session purge, rule chosen on 2023Q3–2024Q4, evaluated once on 2025Q1–2026Q3.
+- **Daily AUC ≈ 0.50** in development and holdout for both models → combining ~90 weak features does not create ranking power.
+- **Holdout (gbm, max 1/day, P ≥ 0.65):** 386 trades, hit rate 69.9 % vs. 68.3 % break-even, net +0.062 %/trade (conservative −0.039 %), difference to universe +0.075 % with 95 % CI [−0.047, +0.175] → not significant. Development looked better (+0.144 %) – typical selection optimism.
+- **Calibration flat:** hit rate 65–70 % in every P decile; the threshold only selects calmer days/stocks, not winners.
+- **Technical:** sklearn `HistGradientBoostingClassifier` crashes ("window shape cannot be larger than input array shape") on all-NaN or constant training columns → filter usable columns per fold.
+- **Lesson:** With daily data and the current sources there is no validated edge for a +1 % short-term trade. Do not put Hyperopt on top of a zero signal. Keep the walk-forward script as the benchmark for every new source; any rerun needs a fresh holdout (from 2026-Q4) because the current one has been used.
