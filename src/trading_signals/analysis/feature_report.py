@@ -82,6 +82,11 @@ MODEL_HORIZON = 20
 MIN_OBS_PER_DATE = 10
 #: Minimum number of daily ICs / daily differences for a test.
 MIN_TEST_DATES = 10
+#: Minimum number of *independent* (non-overlapping) horizon periods before a
+#: result may be called significant / confirmed. Daily observations of an
+#: h-day return overlap, so n dates carry only ~n/h independent periods;
+#: Newey-West on fewer is unreliable (e.g. 10 dates of 20d returns ≈ 0.5).
+MIN_INDEPENDENT_PERIODS = 10
 #: Row cap for RF/LASSO (rows are subsampled uniformly, all dates kept).
 MAX_MODEL_ROWS = 300_000
 #: Number of purged walk-forward test folds.
@@ -126,7 +131,20 @@ def _finite_or_none(val: Any) -> float | None:
     return f if np.isfinite(f) else None
 
 
-def _verdict(pval: float | None, effect: float | None, alpha: float = 0.05) -> str:
+def min_dates_for_horizon(horizon: int) -> int:
+    """Dates needed for MIN_INDEPENDENT_PERIODS non-overlapping periods."""
+    return max(MIN_TEST_DATES, MIN_INDEPENDENT_PERIODS * max(1, int(horizon)))
+
+
+def _verdict(
+    pval: float | None,
+    effect: float | None,
+    alpha: float = 0.05,
+    n_dates: int | None = None,
+    horizon: int = 1,
+) -> str:
+    if n_dates is not None and n_dates < min_dates_for_horizon(horizon):
+        return "insufficient_data"
     if pval is None or effect is None or not np.isfinite(pval):
         return "inconclusive"
     if pval < alpha and effect > 0:
@@ -371,13 +389,18 @@ class FeatureAnalysisEngine:
         res: dict[str, dict] = {}
         for (feature, target), s in summaries.items():
             pval = _finite_or_none(s['pvalue'])
+            n_dates = int(s['n_dates'])
+            reliable = n_dates >= min_dates_for_horizon(horizon_from_target(target))
             res.setdefault(feature, {})[target] = {
                 'rho': float(s['mean_ic']),
                 'pvalue': pval,
-                'significant': bool(pval is not None and pval * num_tests < 0.05),
+                'significant': bool(
+                    reliable and pval is not None and pval * num_tests < 0.05
+                ),
+                'reliable': reliable,
                 'icir': _finite_or_none(s['icir']),
                 't_nw': _finite_or_none(s['t_nw']),
-                'n_dates': int(s['n_dates']),
+                'n_dates': n_dates,
             }
         return res
 
@@ -432,10 +455,12 @@ class FeatureAnalysisEngine:
         def _add_result(hid: str, test: dict, detail: str):
             pval = _finite_or_none(test['pvalue'])
             effect = _finite_or_none(test['mean'])
+            n = int(test.get('n') or 0)
             results[hid] = {
-                'verdict': _verdict(pval, effect),
+                'verdict': _verdict(pval, effect, n_dates=n, horizon=MODEL_HORIZON),
                 'pvalue': pval,
                 'effect_size': effect,
+                'n_dates': n,
                 'detail': detail,
             }
 
@@ -552,10 +577,13 @@ class FeatureAnalysisEngine:
         if total_feats == 0:
             return []
 
-        spearman_scores = {
-            f: abs(correlations.get(f, {}).get('return_20d', {}).get('rho', 0))
-            for f in all_feats
-        }
+        def _sp_score(f: str) -> float:
+            c = correlations.get(f, {}).get('return_20d', {})
+            if not c.get('reliable', True):  # too short history (see MIN_INDEPENDENT_PERIODS)
+                return 0.0
+            return abs(c.get('rho', 0) or 0)
+
+        spearman_scores = {f: _sp_score(f) for f in all_feats}
         rf_scores = {f: rf_imp.get(f, {}).get('importance', 0) for f in all_feats}
         lasso_scores = {f: abs(lasso_imp.get(f, 0)) for f in all_feats}
 

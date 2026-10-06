@@ -70,7 +70,10 @@ def prepared():
 
 
 @pytest.fixture()
-def engine():
+def engine(monkeypatch):
+    # Synthetic frames have 60–120 dates; the independent-period guard
+    # (10 × horizon) is tested separately below.
+    monkeypatch.setattr(fr, "MIN_INDEPENDENT_PERIODS", 0)
     return fr.FeatureAnalysisEngine(MagicMock())
 
 
@@ -194,10 +197,43 @@ def test_hypotheses_structure_and_h1_effect(engine, prepared):
     res = engine._test_hypotheses(prepared)
     for hid in ("H1", "H2", "H3", "H4", "H9", "H10", "H11", "H12", "H13"):
         assert hid in res, hid
-        assert set(res[hid]) == {"verdict", "pvalue", "effect_size", "detail"}
+        assert set(res[hid]) == {"verdict", "pvalue", "effect_size", "n_dates", "detail"}
         assert res[hid]["verdict"] in {"confirmed", "rejected", "inconclusive"}
     assert res["H1"]["verdict"] == "confirmed"
     assert res["H1"]["effect_size"] == pytest.approx(0.02, abs=0.01)
+
+
+def test_short_history_is_never_significant(monkeypatch, prepared):
+    """120 dates of 20d returns ≈ 6 independent periods → not reliable."""
+    monkeypatch.setattr(fr, "MIN_INDEPENDENT_PERIODS", 10)
+    eng = fr.FeatureAnalysisEngine(MagicMock())
+    sig = eng._compute_correlations(prepared)["price_vs_sma50"]
+    assert sig["return_20d"]["reliable"] is False
+    assert sig["return_20d"]["significant"] is False
+    assert sig["return_1d"]["reliable"] is True  # 120 ≥ 10 × 1
+    hyp = eng._test_hypotheses(prepared)
+    assert hyp["H1"]["verdict"] == "insufficient_data"
+
+
+def test_min_dates_and_verdict():
+    assert fr.min_dates_for_horizon(20) == 20 * fr.MIN_INDEPENDENT_PERIODS
+    assert fr.min_dates_for_horizon(1) == max(fr.MIN_TEST_DATES, fr.MIN_INDEPENDENT_PERIODS)
+    assert fr._verdict(0.001, 0.1, n_dates=44, horizon=20) == "insufficient_data"
+    assert fr._verdict(0.001, 0.1, n_dates=400, horizon=20) == "confirmed"
+    assert fr._verdict(0.001, -0.1) == "rejected"
+
+
+def test_consensus_ignores_unreliable_ic(engine):
+    results = {
+        "feature_correlations": {
+            "a": {"return_20d": {"rho": 0.5, "reliable": False}},
+            "b": {"return_20d": {"rho": 0.1, "reliable": True}},
+        },
+        "feature_importance_rf": {},
+        "feature_importance_lasso": {},
+    }
+    ranks = {c["feature"]: c["spearman_rank"] for c in engine._build_consensus(results)}
+    assert ranks["b"] == 1 and ranks["a"] == 2
 
 
 def test_h10_uses_zero_beats_not_negative(engine):
