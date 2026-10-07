@@ -20,6 +20,7 @@ from trading_signals.db.models.fundamentals import (
 from trading_signals.db.models.insider import InsiderCluster, InsiderTrade
 from trading_signals.db.models.politicians import PoliticianTrade
 from trading_signals.db.models.prices import PriceDaily
+from trading_signals.db.models.stage2 import Stage2Decision, Stage2Review
 from trading_signals.db.models.technical_indicators import TechnicalIndicator
 from trading_signals.db.models.universe import Universe
 
@@ -44,6 +45,8 @@ __all__ = [
     "OptionsIVSnapshot",
     "PoliticianTrade",
     "PriceDaily",
+    "Stage2Decision",
+    "Stage2Review",
     "TechnicalIndicator",
     "TickerBlacklist",
     "Universe",

@@ -10,7 +10,7 @@ Nightly timeline (US close = 22:00 CET, 21:00 during DST-mismatch weeks)::
     01:30 estimates_collector        03:30 log_retention
     04:15 fred_collector
     04:30 nightly_chain: TA catch-up → feature_pipeline → target_backfill
-                         → context_pack (waits for running upstream jobs)
+                         → stage2_review → context_pack (waits for running upstream jobs)
 """
 
 from __future__ import annotations
@@ -163,6 +163,12 @@ JOB_DEFINITIONS: list[tuple[str, object, dict, str]] = [
         jobs.run_target_backfill,
         {"hour": 4, "minute": 30},
         "Target Backfill (Forward Returns) – via Nightly Chain",
+    ),
+    (
+        "stage2_review",
+        jobs.run_stage2_review,
+        {"hour": 4, "minute": 30},
+        "Stufe-2-Vorwärtstest (decisions.yaml einlesen + Auswertung) – via Nightly Chain",
     ),
     (
         "context_pack_generator",

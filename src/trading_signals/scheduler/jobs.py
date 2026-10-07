@@ -379,6 +379,40 @@ def _context_pack_body(target_date: date) -> JobOutcome:
     )
 
 
+def _stage2_review_body() -> JobOutcome:
+    """Read ``decisions.yaml`` of the skill and update the forward-test report.
+
+    Concept §7.7: invalid files → PARTIAL (alert), the report
+    ``context_packs/stage2_auswertung.md`` is rewritten on every run.
+    """
+    from pathlib import Path
+
+    from trading_signals.analysis.stage2_eval import (
+        REPORT_FILE,
+        evaluate_stage2,
+        load_stage2_frames,
+        render_report,
+    )
+    from trading_signals.config import get_settings
+    from trading_signals.db.session import get_session
+    from trading_signals.derived.stage2_decisions import ingest_decisions
+
+    root = Path(get_settings().CONTEXT_PACK_PATH)
+    with get_session() as session:
+        result = ingest_decisions(session, root)
+        session.flush()
+        frames = load_stage2_frames(session)
+    report = render_report(evaluate_stage2(*frames), now_local().date())
+    if root.is_dir():
+        (root / REPORT_FILE).write_text(report, encoding="utf-8-sig")
+    return JobOutcome(
+        status=job_status.PARTIAL if result.errors else job_status.SUCCESS,
+        records_written=result.ingested,
+        records_fetched=result.files,
+        notes=result.notes(),
+    )
+
+
 def _target_session() -> date:
     from trading_signals.utils.market_calendar import last_completed_session
 
@@ -409,10 +443,19 @@ def run_target_backfill() -> None:
     run_logged_job("target_backfill", "target_backfill", _target_backfill_body)
 
 
+def run_stage2_review() -> None:
+    """Stage-2 forward test: read ``decisions.yaml`` files, write the report.
+
+    Normally executed as step 4 of :func:`run_nightly_chain` (manual
+    trigger otherwise). Concept §7.7, format ``docs/STAGE2_DECISIONS.md``.
+    """
+    run_logged_job("stage2_review", "stage2_review", _stage2_review_body)
+
+
 def run_context_pack_generator() -> None:
     """Context Pack generation for top candidates.
 
-    Normally executed as step 4 of :func:`run_nightly_chain` (manual
+    Normally executed as step 5 of :func:`run_nightly_chain` (manual
     trigger otherwise). Generates Markdown reports with YAML frontmatter for
     the top 5 candidates of the last completed session.
 
@@ -536,6 +579,10 @@ def _nightly_chain_body() -> JobOutcome:
     tb = run_logged_job(
         "target_backfill", "target_backfill", _target_backfill_body, alert=False
     )
+    # after the label update, so newly closed trades are counted
+    s2 = run_logged_job(
+        "stage2_review", "stage2_review", _stage2_review_body, alert=False
+    )
     if fp.status in (job_status.SUCCESS, job_status.PARTIAL):
         cp = run_logged_job(
             "context_pack_generator",
@@ -552,6 +599,7 @@ def _nightly_chain_body() -> JobOutcome:
         "technical_indicators": ta,
         "feature_pipeline": fp,
         "target_backfill": tb,
+        "stage2_review": s2,
         "context_pack": cp,
     }
     if fp.status == job_status.FAILED:
@@ -577,7 +625,7 @@ def _nightly_chain_body() -> JobOutcome:
 
 
 def run_nightly_chain() -> None:
-    """Nightly orchestrator: TA catch-up → features → targets → context pack.
+    """Nightly orchestrator: TA catch-up → features → targets → stage-2 review → context pack.
 
     Scheduled for 04:30 Europe/Berlin (after FRED at 04:15; options IV,
     short interest, estimates etc. ran earlier in the night).

@@ -231,6 +231,8 @@
   - [x] K3 (Schritt B): ML-Modell P(Treffer) (Logit L2 + Gradient Boosting), Purged Walk-forward, Schwelle → 0–5 Kandidaten oder „keine Kandidaten“ — Ergebnis: **nicht bestanden** (AUC ≈ 0,50, Holdout n. s.), siehe [Bericht](reports/2026-10-06_hit_model_walkforward.md)
   - [ ] K3b (Schritt C): Hyperopt nur für Trade-Parameter (Ziel/Stop, Schwelle, Filter), Bestätigung auf Holdout — ⏸ zurückgestellt, bis ein Modell den Walk-forward besteht
   - [x] K4 (Schritt D): Event-Studien 8-K-Rückkäufe (D1) und Index-Aufnahmen (D2) — Ergebnis: **D1 nicht bestanden** (648 Trades, Ø −0,06 %, n. s.), D2 nur Hinweis auf Schwäche nach Aufnahme; Reddit-Hype (D3) mangels Historie zurückgestellt, siehe [Konzept §7.6](2026-10-06_Konzept_Kurzfrist_Kandidaten.md)
+  - [ ] K5: Vorwärtstest Stufe 2 – Skill schreibt `decisions.yaml` ([Format](STAGE2_DECISIONS.md)), Nachtlauf-Schritt `stage2_review` (Migration 035) bewertet mit der Barrier-Regel, Bericht `context_packs/stage2_auswertung.md`; Index-Warnhinweis im Context Pack ([Konzept §7.7](2026-10-06_Konzept_Kurzfrist_Kandidaten.md)) — Code fertig, Urteil frühestens ab 100 abgeschlossenen Käufen
+  - [ ] K3 erneut (Walk-forward mit längerer Alternativdaten-Historie, neuer Holdout ab 2026-Q4) — frühestens Januar 2027
 
 ### Sprint 10 – Signal Scoring
 - Weighted scoring model, optional LASSO/gradient boosting

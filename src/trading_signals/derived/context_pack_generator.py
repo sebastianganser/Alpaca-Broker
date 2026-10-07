@@ -25,7 +25,7 @@ until R1/F1 provide ML-based importance rankings.
 from __future__ import annotations
 
 import math
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +38,7 @@ from trading_signals.db.models.features import (
     META_COLUMNS,
     FeatureSnapshot,
 )
+from trading_signals.db.models.index_membership import IndexMembership
 from trading_signals.db.models.prices import PriceDaily
 from trading_signals.db.models.universe import Universe
 from trading_signals.utils.logging import get_logger
@@ -115,6 +116,58 @@ def _numeric(val: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return f if math.isfinite(f) else None
+
+
+# Index-addition warning (concept §7.7, hint from event study D2: after the
+# effective date additions trailed the universe – NOT validated, info only).
+INDEX_ADD_WINDOW_DAYS = 7
+INDEX_LABELS = {"sp500": "S&P 500", "nasdaq100": "Nasdaq-100"}
+
+
+def index_addition_text(entries: list[tuple], target_date: date) -> str:
+    """Human-readable addition info, e.g. ``S&P 500 wirksam 2026-10-01 (vor 5 Tagen)``.
+
+    ``entries`` are ``(index_name, valid_from[, source])``. Rows of the monthly
+    ``index_sync`` carry the sync date, not the real effective date.
+    """
+    parts = []
+    for entry in sorted(entries, key=lambda e: e[1]):
+        index_name, valid_from = entry[0], entry[1]
+        source = entry[2] if len(entry) > 2 else None
+        delta = (target_date - valid_from).days
+        when = (
+            "heute" if delta == 0
+            else f"vor {delta} Tagen" if delta > 0
+            else f"in {-delta} Tagen"
+        )
+        label = INDEX_LABELS.get(index_name, index_name)
+        if source == "index_sync":
+            parts.append(
+                f"{label} aufgenommen, erkannt {valid_from.isoformat()} ({when}; "
+                "Monatsabgleich, genaues Datum unbekannt)"
+            )
+        else:
+            parts.append(f"{label} wirksam {valid_from.isoformat()} ({when})")
+    return "; ".join(parts)
+
+
+def decisions_template(target_date: date, tickers: list[str]) -> list[str]:
+    """YAML skeleton of ``decisions.yaml`` for the overview (docs/STAGE2_DECISIONS.md)."""
+    lines = [
+        "schema: stage2-decisions/v1",
+        f"session: {target_date.isoformat()}",
+        "decided_at: JJJJ-MM-TTTHH:MM:SS+HH:MM   # Zeitpunkt der Entscheidung, mit Zeitzone",
+    ]
+    if not tickers:
+        return [*lines, "decisions: []"]
+    lines.append("decisions:")
+    for t in tickers:
+        lines += [
+            f"  - ticker: {t}",
+            "    action: no_entry        # buy | no_entry",
+            '    reason: ""',
+        ]
+    return lines
 
 
 def compute_preliminary_scores(
@@ -263,9 +316,10 @@ class ContextPackGenerator:
 
         # 6. Generate overview (also on days without candidates)
         universe_size = len(snapshots)
+        additions = self._recent_index_additions(target_date)
         self._write_overview(
             day_dir, target_date, top, candidates, percentiles, universe_size,
-            excluded=excluded, market=snapshots[0],
+            excluded=excluded, market=snapshots[0], index_additions=additions,
         )
 
         if not top:
@@ -280,7 +334,8 @@ class ContextPackGenerator:
             ticker = candidate["ticker"]
             self._write_candidate(
                 day_dir, target_date, rank, candidate,
-                percentiles.get(ticker, {}), universe_size
+                percentiles.get(ticker, {}), universe_size,
+                index_additions=additions.get(ticker),
             )
 
         logger.info(
@@ -378,9 +433,29 @@ class ContextPackGenerator:
         ).scalar()
         return float(val) if val else None
 
+    def _recent_index_additions(self, target_date: date) -> dict[str, list[tuple]]:
+        """Ticker → [(index_name, valid_from, source)] for additions within ±7 calendar days.
+
+        The initial seed (membership at project start, no real addition date)
+        is excluded – same selection as event study D2.
+        """
+        window = timedelta(days=INDEX_ADD_WINDOW_DAYS)
+        rows = self.session.execute(
+            select(IndexMembership.ticker, IndexMembership.index_name,
+                   IndexMembership.valid_from, IndexMembership.source)
+            .where(IndexMembership.valid_from >= target_date - window)
+            .where(IndexMembership.valid_from <= target_date + window)
+            .where(IndexMembership.source != "initial_seed")
+        ).all()
+        out: dict[str, list[tuple]] = {}
+        for ticker, index_name, valid_from, source in rows:
+            out.setdefault(ticker, []).append((index_name, valid_from, source))
+        return out
+
     def _write_overview(
         self, day_dir, target_date, top, all_candidates, percentiles, universe_size,
         excluded: dict[str, int] | None = None, market: dict | None = None,
+        index_additions: dict[str, list[tuple]] | None = None,
     ):
         """Write the daily overview file (also on days without candidates)."""
         lines = [
@@ -455,6 +530,42 @@ class ContextPackGenerator:
             "als Zufall ordnen.",
             "Die eigentliche Auswahl erfolgt in Stufe 2 mit Live-Daten.",
             "",
+        ])
+
+        # Index-addition warning (eligible tickers only, concept §7.7)
+        eligible = {c["ticker"] for c in all_candidates}
+        flagged = sorted(t for t in (index_additions or {}) if t in eligible)
+        if flagged:
+            lines.extend([
+                "## Warnhinweis Index-Aufnahme",
+                "",
+                "Geeignete Aktien mit Aufnahme in S&P 500 / Nasdaq-100 innerhalb "
+                f"±{INDEX_ADD_WINDOW_DAYS} Kalendertagen. Event-Studie D2: nach der "
+                "Aufnahme im Mittel schwächer als das Universum – **nicht belegt**, "
+                "nur Hinweis.",
+                "",
+            ])
+            for t in flagged:
+                lines.append(
+                    f"- **{t}**: {index_addition_text(index_additions[t], target_date)}"
+                )
+            lines.append("")
+
+        # Feedback channel for stage 2 (concept §7.7, docs/STAGE2_DECISIONS.md)
+        lines.extend([
+            "## Rückmeldung Stufe 2",
+            "",
+            "Ergebnis als `decisions.yaml` in **diesen Ordner** schreiben – jeden "
+            "geprüften Ticker mit `buy` oder `no_entry`, **vor der Eröffnung am "
+            "nächsten Handelstag (09:30 New York, meist 15:30 Uhr deutscher Zeit)**. "
+            "Bewertet wird automatisch: Einstieg zur "
+            "Eröffnung, +1 % / −2 % / 14 Handelstage. Laufender Stand: "
+            "`../stage2_auswertung.md`.",
+            "",
+            "```yaml",
+            *decisions_template(target_date, [c["ticker"] for c in top]),
+            "```",
+            "",
             "---",
             f"*Generiert {target_date.isoformat()} · Keine Anlageberatung*",
         ])
@@ -463,12 +574,16 @@ class ContextPackGenerator:
         filepath.write_text("\n".join(lines), encoding="utf-8-sig")
 
     def _write_candidate(
-        self, day_dir, target_date, rank, candidate, pctiles, universe_size
+        self, day_dir, target_date, rank, candidate, pctiles, universe_size,
+        index_additions: list[tuple] | None = None,
     ):
         """Write a single candidate Markdown file with YAML frontmatter."""
         ticker = candidate["ticker"]
         info = self._get_universe_info(ticker)
         close = self._get_latest_price(ticker, target_date)
+        index_note = (
+            index_addition_text(index_additions, target_date) if index_additions else None
+        )
 
         # YAML frontmatter
         frontmatter = [
@@ -492,6 +607,8 @@ class ContextPackGenerator:
         atr = _numeric(candidate.get("atr_14_pct"))
         if atr is not None:
             frontmatter.append(f"atr_14_pct: {atr:.4f}")
+        if index_note:
+            frontmatter.append(f'index_added: "{index_note}"')
         frontmatter.append("selection: risk_prefilter")
         frontmatter.append("ranking_validated: false")
 
@@ -508,11 +625,20 @@ class ContextPackGenerator:
             "",
             f"Rang {rank} · Preliminary Score {candidate['score']:.4f}",
             "",
+        ]
+        if index_note:
+            body.extend([
+                f"> ⚠️ **Index-Aufnahme:** {index_note}. Event-Studie D2: nach der "
+                "Aufnahme im Mittel schwächer als das Universum – nicht belegt, "
+                "nur Hinweis.",
+                "",
+            ])
+        body.extend([
             "## 1. Feature-Übersicht",
             "",
             "| Feature | Wert | Perzentil |",
             "|---|---|---|",
-        ]
+        ])
 
         for feature in DISPLAY_FEATURES:
             val = candidate.get(feature)

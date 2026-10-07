@@ -232,6 +232,27 @@ Solange kein Modell den Walk-forward besteht, liefert Alpaca-Broker **handelbare
 - 117 Aufnahmen, 108 mit Label an 53 Tagen. Einstieg nach dem Wirksamkeitsdatum: Ø Netto −0,27 % vs. Universum +0,05 %, Differenz −0,32 % (KI [−0,48 … −0,26] mit Block 20; [−0,63 … −0,10] mit Block 3). Nasdaq-100 −0,56 %, S&P 500 −0,12 % (n. s. mit Block 3); ab *d*+1 n. s.
 - **Deutung:** passt zur Literatur (Schwäche nach Aufnahme). Kleine Fallzahl, Ergebnis nach Sicht festgestellt → **nur Hinweis**: ein Warnhinweis „frisch in Index aufgenommen“ für Stufe 2 ist plausibel, aber nicht belegt.
 
+## 7.7 Vorwärtstest Stufe 2 + Index-Warnhinweis (ab 2026-10-07)
+
+Bisher hat kein Baustein von Stufe 1 einen Vorsprung gezeigt (§7.3, §7.6). Ungetestet ist nur noch **Stufe 2** – der Claude-Broker mit Live-Daten. Sie wird ab jetzt auf neuen Daten gemessen (echter Vorwärtstest, kein Rückblick möglich). Festgelegt **vor** der ersten Entscheidung (2026-10-07):
+
+**Rückkanal:** Der Skill schreibt pro Pack-Tag eine Datei `decisions.yaml` in den Pack-Ordner (`context_packs/<Datum>/`). Format und Anleitung: [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md).
+- Je geprüftem Ticker eine Zeile mit `action: buy` oder `action: no_entry` (+ kurzer Grund). Leere Liste = geprüft, kein Einstieg.
+- Keine Datei = Tag nicht bewertet (zählt nicht als „keine Kandidaten“).
+
+**Einlesen:** Nachtlauf-Schritt `stage2_review` (vor dem Context Pack) liest die Dateien der letzten 45 Tage, prüft das Format und speichert sie in `signals.stage2_reviews` / `signals.stage2_decisions` (Migration 035). Geänderte Dateien ersetzen den Stand des Tages; fehlerhafte Dateien werden gemeldet, nicht übernommen.
+
+**Bewertung** (gleiche Trade-Regel wie §3, keine neuen Parameter):
+- Trade = vorhandenes Barrier-Label des Snapshots (Ticker, Pack-Tag *d*): Einstieg `open(d+1)`, +1 % / −2 % / 14 Handelstage, 0,05 % Kosten. Eigene Ziel-/Stop-Angaben des Skills werden nur gespeichert, nicht bewertet.
+- **Rechtzeitig** = Entscheidung (`decided_at` und Dateizeit) vor der Eröffnung von *d*+1 (09:30 New York). Verspätete Tage werden getrennt berichtet und zählen nicht zum Kriterium (sonst Rückschau-Vorteil).
+- Vergleich am selben Tag mit (a) allen nach dem Vorfilter geeigneten Aktien (§7.5) und (b) dem Universum; zusätzlich `buy` gegen `no_entry` der geprüften Kandidaten.
+- **Erfolgskriterium (Hauptprüfung):** frühestens bei **≥ 100 abgeschlossenen, rechtzeitigen `buy`-Trades**: Ø Netto/Trade > 0 **und** 95 %-KI (Datumsblock-Bootstrap) der Differenz zu (a) > 0 (OHLC-Regel). Vorher nur laufende Zahlen, ausdrücklich **vorläufig**, ohne Urteil.
+- Bei ~1 Kauf pro Tag ist das Kriterium nach etwa 5–6 Monaten prüfbar.
+
+**Ausgabe:** Der Nachtlauf schreibt `context_packs/stage2_auswertung.md` (laufender Stand) – lesbar für dich und für den Skill.
+
+**Index-Warnhinweis (Hinweis aus D2, nicht belegt):** Context Pack markiert Aktien, deren Aufnahme in S&P 500 oder Nasdaq-100 (`index_membership`, ohne Startbestand) **höchstens 7 Kalendertage zurückliegt oder bevorsteht**: Frontmatter `index_added`, Warnzeile im Kandidaten-Dokument, Liste in der Übersicht. Kein Ausschluss, nur Information für Stufe 2. Einträge aus dem monatlichen `index_sync` tragen das Abgleichsdatum statt des Wirksamkeitsdatums und werden so gekennzeichnet („erkannt …, genaues Datum unbekannt“). D2 ist davon nicht betroffen (die 3 `index_sync`-Einträge vom 2026-10-01 hatten noch kein Label).
+
 ## 8. Risiken und Grenzen
 
 - Nur Tagesdaten → Reihenfolge Ziel/Stop innerhalb eines Tages unbekannt (konservativ gelöst).

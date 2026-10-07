@@ -201,11 +201,18 @@ class TestNightlyChain:
             "technical_indicators",
             "feature_pipeline",
             "target_backfill",
+            "stage2_review",
             "context_pack_generator",
         ]
         assert all(alert is False for _, alert in calls)  # one alert for the chain
         assert out.status == job_status.SUCCESS
         assert out.notes.startswith("session=2026-10-02")
+
+    def test_invalid_decisions_file_makes_partial(self):
+        out, calls = self._run({"stage2_review": job_status.PARTIAL})
+        assert "context_pack_generator" in [c[0] for c in calls]
+        assert out.status == job_status.PARTIAL
+        assert "stage2_review=partial" in out.notes
 
     def test_pipeline_failure_skips_context_pack(self):
         out, calls = self._run({"feature_pipeline": job_status.FAILED})

@@ -209,3 +209,54 @@ def test_load_snapshots_keeps_feature_version_string():
     assert snap["feature_version"] == "2026.10-1"
     assert snap["rsi_14"] == 55.0 and isinstance(snap["rsi_14"], float)
     assert snap["snapshot_date"] == date(2026, 10, 1)
+
+
+# ── Index-addition warning + stage-2 feedback (concept §7.7) ──
+
+
+def test_index_addition_text():
+    d = date(2026, 10, 6)
+    assert cpg.index_addition_text([("sp500", date(2026, 10, 1))], d) == (
+        "S&P 500 wirksam 2026-10-01 (vor 5 Tagen)"
+    )
+    assert cpg.index_addition_text([("nasdaq100", d)], d).endswith("(heute)")
+    assert cpg.index_addition_text([("sp500", date(2026, 10, 9))], d).endswith("(in 3 Tagen)")
+    sync = cpg.index_addition_text([("sp500", date(2026, 10, 1), "index_sync")], d)
+    assert sync.startswith("S&P 500 aufgenommen, erkannt 2026-10-01")
+    assert "genaues Datum unbekannt" in sync
+
+
+def test_decisions_template_lists_top_tickers():
+    lines = cpg.decisions_template(date(2026, 10, 6), ["NVDA", "MSFT"])
+    assert lines[0] == "schema: stage2-decisions/v1"
+    assert "session: 2026-10-06" in lines
+    assert "  - ticker: MSFT" in lines
+    assert cpg.decisions_template(date(2026, 10, 6), [])[-1] == "decisions: []"
+
+
+def test_generate_daily_marks_fresh_index_additions(tmp_path, monkeypatch):
+    gen = _generator(tmp_path, monkeypatch, _gen_snaps())
+    monkeypatch.setattr(gen, "_recent_index_additions",
+                        lambda d: {"T9": [("sp500", date(2026, 9, 28))],
+                                   "XYZ": [("nasdaq100", date(2026, 9, 30))]})
+    gen.generate_daily(date(2026, 10, 1), top_n=2)
+    day = tmp_path / "2026-10-01"
+    cand = (day / "01_T9.md").read_text(encoding="utf-8-sig")
+    assert 'index_added: "S&P 500 wirksam 2026-09-28 (vor 3 Tagen)"' in cand
+    assert "⚠️ **Index-Aufnahme:**" in cand
+    assert "index_added" not in (day / "02_T8.md").read_text(encoding="utf-8-sig")
+    overview = (day / "00_uebersicht.md").read_text(encoding="utf-8-sig")
+    assert "## Warnhinweis Index-Aufnahme" in overview
+    assert "- **T9**: S&P 500" in overview
+    assert "XYZ" not in overview  # not in the universe/eligible set
+
+
+def test_overview_contains_stage2_feedback_section(tmp_path, monkeypatch):
+    gen = _generator(tmp_path, monkeypatch, _gen_snaps())
+    gen.generate_daily(date(2026, 10, 1), top_n=2)
+    overview = (tmp_path / "2026-10-01" / "00_uebersicht.md").read_text(encoding="utf-8-sig")
+    assert "## Rückmeldung Stufe 2" in overview
+    assert "## Warnhinweis Index-Aufnahme" not in overview
+    yaml_block = overview.split("```yaml\n")[1].split("```")[0]
+    assert "session: 2026-10-01" in yaml_block
+    assert "  - ticker: T9" in yaml_block and "  - ticker: T8" in yaml_block

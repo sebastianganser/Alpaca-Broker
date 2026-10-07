@@ -606,6 +606,38 @@ CREATE INDEX idx_features_date ON signals.feature_snapshots(snapshot_date);
 CREATE INDEX idx_features_ticker ON signals.feature_snapshots(ticker);
 ```
 
+### `signals.stage2_reviews` / `signals.stage2_decisions` (Migration 035)
+Forward test of stage 2 (Claude broker skill), concept 2026-10-06 §7.7. Filled by the nightly step `stage2_review` from `context_packs/<date>/decisions.yaml` (format: [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md)). Trade results are **not** stored – the evaluation joins the barrier label of `feature_snapshots` (ticker, `session_date`).
+
+```sql
+CREATE TABLE signals.stage2_reviews (
+  session_date    DATE PRIMARY KEY,         -- pack day d (as_of of the context pack)
+  decided_at      TIMESTAMPTZ NOT NULL,     -- from the file
+  file_mtime      TIMESTAMPTZ NOT NULL,     -- last write of decisions.yaml
+  on_time         BOOLEAN NOT NULL,         -- decided_at AND file_mtime < open of session d+1
+  n_buy           SMALLINT NOT NULL,
+  n_no_entry      SMALLINT NOT NULL,
+  content_sha256  VARCHAR(64) NOT NULL,     -- unchanged files are skipped
+  source_file     VARCHAR(300) NOT NULL,
+  ingested_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE signals.stage2_decisions (
+  id            BIGSERIAL PRIMARY KEY,
+  session_date  DATE NOT NULL REFERENCES signals.stage2_reviews(session_date) ON DELETE CASCADE,
+  ticker        VARCHAR(20) NOT NULL,
+  action        VARCHAR(10) NOT NULL CHECK (action IN ('buy', 'no_entry')),
+  pack_rank     SMALLINT,                   -- NN of NN_TICKER.md, NULL if not in the pack
+  reason        TEXT,
+  limit_price   NUMERIC(12,4),              -- informational only
+  target_pct    NUMERIC(8,4),               -- informational only
+  stop_pct      NUMERIC(8,4),               -- informational only
+  UNIQUE (session_date, ticker)
+);
+```
+
+A changed `decisions.yaml` replaces the stored day (review + decisions); its new `file_mtime` decides `on_time`.
+
 ### `signals.collection_log`
 Audit log for all collector runs.
 
@@ -628,7 +660,7 @@ CREATE TABLE signals.collection_log (
 
 ## Migrations
 
-Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–034.
+Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–035.
 
 | Migration | Description |
 |---|---|
@@ -666,4 +698,5 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 | 032 | Table `cusip_map` (CUSIP → ticker cache for 13F) |
 | 033 | Barrier trade label on `feature_snapshots`: `return_barrier_14d`, `barrier_outcome`, `barrier_ambiguous` |
 | 034 | Nine short-term price features `st_*` on `feature_snapshots` (concept 2026-10-06 §7.1) |
+| 035 | Tables `stage2_reviews` + `stage2_decisions` (stage-2 forward test, concept 2026-10-06 §7.7) |
 

@@ -338,3 +338,11 @@
 - **Schritt D:** `collectors/buyback_events.py` (EDGAR-Volltextsuche + Satz-Klassifizierer), `analysis/event_study.py`, Skripte `scripts/analysis/collect_buyback_events.py` (CSV + Satz-Cache) und `scripts/analysis/event_study.py` (`--source buyback|index_add`), nur lesend
 - **Ergebnis D:** D1 Rückkäufe 648 Trades, Ø −0,063 %, Differenz n. s. → **nicht bestanden**; D2 Index-Aufnahmen −0,32 % vs. Universum (explorativ, nur Hinweis) ([Konzept §7.6](2026-10-06_Konzept_Kurzfrist_Kandidaten.md))
 - **Tests:** 822 passed
+
+
+### Session 29 – 7 October 2026 – Log-Check + Vorwärtstest Stufe 2 (K5)
+- **Log-Check Nacht 06./07.10.:** alle Läufe `success`, Nightly Chain für Session 2026-10-06 vollständig (Context Pack erzeugt); Adjustment-Wechsel bei 4 Tickern (A, DG, DGX, JPM) automatisch neu geladen; short_interest wie immer ~2,5 h. Risiko-Vorfilter (`98049b1`) noch nicht deployt
+- **K5:** Konzept §7.7 (vorab festgelegt), Format `docs/STAGE2_DECISIONS.md`, Migration 035 (`stage2_reviews`, `stage2_decisions`), `derived/stage2_decisions.py` (Einlesen + Prüfung, rechtzeitig = vor Eröffnung d+1), `analysis/stage2_eval.py` (Vergleich mit geeigneten Aktien/Universum, Urteil ab 100 Käufen), Nachtlauf-Schritt `stage2_review` → `context_packs/stage2_auswertung.md`
+- **Context Pack:** Abschnitt „Rückmeldung Stufe 2“ mit YAML-Vorlage; Index-Warnhinweis (Aufnahme ±7 Kalendertage, Hinweis aus D2) in Übersicht und Kandidaten-Dokument
+- **Abhängigkeit:** `pyyaml` explizit in `pyproject.toml` (bisher nur transitiv)
+- **Tests:** 850 passed
