@@ -16,7 +16,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Windows Machine (Development)                              │
-│  ├─ VS Code + Claude Code / Antigravity                     │
+│  ├─ Claude Code (Claude desktop app)                        │
 │  └─ Git Client → GitHub (sebastianganser/Alpaca-Broker)     │
 └────────────────────────┬────────────────────────────────────┘
                          │ git push  →  git pull on Unraid

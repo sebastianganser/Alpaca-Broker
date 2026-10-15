@@ -3,7 +3,7 @@
 > Central navigator for all project documentation.
 > Start here to find the right document for your question.
 
-**Last updated:** 15 October 2026 (handover to Claude Code)
+**Last updated:** 15 October 2026 (takeover in Claude Code)
 
 ---
 
@@ -12,7 +12,7 @@
 | I'm looking for... | Document |
 |---|---|
 | Project overview, mission, principles, current status | [CLAUDE.md](../CLAUDE.md) |
-| **Where did the last session stop? What is deployed? What is open?** | [SESSION_LOG.md](SESSION_LOG.md) – last entry (Session 31, handover) · [ROADMAP.md](ROADMAP.md) – "Offene Punkte" |
+| **Where did the last session stop? What is deployed? What is open?** | [SESSION_LOG.md](SESSION_LOG.md) – last entry (Session 32, takeover in Claude Code) · [ROADMAP.md](ROADMAP.md) – "Offene Punkte" |
 | How is the system deployed and structured? | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | What database tables exist? (DDL, migrations 001–035, retention) | [DATABASE.md](DATABASE.md) |
 | When do jobs run? (schedule, nightly chain) | [SCHEDULER.md](SCHEDULER.md) |
@@ -64,6 +64,8 @@
 |---|---|---|
 | [ROADMAP.md](ROADMAP.md) | Sprint definitions, status overview, open points, next steps, deployment notes, backlog | After every sprint / session |
 | [SESSION_LOG.md](SESSION_LOG.md) | Chronological record of every session, incl. handover (Session 31) | After every session |
+| [.claude/UEBERNAHME_PRUEFUNG.md](../.claude/UEBERNAHME_PRUEFUNG.md) | Takeover assessment Antigravity → Claude Code (read-only check of code, docs, config) incl. re-check of `e09cc90` | Historical reference |
+| [.claude/ANTIGRAVITY_ABSCHLUSS.md](../.claude/ANTIGRAVITY_ABSCHLUSS.md) | Final instruction given to Antigravity before the handover (result: `e09cc90`) | Historical reference |
 
 ### Learnings & Research
 

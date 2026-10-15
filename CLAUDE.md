@@ -50,8 +50,8 @@ Critical paths (data fetching, computations, later order execution) are pure Pyt
 
 **Phase:** 🟡 Sprint 9.5c (Candidate Pipeline MVP), Phase 2 – review fixes deployed, short-term research K1–K4 finished without a usable edge, K5 (stage-2 forward test) running
 **Current sprint:** 9.5c Phase 2 – collect stage-2 decisions (K5), keep data quality stable; F1 composite score open
-**Next step:** Deploy `97fcdb0` on Unraid (deployed is `1583d59`), then isolate the two DB-dependent politician tests; Sprint 10 planned from mid-December 2026 – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 31 (handover)
-**Last updated:** 15 October 2026 (handover to Claude Code)
+**Next step:** Deploy current `main` on Unraid (deployed is `1583d59`), then next-day log check; K5 keeps collecting stage-2 decisions; Sprint 10 planned from mid-December 2026 – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 32
+**Last updated:** 15 October 2026 (takeover in Claude Code)
 **Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `1583d59`, Alembic revision `035`
 
 See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
@@ -73,7 +73,7 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 | **Price data** | Alpaca Market Data API, **SIP feed** (`ALPACA_DATA_FEED`, default `sip`; production logs show `feed=sip`), automatic IEX fallback marks the run `partial` |
 | **News sentiment** | Alpaca News API + ProsusAI/finbert (local CPU inference) |
 | **Universe** | 767 active tickers (2026-10-15; S&P 500 + Nasdaq 100 + ARK + benchmark/sector ETFs, other ETFs filtered via blacklist); features use the point-in-time universe |
-| **Tests** | 850 collected (`uv run pytest --collect-only -q`, 2026-10-15); 2 politician tests need a real DB (see ROADMAP open points) |
+| **Tests** | 850 tests, none needs a database (2026-10-15); run with `uv run pytest` |
 | **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090, runs as `99:100`) |
 | **Broker (later)** | Alpaca Paper Trading (NEVER live!) |
 | **Version control** | Git, [GitHub](https://github.com/sebastianganser/Alpaca-Broker) |
@@ -84,8 +84,8 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 
 | Task | Model | Where |
 |---|---|---|
-| Architecture design, edge case analysis, reviews | Opus 5.5 | Antigravity / Claude Desktop (sparingly!) |
-| Standard implementation, debugging | Sonnet (current version) | Antigravity / Claude Desktop (default) |
+| Architecture design, edge case analysis, reviews | Opus 5.5 | Claude Code – sparingly! |
+| Standard implementation, debugging | Sonnet (current version) | Claude Code – default (also for subagents) |
 | News parsing, daily reports | Haiku (current version) | API (scheduler jobs) |
 | Routine scheduler (price checks etc.) | **No LLM** | Python code |
 

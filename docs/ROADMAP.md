@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** 15 October 2026 (handover to Claude Code – see [SESSION_LOG.md](SESSION_LOG.md), Session 31)
+**Last updated:** 15 October 2026 (takeover in Claude Code – see [SESSION_LOG.md](SESSION_LOG.md), Session 32)
 
 ---
 
@@ -243,7 +243,7 @@
 
 ### Offene Punkte (Stand Übergabe 15.10.2026)
 - [ ] **Deploy** `050ff32` + `97fcdb0` auf Unraid (deployt ist `1583d59`)
-- [ ] **Test-Isolation:** `test_store_writes_trades` und `test_store_dedup_counts` (`tests/unit/test_politician_trades.py`) öffnen über `NewTickerOnboarder` (aufgerufen in `PoliticianTradesCollector.store()`) eine **echte DB-Session** → laufen nur mit erreichbarer DB; `NewTickerOnboarder` patchen wie im Test bei Zeile ~572
+- [x] **Test-Isolation:** `test_store_writes_trades` und `test_store_dedup_counts` (`tests/unit/test_politician_trades.py`) öffneten über `NewTickerOnboarder` eine **echte DB-Session** – behoben am 15.10. in Session 32 (`NewTickerOnboarder` gepatcht, 850 Tests laufen ohne DB)
 - [ ] **Migrationskette auf leerer DB:** 024 legt `sector_relative_return_20d`/`sector_relative_momentum` bereits an, 025 fügt sie ohne Prüfung erneut hinzu → `alembic upgrade head` auf einer frischen Datenbank scheitert vermutlich an 025 (Produktion nicht betroffen)
 - [ ] `registry.NIGHTLY_UPSTREAM`: das Flag „kritisch“ (`True` bei `prices_alpaca`) wird von `check_upstream()` nicht ausgewertet – alle Eingänge werden gleich behandelt. Klären, ob gewollt
 - [ ] `short_interest`-Tabelle (Migration 027) wird von keinem Collector befüllt – FINRA-Short-Interest (zweiwöchentlich) sammeln oder Tabelle bewusst leer lassen
@@ -254,7 +254,7 @@
 
 ### Nächste Schritte
 1. `97fcdb0` auf Unraid deployen, am Folgetag Log-Check (Nightly Chain, Dashboard `news_*`)
-2. Die beiden Politician-Tests isolieren; danach optional 024/025 auf leerer DB absichern
+2. Politician-Tests sind isoliert (Session 32); optional 024/025 auf leerer DB absichern
 3. K5 laufen lassen (Stage-2-Entscheidungen sammeln), Readiness Mitte November/Dezember erneut prüfen
 4. Sprint 10 frühestens ab Mitte Dezember 2026 – Inhalt hängt davon ab, ob bis dahin ein Ranking den Walk-forward besteht (K3 erneut frühestens Januar 2027)
 

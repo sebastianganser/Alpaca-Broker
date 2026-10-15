@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_DATA.md](DECISIONS_DATA.md) · [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md)
 
-**Last updated:** October 2026
+**Last updated:** 15 October 2026
 
 ---
 
@@ -185,6 +185,13 @@
 **Context:** On 2026-10-05 a manually triggered chain run hit a PostgreSQL deadlock (SQLSTATE 40P01) against an untracked concurrent writer on `feature_snapshots`.
 **Decision:** `_target_backfill_body` retries up to 3 times (5 s / 15 s backoff) on 40P01 only (`97fcdb0`). Safe because `backfill_all` only processes rows whose targets are still NULL.
 **Operational rule:** Do not start manual scripts that write `feature_snapshots` during the nightly chain (≈ 04:30–05:00).
+
+### [2026-10-15] Development Tooling: Claude Code Instead of Antigravity
+
+**Context:** Development so far happened in the IDE Antigravity; on 2026-10-15 the project was handed over to Claude Code (Claude desktop app). Antigravity's final documentation commit is `e09cc90` (re-checked against the code, see SESSION_LOG Session 32).
+**Decision (Sebastian):** Further development happens in Claude Code; Antigravity no longer edits this repo. The repo documentation remains the only project memory – no tool-specific artifacts are needed.
+**Rationale:** The project memory already lives entirely in the repo docs. Claude Code loads `CLAUDE.md` automatically at the start of every session, so the existing session start checklist applies unchanged. One tool per working tree avoids conflicting edits.
+**Consequence:** Unit tests must not need a database (since Session 32 none does; checked with the DB deliberately unreachable). Claude Code has no SSH access to Unraid, so the Unraid deploy remains a manual step for Sebastian.
 
 ---
 

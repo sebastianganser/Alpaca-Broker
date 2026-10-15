@@ -421,3 +421,13 @@ Offen ist kein Reparatur-Skript. **Nicht über die API prüfbar:** ob nach dem 1
 - Bekannte, harmlose Warnungen: SEC-Timeouts bei Form 4 (Retry ok), Fundamentals-Plausibilitätsprüfungen.
 
 **Nächster konkreter Schritt:** `97fcdb0` auf Unraid deployen und am Folgetag den Log-Check wiederholen (Nightly Chain, Dashboard `news_*`). Danach die beiden Politician-Tests isolieren (`NewTickerOnboarder` patchen) und `scripts/sprint10_readiness.py` erneut laufen lassen.
+
+### Session 32 – 15. Oktober 2026 – Übernahme in Claude Code
+- **Prüfung für den Wechsel:** Codebasis, Doku und Konfiguration nur lesend geprüft, Ergebnis in `.claude/UEBERNAHME_PRUEFUNG.md`
+- **Abschluss Antigravity:** Abschluss-Auftrag `.claude/ANTIGRAVITY_ABSCHLUSS.md` → Doku-Commit `e09cc90`. Nachprüfung am Code: DATABASE.md deckt alle 35 Migrationen (001–035) und alle 27 ORM-Tabellen ab, SCHEDULER.md alle 24 Jobs aus `scheduler/setup.py`; alle 68 `.py`-Dateinamen in ARCHITECTURE.md existieren; relative Links gültig (nur 6 absolute `file://`-Links im archivierten `docs/archive/implementation_plan1.md`); keine Secrets im Diff
+- **Befunde bestätigt:** Migrationen 024 und 025 fügen beide `feature_snapshots.sector_relative_return_20d`/`sector_relative_momentum` hinzu (025 ohne Existenzprüfung); das Flag „kritisch“ in `registry.NIGHTLY_UPSTREAM` wird von `check_upstream()` nicht ausgewertet
+- **Fix Test-Isolation:** `test_store_writes_trades` und `test_store_dedup_counts` (`tests/unit/test_politician_trades.py`) patchen jetzt `trading_signals.universe.onboarder.NewTickerOnboarder` (wie der Test bei Zeile ~572) → keine Unit-Tests mehr mit DB-Verbindung (geprüft mit gesperrtem DB-Zugang `DB_HOST=127.0.0.1`, `DB_PORT=1`)
+- **Entscheidung (Sebastian):** Weiterentwicklung in Claude Code, Antigravity bearbeitet das Repo nicht mehr; die Repo-Doku bleibt das einzige Projektgedächtnis ([DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md))
+- **Doku:** CLAUDE.md (Status, Tests, Model Routing → Claude Code), ARCHITECTURE.md (Entwicklungsumgebung), Entscheidung in DECISIONS_ARCHITECTURE.md, INDEX.md (Übernahme-Notizen), ROADMAP.md (Test-Isolation erledigt)
+- **Zugriff:** kein SSH auf Unraid, Freigabe `\\192.168.1.93\Workfiles` gesperrt (Zugriff verweigert) → Deploy und Prüfung von `context_packs/2026-10-05/` bleiben manuelle Schritte für Sebastian. API-Health ok (`status: ok`, `scheduler_running: true`, `db_connected: true`); deployt weiterhin `1583d59`, nicht deployt `050ff32`, `97fcdb0` (+ Doku-Commits ohne Laufzeitwirkung)
+- **Tests:** 850 passed (ohne DB)
