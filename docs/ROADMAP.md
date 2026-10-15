@@ -242,7 +242,7 @@
 - [x] `target_backfill` mit Deadlock-Retry (`97fcdb0`, **nicht deployt**)
 
 ### Offene Punkte (Stand Übergabe 15.10.2026)
-- [ ] **Deploy** `050ff32` + `97fcdb0` auf Unraid (deployt ist `1583d59`)
+- [x] **Deploy** `050ff32` + `97fcdb0` auf Unraid – deployt am 15.10. als `b60038e` (Session 32), Dashboard zeigt echte Zeilenzahlen für `news_*`
 - [x] **Test-Isolation:** `test_store_writes_trades` und `test_store_dedup_counts` (`tests/unit/test_politician_trades.py`) öffneten über `NewTickerOnboarder` eine **echte DB-Session** – behoben am 15.10. in Session 32 (`NewTickerOnboarder` gepatcht, 850 Tests laufen ohne DB)
 - [ ] **Migrationskette auf leerer DB:** 024 legt `sector_relative_return_20d`/`sector_relative_momentum` bereits an, 025 fügt sie ohne Prüfung erneut hinzu → `alembic upgrade head` auf einer frischen Datenbank scheitert vermutlich an 025 (Produktion nicht betroffen)
 - [ ] `registry.NIGHTLY_UPSTREAM`: das Flag „kritisch“ (`True` bei `prices_alpaca`) wird von `check_upstream()` nicht ausgewertet – alle Eingänge werden gleich behandelt. Klären, ob gewollt
@@ -253,7 +253,7 @@
 - [ ] „Recompute History“-Button in den Einstellungen (zurückgestellt, skriptbasiert)
 
 ### Nächste Schritte
-1. `97fcdb0` auf Unraid deployen, am Folgetag Log-Check (Nightly Chain, Dashboard `news_*`)
+1. ✅ `b60038e` deployt (15.10.); Log-Check am 16.10. (erste Nightly Chain mit neuem Image)
 2. Politician-Tests sind isoliert (Session 32); optional 024/025 auf leerer DB absichern
 3. K5 laufen lassen (Stage-2-Entscheidungen sammeln), Readiness Mitte November/Dezember erneut prüfen
 4. Sprint 10 frühestens ab Mitte Dezember 2026 – Inhalt hängt davon ab, ob bis dahin ein Ranking den Walk-forward besteht (K3 erneut frühestens Januar 2027)

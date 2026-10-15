@@ -50,9 +50,9 @@ Critical paths (data fetching, computations, later order execution) are pure Pyt
 
 **Phase:** 🟡 Sprint 9.5c (Candidate Pipeline MVP), Phase 2 – review fixes deployed, short-term research K1–K4 finished without a usable edge, K5 (stage-2 forward test) running
 **Current sprint:** 9.5c Phase 2 – collect stage-2 decisions (K5), keep data quality stable; F1 composite score open
-**Next step:** Deploy current `main` on Unraid (deployed is `1583d59`), then next-day log check; K5 keeps collecting stage-2 decisions; Sprint 10 planned from mid-December 2026 – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 32
+**Next step:** Log check on 16 October 2026 (first nightly chain on the new image); K5 keeps collecting stage-2 decisions; Sprint 10 planned from mid-December 2026 – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 32
 **Last updated:** 15 October 2026 (takeover in Claude Code)
-**Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `1583d59`, Alembic revision `035`
+**Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `b60038e` (deployed 15 October 2026), Alembic revision `035`
 
 See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 
