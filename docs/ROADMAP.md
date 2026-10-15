@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** September 2026
+**Last updated:** 15 October 2026 (handover to Claude Code – see [SESSION_LOG.md](SESSION_LOG.md), Session 31)
 
 ---
 
@@ -25,8 +25,8 @@
 | 8c | News Sentiment Pipeline | 🟢 Done | May 2026 |
 | **⏸ Wait** | **2–3 months data collection** | **–** | **–** |
 | 9 | Exploratory Analysis (Jupyter) | 🟢 Done | Aug 2026 |
-| 9.5| Data Hardening & Extension | 🟡 In Progress | Aug–Sept 2026 |
-| 10 | Signal Scoring Models | 🔴 Open | Nov 2026 |
+| 9.5| Data Hardening & Extension (+ Oct review fixes, short-term research K1–K5) | 🟡 In Progress | Aug–Oct 2026 |
+| 10 | Signal Scoring Models | 🔴 Open | planned from mid-Dec 2026 (Sebastian, 2026-10-01) |
 | 11 | Backtest Framework | 🔴 Open | – |
 | 12 | Paper Trading Integration | 🔴 Open | – |
 
@@ -190,7 +190,7 @@
 - [x] **D3:** Options IV Collector ✅ `74d06ab` + fixes `aaff609` `4051994` `90f0538` `24a777d` `664ed77`
   - ATM IV 30d/60d, 25d Skew, Term Structure, Put/Call OI
   - Source: yfinance (Alpaca free tier lacks Greeks/IV)
-  - Scheduled daily at 04:30 CET. IV-Rank needs ~1 year buildup (usable ~Sept 2027)
+  - Scheduled daily at 23:15 Europe/Berlin (since Oct 2026; originally 04:30). IV-Rank needs ~1 year buildup (usable ~Sept 2027)
   - NYSE trading day check + zero-data warning on trading days
 - [x] **B5:** Short Interest Collector ✅ `f721720` — *completed in 9.5c Phase 1 (Sept 2026)*
 
@@ -201,7 +201,7 @@
 
 **Phase 1 — Sept 2026:** ✅ Complete (`f721720`, `c309f7d`)
 - [x] **B5:** Short Interest Collector (Massive/Polygon API, 757/765 Ticker, 0 Errors)
-  - Scheduled daily at 04:45 CET (~2.5h runtime at free tier 5 req/min)
+  - Scheduled daily at 00:15 Europe/Berlin since Oct 2026 (originally 04:45; ~2.5h runtime at free tier 5 req/min). Writes only `short_volume`; the `short_interest` table stays empty (see open points)
   - 3 new features: `short_volume_ratio_5d`, `short_volume_ratio_20d`, `short_volume_change_20d`
 - [x] **C1:** Politician Trades Lag Filter (max 45 days, STOCK Act compliance)
 - [x] **C2:** Ticker Parser Fix (leading/trailing strip + regex validation)
@@ -211,28 +211,52 @@
   - [x] Output to `CONTEXT_PACK_PATH` on Unraid (`/mnt/user/Workfiles/AlpacaBroker/context_packs`)
   - [x] Daily overview (`00_uebersicht.md`) + per-candidate files
   - [x] Preliminary scoring based on Sprint 9 ML importance weights
-  - Scheduled daily at 02:30 CET (after Feature Pipeline)
+  - Since Oct 2026 last step of the `nightly_chain` (04:30 Europe/Berlin, folder = last NYSE session; originally 02:30). Since `98049b1`: stage-1 risk pre-filter instead of the unvalidated score ranking (`selection: risk_prefilter`, `ranking_validated: false`), "keine Kandidaten" allowed
 
-**Phase 2 — Ab Okt 2026 (nach ≥4 Wochen Datenakkumulation):**
-- [ ] **R1:** Feature Analysis Re-Run — Sprint 9 ML-Analyse aktualisieren
+**Phase 2 — Ab Okt 2026:** 🟡 R1 + K1–K4 erledigt, K5 läuft (wartet auf Daten), F1 zurückgestellt
+- [x] **R1:** Feature Analysis Re-Run — ✅ 05./06.10.2026 auf dem neu gebauten Feature-Store (Rank-IC + Purged Walk-forward, 510k–527k Snapshots, 07/2022–10/2026). Ergebnis: **kein robustes Signal** (0 signifikante Features, LASSO leer), siehe LEARNINGS 2026-10-06
   - Correlations + Feature Importance neu berechnen mit **allen** neuen Features:
     - 9.5b: 19 Features (Macro, SUE, Breadth, Sector, Insider, 13F, Liquidity, Sentiment)
     - 9.5b: Options IV (ATM IV, Skew, Term Slope, Put/Call OI)
     - 9.5c: Short Interest (B5, 3 Features)
-  - Automatisch am 1. Okt via `feature_analysis` Job, oder manuell triggern
-  - Ergebnis: aktualisierte Importance-Rankings für alle ~80 Features
-- [ ] **F1:** Rule-based Composite Score + Guardrails (gewichtet nach aktualisierten ML-Importance-Werten):
+  - Monatlich automatisch (1. des Monats, 07:00) via `feature_analysis`, oder manuell (`POST /analysis/trigger`); nächster Lauf 01.11.2026
+- [ ] **F1:** Rule-based Composite Score + Guardrails — offen; Einschätzung bei der Übergabe: ohne validiertes Ranking (R1, K1–K4 ohne Edge) derzeit nicht sinnvoll gewichtbar. Context Pack nutzt bis dahin den Risiko-Vorfilter (Stufe 1)
   - [ ] Min. liquidity, max 2/sector, pairwise correlation, churn lock, min-score
   - [ ] `candidate_selections` + `candidate_rejections` tables
-- [ ] **K1–K4:** Kurzfrist-Kandidaten ([Konzept 2026-10-06](2026-10-06_Konzept_Kurzfrist_Kandidaten.md))
+- [ ] **K1–K5:** Kurzfrist-Kandidaten ([Konzept 2026-10-06](2026-10-06_Konzept_Kurzfrist_Kandidaten.md)) — K1–K4 abgeschlossen (alle ohne verwertbaren Edge), K5 läuft
   - [x] K1: Barrier-Backtest des aktuellen Scores (TP 0,5–1 %, SL 2–3×, max. 14 Tage) — Ergebnis: ≈ Zufall, siehe LEARNINGS 2026-10-06
   - [x] K2 (Schritt A): Barrier-Label +1 %/−2 %/14d (`return_barrier_14d`, Migration 033) als Zielgröße der Feature-Analyse — Ergebnis: kein robustes Signal, siehe LEARNINGS 2026-10-06
   - [x] K2b (Schritt A2): 9 Kurzfrist-Kennzahlen `st_*` aus Tageskursen (Migration 034, Backfill-Skript), Analyse neu und mit Stand A vergleichen — Ergebnis: erste Hinweise (Schlusslage, Earnings-Reaktion), nicht signifikant
   - [x] K3 (Schritt B): ML-Modell P(Treffer) (Logit L2 + Gradient Boosting), Purged Walk-forward, Schwelle → 0–5 Kandidaten oder „keine Kandidaten“ — Ergebnis: **nicht bestanden** (AUC ≈ 0,50, Holdout n. s.), siehe [Bericht](reports/2026-10-06_hit_model_walkforward.md)
   - [ ] K3b (Schritt C): Hyperopt nur für Trade-Parameter (Ziel/Stop, Schwelle, Filter), Bestätigung auf Holdout — ⏸ zurückgestellt, bis ein Modell den Walk-forward besteht
   - [x] K4 (Schritt D): Event-Studien 8-K-Rückkäufe (D1) und Index-Aufnahmen (D2) — Ergebnis: **D1 nicht bestanden** (648 Trades, Ø −0,06 %, n. s.), D2 nur Hinweis auf Schwäche nach Aufnahme; Reddit-Hype (D3) mangels Historie zurückgestellt, siehe [Konzept §7.6](2026-10-06_Konzept_Kurzfrist_Kandidaten.md)
-  - [ ] K5: Vorwärtstest Stufe 2 – Skill schreibt `decisions.yaml` ([Format](STAGE2_DECISIONS.md)), Nachtlauf-Schritt `stage2_review` (Migration 035) bewertet mit der Barrier-Regel, Bericht `context_packs/stage2_auswertung.md`; Index-Warnhinweis im Context Pack ([Konzept §7.7](2026-10-06_Konzept_Kurzfrist_Kandidaten.md)) — Code fertig, Urteil frühestens ab 100 abgeschlossenen Käufen
+  - [ ] K5: Vorwärtstest Stufe 2 – Skill schreibt `decisions.yaml` ([Format](STAGE2_DECISIONS.md)), Nachtlauf-Schritt `stage2_review` (Migration 035) bewertet mit der Barrier-Regel, Bericht `context_packs/stage2_auswertung.md`; Index-Warnhinweis im Context Pack ([Konzept §7.7](2026-10-06_Konzept_Kurzfrist_Kandidaten.md)) — Code fertig und seit 07.10. deployt (`1583d59`), läuft nächtlich; bis 15.10. **0 `decisions.yaml` eingelesen**. Urteil frühestens ab 100 abgeschlossenen Käufen
   - [ ] K3 erneut (Walk-forward mit längerer Alternativdaten-Historie, neuer Holdout ab 2026-Q4) — frühestens Januar 2027
+
+### Betrieb & Wartung (Sept–Okt 2026)
+- [x] Options IV + Estimates als Feature-Gruppen, Migration 028 (`bda67d8`), Features-API/Schemas nachgezogen (`4409caf`)
+- [x] Globale Data Retention 20 Quartale, wöchentlich So 03:00 (`a2978cf`, verfeinert im Review 05.10.); erster Lauf 11.10.: 135.084 Zeilen gelöscht
+- [x] Dashboard-Tabellenstatistik 14 → 24 Tabellen (`9db0519`); Datumsfix für `news_*` (`050ff32`, **nicht deployt**)
+- [x] Sprint-10-Readiness: FRED-Tabellenname + realistische Schwellen für dünne Gruppen (`a008047`); Stand 01.10.: 26/30
+- [x] Review-Fixes 05.10. (Migrationen 029–031), 13F-CUSIP-Auflösung (032), alle Reparatur-Skripte gelaufen (Details: [SESSION_LOG](SESSION_LOG.md), Session 31)
+- [x] `target_backfill` mit Deadlock-Retry (`97fcdb0`, **nicht deployt**)
+
+### Offene Punkte (Stand Übergabe 15.10.2026)
+- [ ] **Deploy** `050ff32` + `97fcdb0` auf Unraid (deployt ist `1583d59`)
+- [ ] **Test-Isolation:** `test_store_writes_trades` und `test_store_dedup_counts` (`tests/unit/test_politician_trades.py`) öffnen über `NewTickerOnboarder` (aufgerufen in `PoliticianTradesCollector.store()`) eine **echte DB-Session** → laufen nur mit erreichbarer DB; `NewTickerOnboarder` patchen wie im Test bei Zeile ~572
+- [ ] **Migrationskette auf leerer DB:** 024 legt `sector_relative_return_20d`/`sector_relative_momentum` bereits an, 025 fügt sie ohne Prüfung erneut hinzu → `alembic upgrade head` auf einer frischen Datenbank scheitert vermutlich an 025 (Produktion nicht betroffen)
+- [ ] `registry.NIGHTLY_UPSTREAM`: das Flag „kritisch“ (`True` bei `prices_alpaca`) wird von `check_upstream()` nicht ausgewertet – alle Eingänge werden gleich behandelt. Klären, ob gewollt
+- [ ] `short_interest`-Tabelle (Migration 027) wird von keinem Collector befüllt – FINRA-Short-Interest (zweiwöchentlich) sammeln oder Tabelle bewusst leer lassen
+- [ ] Prüfen, ob historische 13F-Feature-Spalten nach dem Ticker-Backfill neu berechnet wurden (SQL in SESSION_LOG, Session 31)
+- [ ] Sprint-10-Readiness erneut laufen lassen (`docker exec -it alpaca-broker uv run python scripts/sprint10_readiness.py`); Ranking-Stabilität der Monatsreports war am 01.10. bei 40 %
+- [ ] `sector_relative_momentum` erneut prüfen (Nov 2026), IV-Rank ab ~252 Sessions IV-Historie (IV-Daten seit 31.08.2026 → ~September 2027)
+- [ ] „Recompute History“-Button in den Einstellungen (zurückgestellt, skriptbasiert)
+
+### Nächste Schritte
+1. `97fcdb0` auf Unraid deployen, am Folgetag Log-Check (Nightly Chain, Dashboard `news_*`)
+2. Die beiden Politician-Tests isolieren; danach optional 024/025 auf leerer DB absichern
+3. K5 laufen lassen (Stage-2-Entscheidungen sammeln), Readiness Mitte November/Dezember erneut prüfen
+4. Sprint 10 frühestens ab Mitte Dezember 2026 – Inhalt hängt davon ab, ob bis dahin ein Ranking den Walk-forward besteht (K3 erneut frühestens Januar 2027)
 
 ### Sprint 10 – Signal Scoring
 - Weighted scoring model, optional LASSO/gradient boosting
@@ -256,12 +280,13 @@
 - Docker Compose via Compose Manager
 - PostgreSQL 18 external (`postgresql18-alpaca`, port 5435)
 - Alembic migrations run automatically via `entrypoint.sh`
-- 21 scheduler jobs active (12 daily, 4 weekly, 1 monthly, 1 maintenance, 1 analysis, 2 new in 9.5c)
-- Volume mount: `/mnt/user/Workfiles/AlpacaBroker` for Context Pack output
+- 24 scheduler jobs registered (`scheduler/setup.py`): 13 daily (incl. `nightly_chain`, `log_retention`), 5 weekly (incl. `data_retention`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps (`feature_pipeline`, `target_backfill`, `stage2_review`, `context_pack_generator`) – see [SCHEDULER.md](SCHEDULER.md)
+- Volume mount: `/mnt/user/Workfiles/AlpacaBroker` for Context Pack output (must be owned by `99:100`)
+- **Deployed as of 2026-10-15:** `1583d59` (not yet: `050ff32`, `97fcdb0`)
 
 **Update workflow:**
 1. `git push` from Windows
-2. Unraid terminal: `cd /mnt/user/appdata/alpaca-broker && git pull && docker compose -f /boot/config/plugins/compose.manager/projects/Alpaca-Broker/docker-compose.yml up --build -d`
+2. Unraid terminal: `cd /mnt/user/appdata/alpaca-broker && git pull && docker compose -f /boot/config/plugins/compose.manager/projects/Alpaca-Broker/docker-compose.yml up --build -d` (alternatively Compose Manager → Stack "Alpaca-Broker" → Compose Down → Compose Up). Avoid 04:30–05:00 (nightly chain).
 
 ---
 

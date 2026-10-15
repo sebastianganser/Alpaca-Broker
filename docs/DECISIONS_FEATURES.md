@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) · [DECISIONS_DATA.md](DECISIONS_DATA.md)
 
-**Last updated:** May 2026
+**Last updated:** October 2026
 
 ---
 
@@ -222,6 +222,14 @@
 **Decision:** Collection logs older than 90 days are automatically deleted daily at 03:30 CET.
 
 **Rationale:** Without retention, the `collection_log` table grows unboundedly (~15 entries/day × 365 = 5,475/year). 90 days provides sufficient operational history for debugging while keeping the database lean.
+
+---
+
+### [2026-09-04] Options IV + Estimates as Feature Groups (Migration 028)
+
+**Context:** The options IV and estimates collectors (Sprint 9.5b/9.5a) wrote raw tables, but the feature pipeline did not use them, and the readiness script only checked 8 of the planned feature groups.
+**Decision (commit `bda67d8`):** 9 new `feature_snapshots` columns – `options_iv_atm_30d`, `options_iv_skew_25d`, `options_iv_term_slope`, `options_iv_put_call_oi`, `eps_revision_pct_30d`, `eps_revision_pct_90d`, `revenue_revision_pct_30d`, `eps_revisions_net_7d`, `eps_revisions_net_30d`. Readiness script extended to all feature groups plus a per-source maturity check (minimum history days per source). Follow-up `4409caf`: features API + schemas exposed the new groups (they had been missing in the UI).
+**Note:** IV-Rank needs ~252 sessions of IV history and is tracked as informational only (IV data since 2026-08-31 → ~September 2027).
 
 ---
 

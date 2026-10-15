@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ROADMAP.md](ROADMAP.md)
 
-**Last updated:** September 2026
+**Last updated:** 15 October 2026 (handover to Claude Code)
 
 ---
 
@@ -291,6 +291,34 @@
   - Ausfuehrung auf Unraid via `docker exec`
 - **Tests:** 358 passed, 0 failed
 
+> **Nachtrag (15.10.2026):** Die folgenden Sessions 24a–24e liefen in Antigravity und fehlten bisher im Log. Buchstaben statt neuer Nummern, damit die bestehende Nummerierung (25 ff.) gleich bleibt.
+
+### Session 24a – 3./4. September 2026 – Log-Check + Options-IV-/Estimates-Features (`bda67d8`)
+- **Log-Check:** alle 14 Jobs `success`, keine Gaps; Form 4 mit 3 SEC-Timeouts (Retry erfolgreich); Options IV für 717 Ticker
+- **Befund:** `scripts/sprint10_readiness.py` prüfte nur 8 Feature-Gruppen; Options IV und Estimates wurden gesammelt, aber nicht als Features genutzt
+- **Migration 028:** 9 neue Spalten in `feature_snapshots` (4× Options IV, 5× Estimates-Revisionen), Feature-Pipeline um beide Gruppen erweitert
+- **Readiness-Skript:** alle Feature-Gruppen + neuer Check 8 „Data Source Maturity“ (Mindesthistorie je Quelle, IV-Rank 252 Tage nur informativ)
+
+### Session 24b – 8./9. September 2026 – Features-API + Versionslabel
+- **Befund:** Neue Feature-Gruppen fehlten auf der Features-Seite – `api/routes/features.py` und `api/schemas.py` hatten eigene Gruppenlisten (`4409caf`: 9 → 16 Gruppen, `total_possible` 55 → 86)
+- **UI:** Versionslabel `v0.2.0 · Sprint 8` → `v0.9.5c · Sprint 9.5c` (`b50614a`); nach dem Deploy erst nach Browser-Hard-Reload sichtbar
+- **Frage Context-Pack-Ordner:** Ordnername = Datum der Daten (damals `today − 1`), nicht Ausführungsdatum – gewollt. Seit 05.10. = letzte NYSE-Session
+
+### Session 24c – 15. und 20. September 2026 – Log-Checks
+- Alle Jobs `success`, 0 Gaps; Options IV ~735 Ticker/Tag, Estimates ~2.976 Zeilen/Tag, Feature-Pipeline ~518 Ticker/Tag
+- Nur bekannte Warnungen: Plausibilitätsprüfungen Fundamentals (JOBY, NET, SLMT, GDDY, TEM), einzelne IV-Warnung
+
+### Session 24d – 22. September 2026 – Log-Historie + Data Retention (`a2978cf`)
+- **Log-Historie:** ältester Eintrag 24.06.2026 (89 Tage, 1.001 Einträge) – 90-Tage-`log_retention` greift bereits
+- **Datenalter:** 2,69 Mio. Zeilen; älter als 5 Jahre: `earnings_calendar` (ab 1999), `insider_trades` (ab 2019), `prices_daily`/`technical_indicators` (ab Nov. 2020)
+- **Entscheidung Sebastian:** globale Retention 20 Kalenderquartale, Stichtag = Quartalsbeginn, `earnings_calendar` ausgenommen ([DECISIONS_DATA](DECISIONS_DATA.md)); wöchentlicher Job `data_retention` (So 03:00)
+
+### Session 24e – 1. Oktober 2026 – Dashboard-Tabellen + Readiness-Korrekturen
+- **Dashboard:** Tabellen-Statistik 14 → 24 Tabellen (News, Sentiment, Estimates, Options IV, Short Volume/Interest, Makro, Analyse-Reports, Index Membership, Blacklist) (`9db0519`)
+- **Readiness** (`a008047`): FRED-Check fragte nicht existierende Tabelle `fred_observations` ab (→ `macro_series`); Schwellen ARK 15 → 3 %, Politiker 20 → 5 %, 13F 10 → 5 %
+- **Ergebnis:** 26/30 Checks bestanden. Offen: Snapshot-Anzahl, Historie Options IV/Short Volume/Estimates (zeitabhängig), 13F 0 % (damals noch ohne Ticker), Ranking-Stabilität 40 %
+- **Planung Sebastian:** Sprint 10 eventuell ab Mitte Dezember 2026
+
 ### Session 25 – 5 October 2026 – Opus 5.5 Konzept- & Code-Review + Bereinigung aller Befunde
 - **Review:** Konzept + gesamter Code in 4 Bereichen (Collectors, Feature-Pipeline/ML, Backend/Infra, Frontend)
 - **Entscheidung:** Rollierende 20-Quartale-Retention gewollt, keine Backups → Prinzip 2 in CLAUDE.md angepasst, `utils/retention.data_start_date()` ersetzt alle festen Startdaten
@@ -346,3 +374,50 @@
 - **Context Pack:** Abschnitt „Rückmeldung Stufe 2“ mit YAML-Vorlage; Index-Warnhinweis (Aufnahme ±7 Kalendertage, Hinweis aus D2) in Übersicht und Kandidaten-Dokument
 - **Abhängigkeit:** `pyyaml` explizit in `pyproject.toml` (bisher nur transitiv)
 - **Tests:** 850 passed
+
+### Session 30 – 15. Oktober 2026 – Log-Check 01.–15.10. + zwei Robustheits-Fixes
+- **Log-Check (278 Läufe, 26 Collector-Namen):** seit 07.10. alle Läufe `success`, alle 24 Jobs eingeplant, Nightly Chain inkl. `stage2_review` täglich vollständig; am Wochenende `skipped` (keine neue Session) wie vorgesehen
+- **Erster `data_retention`-Lauf** So 11.10. 03:00: Stichtag 2021-10-01, 135.084 Zeilen gelöscht (`prices_daily` 133.954, `macro_series` 943, `technical_indicators` 187), ~10 s
+- **Einmalige Fehler 05./06.10.** (Übergang Non-Root-Container): Context Pack `PermissionError` auf root-eigenen Host-Dateien, Matplotlib-Cache-Warnung; `target_backfill`-Deadlock 05.10. 12:10 bei manuellem Chain-Lauf gegen einen nicht protokollierten parallelen Schreiber
+- **Fix `050ff32`:** Dashboard-Tabellenstatistik normalisiert Timestamps auf `date` – `news_articles`/`news_sentiment` zeigten `row_count = -1` (Pydantic-Validierung im Catch-all)
+- **Fix `97fcdb0`:** `target_backfill` wiederholt bei PostgreSQL-Deadlock (40P01) bis zu 3× (5 s/15 s); gefahrlos, da nur Zeilen mit NULL-Targets bearbeitet werden
+- **Einordnung (kein Fehler):** `insider_trades`/`form13f_holdings` zeigen im Dashboard Daten vor dem Stichtag (Retention nach `filing_date`, Anzeige nach Ereignisdatum); `short_interest` leer (Collector schreibt nur `short_volume`); 2.594 Gaps stammen aus dem manuellen Preis-Refetch 05.10. (2.545 repariert)
+- **Tests:** 52 passend gefilterte Tests grün (`-k "job or dashboard or backfill or retention"`)
+
+### Session 31 – 15. Oktober 2026 – Übergabe an Claude Code
+Die Arbeit geht ab jetzt in Claude Code weiter. Dokumentation vollständig nachgezogen (dieser Commit, nur `*.md`).
+
+**Deploy-Stand auf Unraid (geprüft 15.10.2026 ~10:10 über die API):**
+- **Deployt: `1583d59`** (07.10.2026) – Indizien: Alembic-Revision `035`, Container-Uptime seit 07.10. ~07:30, Job `stage2_review` läuft nächtlich, Dashboard zeigt bei `news_*` noch `-1`
+- **Nicht deployt:** `050ff32` (Dashboard-Datumsfix), `97fcdb0` (Deadlock-Retry) und der Doku-Commit dieser Session (ohne Laufzeitwirkung)
+- Preis-Feed in Produktion: **SIP** (Log `prices_alpaca`: `feed=sip`, kein IEX-Fallback)
+
+**Reparatur-Skripte (`scripts/repair/`):**
+
+| Skript | Status | Beleg |
+|---|---|---|
+| `deploy_review_fixes.sh` | ✅ gelaufen 05.10. | Session 26, Migrationen 029–031 live |
+| `collectors_refetch_prices.py` | ✅ gelaufen 05.10. | Session 26 (SIP-Refetch), Log `prices_alpaca` 05.10. 11:56 |
+| `features_rebuild.py` | ✅ gelaufen 05.10. | Session 26; `feature_snapshots` ab 2021-10-01 (626k Zeilen) |
+| `form13f_resolve_tickers.py` | ✅ gelaufen (`--apply`, Historie) | 619.780 Zeilen ab 2021-03-31; 13F-Features am letzten Snapshot für 597/647 Ticker gefüllt |
+| `fix_market_date_collision.py` | ✅ gelaufen 06.10. | Session 27 (inkl. Context Packs 02.10./05.10.) |
+| `backfill_short_term_features.py` | ✅ gelaufen 06.10. | Session 28 (621k Zeilen) |
+
+Offen ist kein Reparatur-Skript. **Nicht über die API prüfbar:** ob nach dem 13F-Ticker-Backfill auch die historischen 13F-Feature-Spalten neu berechnet wurden (`features_rebuild.py --apply --skip-ta --skip-clusters`). Prüfung per SQL: `SELECT date_trunc('quarter', snapshot_date) q, count(*) FILTER (WHERE form13f_holder_delta_qoq IS NOT NULL) FROM signals.feature_snapshots GROUP BY 1 ORDER BY 1;`
+
+**Offene manuelle Schritte auf Unraid:**
+1. `97fcdb0` deployen: `cd /mnt/user/appdata/alpaca-broker && git pull`, dann Compose Manager → Stack „Alpaca-Broker“ → Compose Down → Compose Up (nicht zwischen 04:30 und 05:00). Danach prüfen: Dashboard zeigt echte Zeilenzahlen für `news_articles`/`news_sentiment`.
+2. Prüfen, ob `/mnt/user/Workfiles/AlpacaBroker/context_packs/2026-10-05/` existiert (laut Session 27 vom Reparatur-Skript erzeugt). Nur falls nicht: `fix_market_date_collision.py --context-packs 2026-10-05` im Container ausführen (ohne `-u root`).
+3. Optional: SQL-Prüfung der historischen 13F-Features (siehe oben).
+
+**Angefangene/unterbrochene Arbeiten:** keine im Code. K5 (Vorwärtstest Stufe 2) ist deployt und wartet auf `decisions.yaml`-Dateien des Skills – bis 15.10. hat `stage2_review` 0 Dateien eingelesen. F1 (Composite Score) offen, nach den K-Ergebnissen zurückgestellt.
+
+**Bekannte Probleme:**
+- Die Tests `test_store_writes_trades` und `test_store_dedup_counts` (`tests/unit/test_politician_trades.py`) übergeben zwar eine `MagicMock`-Session, `PoliticianTradesCollector.store()` ruft aber `NewTickerOnboarder` auf, der eine **echte DB-Session** öffnet. Nur mit erreichbarer Datenbank lauffähig, nicht isoliert (anders als der Test bei Zeile ~572, der `NewTickerOnboarder` patcht). Dokumentiert, nicht behoben.
+- `short_interest`-Tabelle leer (nur `short_volume` wird gesammelt).
+- **Migrationen 024/025:** beide fügen `feature_snapshots.sector_relative_return_20d`/`sector_relative_momentum` hinzu, 025 ohne Existenzprüfung → `alembic upgrade head` auf einer **leeren** Datenbank scheitert vermutlich an 025. Produktion (bereits auf 035) nicht betroffen. Weitere kleine Abweichungen Migration ↔ ORM sind in [DATABASE.md](DATABASE.md) notiert.
+- `registry.NIGHTLY_UPSTREAM` markiert `prices_alpaca` als kritisch (`True`), `check_upstream()` wertet das Flag aber nicht aus.
+- Dashboard-Datumsbereich von `insider_trades`/`form13f_holdings` zeigt Ereignisdaten, nicht das Retention-Datum.
+- Bekannte, harmlose Warnungen: SEC-Timeouts bei Form 4 (Retry ok), Fundamentals-Plausibilitätsprüfungen.
+
+**Nächster konkreter Schritt:** `97fcdb0` auf Unraid deployen und am Folgetag den Log-Check wiederholen (Nightly Chain, Dashboard `news_*`). Danach die beiden Politician-Tests isolieren (`NewTickerOnboarder` patchen) und `scripts/sprint10_readiness.py` erneut laufen lassen.

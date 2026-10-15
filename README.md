@@ -8,12 +8,12 @@ Build a data-driven research platform that aggregates signals from multiple sour
 
 ## Key Features
 
-- **📊 7 Data Sources:** Alpaca (prices + news), ARK (smart money), SEC EDGAR (insiders + institutions), Senate eFD (politicians), yfinance (fundamentals + ratings + earnings), FinBERT (sentiment)
+- **📊 Data Sources:** Alpaca (prices SIP + news), ARK (smart money), SEC EDGAR (insiders + institutions), Senate eFD (politicians), yfinance (fundamentals, ratings, earnings, estimates, options IV), FRED (macro), Massive API (short volume), FinBERT (sentiment)
 - **🖥️ Dashboard:** FastAPI + React SPA with 7 pages (Dashboard, Universe, Signals, Features, Logs, Settings, Ticker Detail)
-- **📈 674+ Active Tickers:** S&P 500 + Nasdaq 100 + ARK expansions
-- **🗄️ PostgreSQL 18:** Append-only raw data layer + recomputable derived features + feature store
-- **🤖 Automated:** APScheduler with 15 scheduled jobs (9 daily, 4 weekly, 1 monthly, 1 maintenance)
-- **🧠 Feature Pipeline:** Daily ML feature vectors (55 features × 9 signal groups) with target backfill
+- **📈 767 Active Tickers** (Oct 2026): S&P 500 + Nasdaq 100 + ARK holdings + benchmark/sector ETFs, point-in-time universe for features
+- **🗄️ PostgreSQL 18:** raw data layer + recomputable derived features + feature store, rolling 20-quarter retention
+- **🤖 Automated:** APScheduler with 24 jobs (13 daily incl. the nightly chain, 5 weekly, 2 monthly, 4 chain steps)
+- **🧠 Feature Pipeline:** Daily feature vectors (~95 features in 17 groups) with forward-return and barrier-label backfill, daily Context Pack for the analysis skill
 - **📰 News Sentiment:** Alpaca News API + ProsusAI/finbert for headline-based sentiment scoring
 - **🔒 Paper Only:** Hardcoded safety check – **never** live trading
 
@@ -32,9 +32,9 @@ Build a data-driven research platform that aggregates signals from multiple sour
 
 ## Current Status
 
-- **Sprint 8c completed** – News Sentiment Pipeline + UI integration live
+- **Sprint 9.5c** (Candidate Pipeline MVP), Phase 2 – short-term research K1–K4 done (no validated edge yet), stage-2 forward test (K5) running
 - **System running** on Unraid (192.168.1.93:8090)
-- **Next:** Waiting Phase (2–3 months data collection), then Sprint 9 (Exploratory Analysis)
+- **Next:** Sprint 10 (Signal Scoring) planned from mid-December 2026 – see [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## Documentation
 

@@ -5,7 +5,11 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** October 2026 (review fixes: nightly chain, market-date labels, alerting)
+**Last updated:** 15 October 2026 (verified against `scheduler/setup.py` + `scheduler/registry.py`)
+
+**24 registered jobs:** 13 daily (11 upstream jobs, `log_retention`, `nightly_chain`), 5 weekly (Sunday, incl. `data_retention`), 2 monthly, 4 paused chain steps. All times Europe/Berlin.
+
+**Log names:** `collection_log.collector_name` differs from the job id for some jobs (`scheduler/registry.JOB_COLLECTOR_NAMES`), e.g. `price_collector` → `prices_alpaca`, `news_collector` → `news_alpaca`, `fundamentals_collector` → `fundamentals_yf`. The jobs `ark_holdings` and `form4_collector` additionally write the follow-up runs `ark_deltas` and `insider_clusters`.
 
 ---
 
@@ -29,14 +33,17 @@ All collectors label their data with the **last completed NYSE session** (`utils
 
 ## Daily – Nightly Chain (04:30)
 
-`nightly_chain` runs sequentially for the target session `last_completed_session()`:
+`nightly_chain` runs sequentially for the target session `last_completed_session()`. If that session was already processed successfully (weekends/holidays), the run ends as `skipped` (`no new session`).
 
 1. `technical_indicators_computer` (catch-up)
 2. `feature_pipeline` (skipped on non-trading days → status `skipped`)
-3. `target_backfill` (target = `close(d+h) / open(d+1) − 1`)
-4. `context_pack_generator`
+3. `target_backfill` (target = `close(d+h) / open(d+1) − 1` + barrier label; retries up to 3× on PostgreSQL deadlock since `97fcdb0`)
+4. `stage2_review` (reads `decisions.yaml` files, writes `context_packs/stage2_auswertung.md`; see [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md))
+5. `context_pack_generator` (only if `feature_pipeline` ended `success`/`partial`, otherwise `skipped`)
 
-Before starting, the chain waits up to 2 h for upstream collectors that are still running. Inputs without a fresh run (started after 16:00 NY on the target session) are listed in the notes and the chain ends as `partial`. `feature_pipeline`, `target_backfill` and `context_pack_generator` are registered as **paused** jobs (no own schedule); a manual trigger runs a one-shot clone.
+Before starting, the chain waits up to 2 h for upstream collectors (`registry.NIGHTLY_UPSTREAM`) that are still running. Inputs without a fresh run (started after the close of the target session) are listed in the notes and the chain ends as `partial`; `failed` if `feature_pipeline` failed. Steps run without individual alerts – the chain alerts once. `feature_pipeline`, `target_backfill`, `stage2_review` and `context_pack_generator` are registered as **paused** jobs (no own schedule); a manual trigger runs a one-shot clone.
+
+**Do not** run manual scripts that write `feature_snapshots` during the chain (≈ 04:30–05:00).
 
 ## Maintenance
 

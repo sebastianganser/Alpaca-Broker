@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** May 2026
+**Last updated:** October 2026
 
 ---
 
@@ -254,3 +254,27 @@ Pre-registered ([concept §7.4/7.6](2026-10-06_Konzept_Kurzfrist_Kandidaten.md),
 - **Classifier:** regex/sentence rules on EDGAR full-text search hits reach ≈ 90 % precision (40-sample audit). Typical false positives: restated older authorizations in earnings releases ("as previously announced", "In May …"). The first date in the sentence decides staleness.
 - **Technical:** EDGAR FTS (`efts.sec.gov/LATEST/search-index`) caps at 10k hits → monthly windows. `www.sec.gov/Archives` answers HTTP 429 during long download runs (~80 of 4.8k failed) → cache per document and rerun; caching candidate sentences (not verdicts) lets the classifier be re-run without downloads.
 - **Lesson:** Event signals with a known long-horizon effect do not automatically carry over to a short +1 %/−2 % barrier trade. Test the horizon first, and only build collectors/tables after the study passes.
+
+### [2026-09-08] 🛠️ Feature Groups Defined in Three Places Drift Apart
+After migration 028 the new feature groups (macro, breadth, sector, liquidity, short interest, 13F, options IV, estimates) were computed and checked by the readiness script, but the features page still showed 9 groups: `api/routes/features.py` and `api/schemas.py` (`total_possible`) had their own hard-coded group lists (fixed in `4409caf`). **Lesson:** one source of truth for feature groups. Since the October review this is `analysis/feature_groups.group_features(FEATURE_COLUMNS)`, used by the API, `analysis/feature_report.py` and `scripts/sprint10_readiness.py`.
+
+### [2026-09-08] 🛠️ After a Deploy the Browser May Show the Old SPA
+The version label stayed at "Sprint 8" after a rebuild although the new image was running – the browser served the cached `index.html`. A hard reload (Ctrl+F5) fixed it. **Lesson:** check UI changes after a deploy only after a hard reload before debugging the build.
+
+### [2026-10-11] 📊 First Data-Retention Run
+Sunday 2026-10-11 03:00: cutoff `2021-10-01` (Q4 2026 − 20 quarters), 135,084 rows deleted in ~10 s (`prices_daily` 133,954, `macro_series` 943, `technical_indicators` 187). All other tables were already inside the window. The next cutoff move happens on 2027-01-01 (→ 2022-01-01).
+
+### [2026-10-15] ⚠️ Dashboard Date Ranges Are Not Retention Dates
+After the retention run the dashboard still showed `insider_trades` from 2019 and `form13f_holdings` from 2021-03-31. Not a bug: retention prunes these tables by `filing_date`, the dashboard shows `transaction_date` / `report_period` (insider event dates contain bogus years, 13F report periods precede the filing by ~45 days).
+
+### [2026-10-15] 🛠️ Pydantic `date` Fields Reject Datetimes – and a Broad `except` Hides It
+`news_articles` / `news_sentiment` appeared on the dashboard with `row_count = -1`. Cause: `TableStats.min_date/max_date` are `date`, but `published_at` / `scored_at` are timestamps; Pydantic v2 rejects datetimes with a non-zero time for `date` fields, and the per-table `except Exception` turned the validation error into `-1` (fixed in `050ff32` by normalising to `.date()`). **Lesson:** a catch-all that maps errors to a sentinel value needs at least a log line; otherwise type errors look like data problems.
+
+### [2026-10-15] ⚠️ Switching to a Non-Root Container Breaks Writes to Old Host Files
+After the switch to UID/GID `99:100` (2026-10-05) the context pack failed twice with `PermissionError` – existing folders/files on `/mnt/user/Workfiles/AlpacaBroker` had been created by root. Fixed on the host with `chown -R 99:100 /mnt/user/Workfiles/AlpacaBroker`. The matplotlib warning about `/app/.config` in `feature_analysis` had the same cause (fixed by `64089e2`). **Lesson:** when the runtime user changes, migrate ownership of mounted volumes at the same time; never run scripts with `docker exec -u root` (plain `docker exec` already uses `99:100`).
+
+### [2026-10-15] 🛠️ Deadlock Between Target Backfill and a Concurrent Manual Writer
+On 2026-10-05 12:10 `target_backfill` (manually triggered chain) failed with a PostgreSQL deadlock; no other scheduler job ran at that time, so the second writer was a manual script. The next nightly run repaired everything. Since `97fcdb0` the backfill retries on SQLSTATE 40P01. **Lesson:** idempotent batch writers should retry deadlocks; manual repair scripts that write `feature_snapshots` must not overlap with the nightly chain.
+
+### [2026-10-15] 📊 `short_interest` Table Is Empty by Design (for Now)
+`short_interest_collector` only writes `short_volume` (daily short volume via the Massive API). The `short_interest` table (bi-weekly settlement-date short interest, migration 027) exists but is not filled by any collector. The short-interest feature group is built from `short_volume` only.

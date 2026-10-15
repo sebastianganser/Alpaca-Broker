@@ -48,11 +48,11 @@ Critical paths (data fetching, computations, later order execution) are pure Pyt
 
 ## Current Status
 
-**Phase:** 🟡 Sprint 9.5c (Candidate Pipeline MVP) + review fixes (Oct 2026)
-**Current sprint:** Data-integrity fixes from the Oct 2026 code review (migrations 029–031) → rebuild feature store → re-run R1
-**Next step:** Deploy, run repair scripts (`scripts/repair/`), then Phase 2 (R1 feature analysis, F1 composite score)
-**Last updated:** October 2026
-**Deployment:** ✅ Unraid Docker (192.168.1.93:8090)
+**Phase:** 🟡 Sprint 9.5c (Candidate Pipeline MVP), Phase 2 – review fixes deployed, short-term research K1–K4 finished without a usable edge, K5 (stage-2 forward test) running
+**Current sprint:** 9.5c Phase 2 – collect stage-2 decisions (K5), keep data quality stable; F1 composite score open
+**Next step:** Deploy `97fcdb0` on Unraid (deployed is `1583d59`), then isolate the two DB-dependent politician tests; Sprint 10 planned from mid-December 2026 – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 31 (handover)
+**Last updated:** 15 October 2026 (handover to Claude Code)
+**Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `1583d59`, Alembic revision `035`
 
 See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 
@@ -66,14 +66,15 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 | **Backend API** | FastAPI (same process as APScheduler) |
 | **Frontend** | Vite + React SPA (Stitch "Precision Architect" Design) |
 | **ORM** | SQLAlchemy 2.0 |
-| **Migrations** | Alembic |
+| **Migrations** | Alembic (001–035) |
 | **Database** | PostgreSQL 18 (`postgresql18-alpaca`, 192.168.1.93:5435, DB: `broker_data`, schema: `signals`) |
 | **Package managers** | uv (Python), npm (frontend) |
-| **Scheduler** | APScheduler (15 jobs: 9 daily, 4 weekly, 1 monthly, 1 maintenance) |
-| **Price data** | Alpaca Market Data API (IEX feed, multi-symbol batch) |
+| **Scheduler** | APScheduler, 24 jobs (`scheduler/setup.py`): 13 daily (collectors, `log_retention`, `nightly_chain` 04:30), 5 weekly (incl. `data_retention`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps run by `nightly_chain` |
+| **Price data** | Alpaca Market Data API, **SIP feed** (`ALPACA_DATA_FEED`, default `sip`; production logs show `feed=sip`), automatic IEX fallback marks the run `partial` |
 | **News sentiment** | Alpaca News API + ProsusAI/finbert (local CPU inference) |
-| **Universe** | ~674 active tickers (S&P 500 + Nasdaq 100 + ARK + benchmarks, ETFs filtered via blacklist) |
-| **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090) |
+| **Universe** | 767 active tickers (2026-10-15; S&P 500 + Nasdaq 100 + ARK + benchmark/sector ETFs, other ETFs filtered via blacklist); features use the point-in-time universe |
+| **Tests** | 850 collected (`uv run pytest --collect-only -q`, 2026-10-15); 2 politician tests need a real DB (see ROADMAP open points) |
+| **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090, runs as `99:100`) |
 | **Broker (later)** | Alpaca Paper Trading (NEVER live!) |
 | **Version control** | Git, [GitHub](https://github.com/sebastianganser/Alpaca-Broker) |
 

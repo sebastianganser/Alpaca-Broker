@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** September 2026
+**Last updated:** October 2026 (migrations 001–035)
 
 ---
 
@@ -18,12 +18,18 @@ CREATE SCHEMA IF NOT EXISTS signals;
 SET search_path TO signals, public;
 ```
 
+**Conventions**
+
+- The ORM (`src/trading_signals/db/base.py`) sets `MetaData(schema="signals")` with a naming convention (`ix_…`, `uq_…`, `ck_<table>_<name>`, `fk_…`, `pk_<table>`). Constraint names created by hand-written migrations are listed explicitly below.
+- `BIGSERIAL` below = `BigInteger` primary key with `autoincrement=True` in the migration.
+- `TIMESTAMP` = `timestamp without time zone`; `TIMESTAMPTZ` = `timestamp with time zone`. The `TIMESTAMPTZ` columns of `collection_log`, `news_articles`, `news_sentiment`, `ticker_blacklist` and `stage2_reviews` are mapped with the ORM type `TZDateTime`: naive datetimes written by the app are interpreted as Europe/Berlin wall clock, values are read back as naive Europe/Berlin wall clock (migration 031). `insider_trades.acceptance_datetime` and `cusip_map.resolved_at` use plain `DateTime(timezone=True)`.
+
 ---
 
 ## Layer 1: Raw Data (append-only, immutable)
 
 ### `signals.universe`
-Dynamic ticker universe. Every ticker ever discovered through a signal remains here.
+Dynamic ticker universe. Every ticker ever discovered through a signal remains here (tickers are never deleted, only marked inactive).
 
 ```sql
 CREATE TABLE signals.universe (
@@ -40,8 +46,8 @@ CREATE TABLE signals.universe (
   added_by        VARCHAR(50),        -- 'sp500', 'nasdaq100', 'ark_etf', 'manual'
   is_active       BOOLEAN DEFAULT TRUE,
   last_seen       DATE,
-  index_membership VARCHAR(20)[],     -- {sp500, nasdaq100}
-  metadata        JSONB
+  index_membership VARCHAR(20)[],     -- {sp500, nasdaq100} (migration 005)
+  metadata        JSONB               -- ORM attribute: metadata_json
 );
 
 CREATE INDEX idx_universe_active ON signals.universe(is_active);
@@ -53,10 +59,10 @@ Self-learning blacklist for non-equity tickers (ETFs, funds, etc.). Used as O(1)
 ```sql
 CREATE TABLE signals.ticker_blacklist (
   ticker          VARCHAR(20) PRIMARY KEY,
-  reason          VARCHAR(200),         -- e.g. 'quoteType=ETF', 'manual'
-  quote_type      VARCHAR(50),          -- yfinance quoteType (ETF, MUTUALFUND, INDEX, ...)
-  detected_by     VARCHAR(100),         -- Detection source
-  detected_at     TIMESTAMP DEFAULT NOW()
+  reason          VARCHAR(50) NOT NULL,   -- e.g. 'quoteType=ETF', 'manual'
+  quote_type      VARCHAR(20),            -- yfinance quoteType (ETF, MUTUALFUND, INDEX, ...)
+  source          VARCHAR(50),            -- Detection source
+  detected_at     TIMESTAMPTZ DEFAULT NOW()  -- TIMESTAMP until migration 031
 );
 ```
 
@@ -73,13 +79,16 @@ CREATE TABLE signals.prices_daily (
   close           NUMERIC(16,4),
   adj_close       NUMERIC(16,4),      -- = close for Alpaca (adjustment=all)
   volume          BIGINT,
-  source          VARCHAR(50),        -- 'alpaca', 'yfinance'
-  is_extrapolated BOOLEAN DEFAULT FALSE,
+  source          VARCHAR(50) DEFAULT 'yfinance',  -- 'alpaca', 'yfinance'
+  is_extrapolated BOOLEAN DEFAULT FALSE,           -- gap-filled row (not a real bar)
   fetched_at      TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (ticker, trade_date)
 );
 
 CREATE INDEX idx_prices_date ON signals.prices_daily(trade_date);
+-- Partial index (migration 003 only, not declared in the ORM)
+CREATE INDEX idx_prices_extrapolated ON signals.prices_daily(is_extrapolated)
+  WHERE is_extrapolated = TRUE;
 ```
 
 ### `signals.ark_holdings`
@@ -107,7 +116,7 @@ CREATE INDEX idx_ark_date ON signals.ark_holdings(snapshot_date);
 ```
 
 ### `signals.insider_trades`
-SEC Form 4 insider transactions.
+SEC Form 4 insider transactions. One row per transaction (not per reporting owner): joint filings carry the first owner in `insider_name`/`insider_cik`, `owner_count` holds the number of owners and `raw_data['reporting_owners']` lists all of them.
 
 ```sql
 CREATE TABLE signals.insider_trades (
@@ -117,8 +126,14 @@ CREATE TABLE signals.insider_trades (
   cik             VARCHAR(20),           -- SEC Company ID
   insider_name    VARCHAR(200),
   insider_title   VARCHAR(200),
+  insider_cik     VARCHAR(20),           -- migration 029
+  owner_count     SMALLINT,              -- migration 029
   transaction_date DATE,
   filing_date     DATE,
+  acceptance_datetime TIMESTAMPTZ,       -- SEC acceptanceDateTime (migration 029)
+  accession_number VARCHAR(25),          -- migration 029 (back-filled from form4_url for legacy rows)
+  form_type       VARCHAR(10),           -- migration 029
+  row_index       INTEGER,               -- 0-based position in (non)derivativeTable; NULL for legacy rows (029)
   transaction_type VARCHAR(20),          -- 'P' (Purchase), 'S' (Sale), ...
   shares          NUMERIC(20,4),
   price_per_share NUMERIC(16,4),
@@ -127,16 +142,20 @@ CREATE TABLE signals.insider_trades (
   is_derivative   BOOLEAN DEFAULT FALSE, -- True for options/warrants
   form4_url       TEXT,
   raw_data        JSONB,                 -- Complete XML/JSON for audit
-  fetched_at      TIMESTAMP DEFAULT NOW(),
-  UNIQUE (cik, insider_name, transaction_date, transaction_type, shares, price_per_share)
+  fetched_at      TIMESTAMP DEFAULT NOW()
 );
 
 CREATE INDEX idx_insider_ticker_date ON signals.insider_trades(ticker, transaction_date);
 CREATE INDEX idx_insider_filing_date ON signals.insider_trades(filing_date);
+-- Dedup key since migration 029 (replaces UNIQUE uq_insider_trade_dedup
+-- (cik, insider_name, transaction_date, transaction_type, shares, price_per_share))
+CREATE UNIQUE INDEX uq_insider_trade_filing_row
+  ON signals.insider_trades(accession_number, is_derivative, row_index)
+  WHERE accession_number IS NOT NULL;
 ```
 
 ### `signals.form13f_holdings`
-Quarterly institutional holdings (SEC Form 13F).
+Quarterly institutional holdings (SEC Form 13F). Key: one row per (filer, report period, CUSIP, put/call); multiple infotable lines for the same key are summed by the collector. `put_call = 'SH'` marks plain share/principal positions, `'PUT'`/`'CALL'` option positions – consumers counting holders should filter `put_call = 'SH'`.
 
 ```sql
 CREATE TABLE signals.form13f_holdings (
@@ -145,21 +164,43 @@ CREATE TABLE signals.form13f_holdings (
   filer_cik       VARCHAR(20),
   report_period   DATE,                  -- End of quarter
   filing_date     DATE,
-  ticker          VARCHAR(20),
+  ticker          VARCHAR(20),           -- resolved via cusip_map (migration 032)
   cusip           VARCHAR(20),
   shares          NUMERIC(20,4),
-  market_value    NUMERIC(20,2),
-  put_call        VARCHAR(10),
+  market_value    NUMERIC(20,2),         -- always whole US dollars (data fix in migration 029)
+  put_call        VARCHAR(10) NOT NULL DEFAULT 'SH',  -- NOT NULL since migration 029
+  accession_number VARCHAR(25),          -- migration 029 ('legacy' if not derivable for old rows)
+  form_type       VARCHAR(12),           -- migration 029
+  amendment_type  VARCHAR(20),           -- migration 029
   source_url      TEXT,
-  fetched_at      TIMESTAMP DEFAULT NOW()
+  fetched_at      TIMESTAMP DEFAULT NOW(),
+  CONSTRAINT uq_13f_holding_key UNIQUE (filer_cik, report_period, cusip, put_call)
 );
 
 CREATE INDEX idx_13f_ticker ON signals.form13f_holdings(ticker);
+CREATE INDEX idx_13f_ticker_period ON signals.form13f_holdings(ticker, report_period);  -- migration 032
 CREATE INDEX idx_13f_filer_period ON signals.form13f_holdings(filer_cik, report_period);
 ```
 
+### `signals.cusip_map` (Migration 032)
+CUSIP → ticker lookup cache for 13F holdings (13F infotables identify securities only by CUSIP). Filled from local sources (ARK holdings, universe) or the OpenFIGI API; the 13F collector and `scripts/repair/form13f_resolve_tickers.py` fill `form13f_holdings.ticker` from it. Rows with `ticker` NULL are negative results and are retried after `cusip_resolver.NEGATIVE_TTL_DAYS`. Lookup table without a date dimension → not part of the data-retention job.
+
+```sql
+CREATE TABLE signals.cusip_map (
+  cusip           VARCHAR(12) PRIMARY KEY,
+  ticker          VARCHAR(20),            -- NULL = negative lookup result
+  name            VARCHAR(200),
+  exch_code       VARCHAR(10),
+  security_type   VARCHAR(50),
+  source          VARCHAR(20) NOT NULL,   -- 'ark_holdings' | 'universe' | 'openfigi'
+  resolved_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX ix_cusip_map_ticker ON signals.cusip_map(ticker);
+```
+
 ### `signals.politician_trades`
-US politician trades (Senate eFD).
+US politician trades (Senate eFD + House Clerk).
 
 ```sql
 CREATE TABLE signals.politician_trades (
@@ -173,19 +214,20 @@ CREATE TABLE signals.politician_trades (
   disclosure_date DATE,
   transaction_type VARCHAR(20),          -- 'Purchase', 'Sale'
   amount_range    VARCHAR(50),           -- '$1,001 - $15,000' etc.
-  owner           VARCHAR(50),           -- 'Self', 'Spouse', 'Joint', 'Child'
+  owner           VARCHAR(50) NOT NULL DEFAULT 'Self',  -- 'Self', 'Spouse', 'Joint', 'Child' (NOT NULL since 029)
   asset_description TEXT,
   comment         TEXT,
   source_url      TEXT,
   raw_data        JSONB,
-  fetched_at      TIMESTAMP DEFAULT NOW()
+  fetched_at      TIMESTAMP DEFAULT NOW(),
+  -- owner added to the key in migration 029 (identical Self/Spouse trades are distinct)
+  CONSTRAINT uq_politician_trade_dedup UNIQUE (
+    politician_name, ticker, transaction_date, transaction_type, amount_range, owner
+  )
 );
 
 CREATE INDEX idx_politician_ticker ON signals.politician_trades(ticker);
 CREATE INDEX idx_politician_date ON signals.politician_trades(transaction_date);
-CREATE UNIQUE INDEX uq_politician_trade_dedup ON signals.politician_trades(
-  politician_name, ticker, transaction_date, transaction_type, amount_range
-);
 ```
 
 ### `signals.fundamentals_snapshot`
@@ -193,7 +235,7 @@ Fundamental data per ticker, weekly snapshot (Sundays via yfinance).
 
 ```sql
 CREATE TABLE signals.fundamentals_snapshot (
-  ticker          VARCHAR(20) REFERENCES signals.universe(ticker),
+  ticker          VARCHAR(20),           -- no FK to universe (neither migration 009 nor ORM)
   snapshot_date   DATE NOT NULL,
   market_cap      NUMERIC(24,2),
   pe_ratio        NUMERIC(16,4),
@@ -210,8 +252,14 @@ CREATE TABLE signals.fundamentals_snapshot (
   eps_growth_yoy  NUMERIC(10,6),
   debt_to_equity  NUMERIC(16,4),
   current_ratio   NUMERIC(16,4),
-  dividend_yield  NUMERIC(10,6),
+  dividend_yield  NUMERIC(10,6),         -- decimal form (0.0092 = 0.92 %), fixed in migration 013
   beta            NUMERIC(10,4),
+  -- Analyst consensus price targets (migration 016, yfinance analyst_price_targets)
+  target_price_low    NUMERIC(16,4),
+  target_price_mean   NUMERIC(16,4),
+  target_price_median NUMERIC(16,4),
+  target_price_high   NUMERIC(16,4),
+  most_recent_quarter DATE,              -- fiscal quarter end of the TTM figures (migration 029)
   fetched_at      TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (ticker, snapshot_date)
 );
@@ -234,7 +282,7 @@ CREATE TABLE signals.analyst_ratings (
   action          VARCHAR(50),           -- 'up', 'down', 'main', 'init', 'reit'
   raw_data        JSONB,
   fetched_at      TIMESTAMP DEFAULT NOW(),
-  UNIQUE (ticker, firm, rating_date, action)
+  CONSTRAINT uq_analyst_rating_dedup UNIQUE (ticker, firm, rating_date, action)
 );
 
 CREATE INDEX idx_analyst_ticker ON signals.analyst_ratings(ticker);
@@ -242,7 +290,7 @@ CREATE INDEX idx_analyst_rating_date ON signals.analyst_ratings(rating_date);
 ```
 
 ### `signals.earnings_calendar`
-Earnings dates and results.
+Earnings dates and results. Excluded from the data-retention job (historical value).
 
 ```sql
 CREATE TABLE signals.earnings_calendar (
@@ -254,7 +302,9 @@ CREATE TABLE signals.earnings_calendar (
   revenue_estimate NUMERIC(20,2),
   revenue_actual  NUMERIC(20,2),
   surprise_pct    NUMERIC(10,4),
-  fetched_at      TIMESTAMP DEFAULT NOW(),
+  fetched_at      TIMESTAMP DEFAULT NOW(),  -- time of the last insert/update
+  first_seen      TIMESTAMP DEFAULT NOW(),  -- set on insert only (migration 029)
+  last_seen       TIMESTAMP DEFAULT NOW(),  -- bumped on every run still reporting the date (029)
   PRIMARY KEY (ticker, earnings_date)
 );
 ```
@@ -265,9 +315,10 @@ Daily point-in-time snapshot of analyst consensus estimates, EPS revisions, and 
 
 ```sql
 CREATE TABLE signals.estimates_snapshot (
-  id              BIGSERIAL PRIMARY KEY,
+  id              BIGSERIAL PRIMARY KEY,         -- constraint name pk_estimates_snapshot
   ticker          VARCHAR(20) NOT NULL,
-  as_of           DATE NOT NULL,                 -- Point-in-time (fetch date)
+  as_of           DATE NOT NULL,                 -- Point-in-time: last completed NYSE session at fetch time
+                                                 -- (rows written before migration 029 carry the Berlin fetch date)
   period          VARCHAR(10) NOT NULL,           -- '0q', '+1q', '0y', '+1y'
   -- EPS Consensus
   eps_avg         NUMERIC(16,4),
@@ -298,7 +349,7 @@ CREATE TABLE signals.estimates_snapshot (
   source          VARCHAR(50) NOT NULL DEFAULT 'yfinance',
   raw             JSONB,                         -- Complete raw response (future-proofing)
   fetched_at      TIMESTAMP DEFAULT NOW(),
-  UNIQUE (ticker, as_of, period, source)
+  CONSTRAINT uq_estimates_snapshot_dedup UNIQUE (ticker, as_of, period, source)
 );
 
 CREATE INDEX idx_estimates_ticker ON signals.estimates_snapshot(ticker);
@@ -318,14 +369,14 @@ point-in-time universe queries to prevent survivorship bias.
 ```sql
 CREATE TABLE signals.index_membership (
   id              BIGSERIAL PRIMARY KEY,
-  ticker          TEXT NOT NULL,
-  index_name      TEXT NOT NULL,        -- 'sp500', 'nasdaq100'
+  ticker          VARCHAR(20) NOT NULL,
+  index_name      VARCHAR(20) NOT NULL,  -- 'sp500', 'nasdaq100'
   valid_from      DATE NOT NULL,
-  valid_to        DATE,                 -- NULL = currently active
-  reason          TEXT,                 -- 'Delisted', 'Merger', etc.
-  replaced_by     TEXT,                 -- Successor ticker
-  source          TEXT NOT NULL,        -- 'wikipedia', 'github_csv', 'index_sync'
-  UNIQUE (ticker, index_name, valid_from)
+  valid_to        DATE,                  -- NULL = currently active
+  reason          VARCHAR(200),          -- 'Delisted', 'Merger', etc.
+  replaced_by     VARCHAR(20),           -- Successor ticker
+  source          VARCHAR(50) NOT NULL,  -- 'wikipedia', 'github_csv', 'index_sync', 'initial_seed'
+  CONSTRAINT uq_membership_ticker_index_from UNIQUE (ticker, index_name, valid_from)
 );
 
 CREATE INDEX ix_membership_lookup ON signals.index_membership(index_name, valid_from, valid_to);
@@ -338,16 +389,17 @@ Financial news articles from Alpaca News API. Raw layer – collected daily.
 ```sql
 CREATE TABLE signals.news_articles (
   id              BIGSERIAL PRIMARY KEY,
-  article_id      VARCHAR(100) UNIQUE,           -- Source-specific unique ID
+  article_id      VARCHAR(100),                  -- Source-specific unique ID
   headline        TEXT NOT NULL,
   summary         TEXT,
   source          VARCHAR(100),                  -- e.g. 'benzinga', 'reuters'
   author          VARCHAR(200),
-  published_at    TIMESTAMP NOT NULL,
+  published_at    TIMESTAMPTZ NOT NULL,          -- TIMESTAMP until migration 031
   article_url     TEXT,
   symbols         VARCHAR(20)[],                 -- PostgreSQL ARRAY (0..N tickers)
   is_global       BOOLEAN DEFAULT FALSE,         -- True for macro/market news
-  fetched_at      TIMESTAMP DEFAULT NOW()
+  fetched_at      TIMESTAMPTZ DEFAULT NOW(),     -- TIMESTAMP until migration 031
+  CONSTRAINT uq_news_articles_article_id UNIQUE (article_id)
 );
 
 CREATE INDEX idx_news_published ON signals.news_articles(published_at);
@@ -355,33 +407,75 @@ CREATE INDEX idx_news_symbols ON signals.news_articles USING GIN(symbols);
 ```
 
 ### `signals.news_sentiment`
-Sentiment scores per article × ticker × model. Derived from FinBERT (later Haiku).
+Sentiment scores per article × ticker × model. Derived from FinBERT (later Haiku). A multi-ticker article generates one row per mentioned ticker.
 
 ```sql
 CREATE TABLE signals.news_sentiment (
   id              BIGSERIAL PRIMARY KEY,
-  article_id      BIGINT REFERENCES signals.news_articles(id),
+  article_id      BIGINT NOT NULL,
   ticker          VARCHAR(20),                   -- NULL for global articles
   sentiment_label VARCHAR(20) NOT NULL,          -- 'positive', 'negative', 'neutral'
   sentiment_score NUMERIC(6,4) NOT NULL,         -- -1.0 to +1.0
   confidence      NUMERIC(6,4),                  -- Model confidence
   model_version   VARCHAR(50) NOT NULL,          -- e.g. 'finbert-v1'
-  scored_at       TIMESTAMP DEFAULT NOW(),
-  UNIQUE (article_id, ticker, model_version)
+  scored_at       TIMESTAMPTZ DEFAULT NOW(),     -- TIMESTAMP until migration 031
+  -- ON DELETE CASCADE since migration 031 (retention deletes old articles)
+  CONSTRAINT fk_news_sentiment_article_id FOREIGN KEY (article_id)
+    REFERENCES signals.news_articles(id) ON DELETE CASCADE,
+  CONSTRAINT uq_news_sentiment_article_ticker_model UNIQUE (article_id, ticker, model_version)
 );
 
 CREATE INDEX idx_sentiment_ticker_date ON signals.news_sentiment(ticker, scored_at);
 CREATE INDEX idx_sentiment_model ON signals.news_sentiment(model_version);
 ```
 
+### `signals.macro_series` (Migration 024, Sprint 9.5b D1)
+Daily observations of macroeconomic indicators from FRED (DGS2/DGS10, BAMLH0A0HYM2, VIXCLS, DTWEXBGS, T10YIE). `as_of` records the fetch date because FRED revises values retroactively.
+
+```sql
+CREATE TABLE signals.macro_series (
+  id              BIGSERIAL PRIMARY KEY,
+  series_id       VARCHAR(30) NOT NULL,          -- FRED series ID
+  obs_date        DATE NOT NULL,
+  value           NUMERIC(16,6),
+  source          VARCHAR(20) NOT NULL DEFAULT 'fred',
+  as_of           DATE NOT NULL,                 -- when we fetched it
+  fetched_at      TIMESTAMP DEFAULT NOW(),
+  CONSTRAINT uq_macro_series_dedup UNIQUE (series_id, obs_date)
+);
+
+CREATE INDEX idx_macro_series_id ON signals.macro_series(series_id);
+CREATE INDEX idx_macro_obs_date ON signals.macro_series(obs_date);
+```
+
+### `signals.options_iv_snapshot` (Migration 026, Sprint 9.5b D3)
+Daily implied-volatility snapshot per ticker from the Alpaca Options API (IV rank / skew / term-structure features). Historic rows written before migration 029 carry the Berlin fetch date (next calendar day) as `snapshot_date`; they were intentionally not relabelled. New rows use the last completed NYSE session.
+
+```sql
+CREATE TABLE signals.options_iv_snapshot (
+  ticker          VARCHAR(20) NOT NULL,
+  snapshot_date   DATE NOT NULL,
+  atm_iv_30d      NUMERIC(8,4),          -- ATM IV, nearest monthly expiry (annualized)
+  atm_iv_60d      NUMERIC(8,4),          -- ATM IV ~60d expiry
+  skew_25d        NUMERIC(8,4),          -- IV 25-delta put − IV 25-delta call
+  term_slope      NUMERIC(8,4),          -- atm_iv_60d − atm_iv_30d
+  total_oi_call   BIGINT,
+  total_oi_put    BIGINT,
+  put_call_oi     NUMERIC(8,4),          -- Put/Call OI ratio
+  PRIMARY KEY (ticker, snapshot_date)
+);
+
+CREATE INDEX idx_options_iv_ticker_date ON signals.options_iv_snapshot(ticker, snapshot_date);
+```
+
 ---
 
 ### `signals.short_volume` (Sprint 9.5c B5)
-Daily short volume data from FINRA via Massive API (formerly Polygon).
+Daily short volume data from FINRA via Massive API (formerly Polygon). Written by `short_interest_collector` (target date = last completed NYSE session).
 
 ```sql
 CREATE TABLE signals.short_volume (
-  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id              BIGSERIAL PRIMARY KEY,
   ticker          VARCHAR(20) NOT NULL,
   trade_date      DATE NOT NULL,
   short_volume    BIGINT,           -- shares sold short that day
@@ -389,7 +483,7 @@ CREATE TABLE signals.short_volume (
   short_volume_ratio NUMERIC(6,4), -- short_volume / total_volume
   source          VARCHAR(50) DEFAULT 'massive',
   fetched_at      TIMESTAMP DEFAULT NOW(),
-  UNIQUE (ticker, trade_date)
+  CONSTRAINT uq_short_volume_dedup UNIQUE (ticker, trade_date)
 );
 
 CREATE INDEX idx_short_volume_ticker ON signals.short_volume(ticker);
@@ -399,9 +493,12 @@ CREATE INDEX idx_short_volume_date ON signals.short_volume(trade_date);
 ### `signals.short_interest` (Sprint 9.5c B5)
 Bi-monthly FINRA short interest settlement data.
 
+> [!NOTE]
+> The table exists (migration 027) but is **currently not filled**: despite its name, `collectors/short_interest_collector.py` only imports `ShortVolume` and upserts into `short_volume`. No code in `src/` writes to `short_interest`; it is only read by the dashboard (`api/routes/dashboard.py`) and pruned by the data-retention job. The ORM classes `ShortVolume`/`ShortInterest` live in `db/models/short_interest.py` but are not re-exported from `db/models/__init__.py`.
+
 ```sql
 CREATE TABLE signals.short_interest (
-  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id              BIGSERIAL PRIMARY KEY,
   ticker          VARCHAR(20) NOT NULL,
   settlement_date DATE NOT NULL,
   short_interest  BIGINT,           -- total shares short
@@ -409,7 +506,7 @@ CREATE TABLE signals.short_interest (
   days_to_cover   NUMERIC(10,4),
   source          VARCHAR(50) DEFAULT 'massive',
   fetched_at      TIMESTAMP DEFAULT NOW(),
-  UNIQUE (ticker, settlement_date, source)
+  CONSTRAINT uq_short_interest_dedup UNIQUE (ticker, settlement_date, source)
 );
 
 CREATE INDEX idx_short_interest_ticker ON signals.short_interest(ticker);
@@ -420,14 +517,14 @@ CREATE INDEX idx_short_interest_ticker ON signals.short_interest(ticker);
 ## Layer 2: Derived Data (computed, reproducible)
 
 ### `signals.ark_deltas`
-Daily changes in ARK holdings. Only real portfolio movements – `unchanged` positions are not stored.
+Daily changes in ARK holdings. Only real portfolio movements – `unchanged` positions are not stored. Since migration 030, new/closed positions carry signed full-size deltas (`new_position`: `+shares_curr`/`+weight_curr`, `closed`: `−shares_prev`/`−weight_prev`).
 
 ```sql
 CREATE TABLE signals.ark_deltas (
   delta_date      DATE NOT NULL,
   etf_ticker      VARCHAR(10) NOT NULL,
   ticker          VARCHAR(20) NOT NULL,
-  delta_type      VARCHAR(20),            -- 'new_position', 'closed', 'increased', 'decreased'
+  delta_type      VARCHAR(20) NOT NULL,   -- 'new_position', 'closed', 'increased', 'decreased'
   shares_prev     NUMERIC(20,4),
   shares_curr     NUMERIC(20,4),
   shares_delta    NUMERIC(20,4),
@@ -456,17 +553,20 @@ CREATE TABLE signals.insider_clusters (
   total_buy_value NUMERIC(20,2),
   total_sell_value NUMERIC(20,2),
   cluster_score   NUMERIC(10,4),          -- Computed score
+  known_date      DATE,                   -- date the cluster became public (point-in-time), migration 029
   computed_at     TIMESTAMP DEFAULT NOW(),
-  UNIQUE (ticker, cluster_start)           -- Migration 017: UPSERT dedup
+  CONSTRAINT uq_insider_cluster_ticker_start UNIQUE (ticker, cluster_start)  -- Migration 017: UPSERT dedup
 );
+
+CREATE INDEX idx_insider_clusters_ticker ON signals.insider_clusters(ticker);
 ```
 
 ### `signals.technical_indicators`
-Technical indicators per ticker and day.
+Technical indicators per ticker and day. Since migration 030, rows on gap-filled (`is_extrapolated`) price rows are deleted / not computed.
 
 ```sql
 CREATE TABLE signals.technical_indicators (
-  ticker          VARCHAR(20),
+  ticker          VARCHAR(20),            -- ORM declares FK → universe(ticker); migration 012 creates none
   trade_date      DATE,
   sma_20          NUMERIC(16,4),
   sma_50          NUMERIC(16,4),
@@ -484,6 +584,8 @@ CREATE TABLE signals.technical_indicators (
   relative_strength_spy NUMERIC(10,4),
   PRIMARY KEY (ticker, trade_date)
 );
+
+CREATE INDEX idx_technical_indicators_date ON signals.technical_indicators(trade_date);
 ```
 
 ---
@@ -491,9 +593,11 @@ CREATE TABLE signals.technical_indicators (
 ## Layer 3: Analysis (Feature Store + Backtests)
 
 ### `signals.feature_snapshots` ⭐
-**The heart of the project.** Daily feature vector per ticker, aggregated from all raw and derived data layers. This table serves as training data for ML models. Wide table design (~83 columns) avoids JOINs during training.
+**The heart of the project.** Daily feature vector per ticker, aggregated from all raw and derived data layers. This table serves as training data for ML models. Wide table design avoids JOINs during training: **106 columns** = 2 key + 95 features + 5 return targets + 2 trade labels + 2 metadata columns (`FEATURE_COLUMNS` / `TARGET_COLUMNS` / `LABEL_COLUMNS` / `META_COLUMNS` in `db/models/features.py`).
 
 > **Design:** All feature columns are nullable. Features self-activate when sufficient data exists. No imputation at the feature store level — the ML stage decides how to handle NULLs.
+
+> **NYSE sessions only:** migration 030 deleted rows on weekends and exchange holidays (weekdays without a real SPY bar inside SPY's price history).
 
 ```sql
 CREATE TABLE signals.feature_snapshots (
@@ -526,6 +630,8 @@ CREATE TABLE signals.feature_snapshots (
   cluster_count_60d INTEGER,              -- Number of clusters in last 60 days
   cluster_score_sum_60d NUMERIC(10,4),    -- Sum of cluster scores in last 60 days
   days_since_last_cluster INTEGER,        -- Calendar days since most recent cluster_end
+  insider_buy_ratio_30d NUMERIC(6,4),     -- Sprint 9.5b E2 (migration 024)
+  insider_buy_ratio_90d NUMERIC(6,4),     -- Sprint 9.5b E2 (migration 024)
   
   -- ═══ Analyst Features (point-in-time) ═══
   analyst_rating_score NUMERIC(10,4),     -- Consensus score (1=sell, 5=buy)
@@ -549,6 +655,8 @@ CREATE TABLE signals.feature_snapshots (
   -- ═══ 13F Features ═══
   form13f_top_holder_count INTEGER,       -- How many top-20 filers hold this ticker
   form13f_new_positions_count INTEGER,    -- New positions in latest reporting period
+  form13f_exited_positions_count INTEGER, -- Sprint 9.5b E1 (migration 024)
+  form13f_holder_delta_qoq NUMERIC(10,4), -- Sprint 9.5b E1 (migration 024)
   
   -- ═══ Fundamentals (point-in-time) ═══
   pe_ratio NUMERIC(16,4),
@@ -574,36 +682,107 @@ CREATE TABLE signals.feature_snapshots (
   earnings_days_until INTEGER,            -- Days until next earnings call
   consecutive_beats INTEGER,             -- Consecutive quarters EPS > estimate
   surprise_trend_3q NUMERIC(10,4),       -- Avg surprise_pct of last 3 quarters
+  sue_last NUMERIC(10,4),                -- Sprint 9.5b B2 (migration 024)
+  days_since_last_earnings INTEGER,      -- Sprint 9.5b B2 (migration 024)
   
-  -- ═══ Sentiment Features (Sprint 8c) ═══
-  sentiment_avg_7d NUMERIC(10,4),        -- Avg sentiment score (7-day rolling)
-  sentiment_avg_30d NUMERIC(10,4),       -- Avg sentiment score (30-day rolling)
-  sentiment_momentum NUMERIC(10,4),      -- 7d avg - 30d avg (trend indicator)
+  -- ═══ Sentiment Features (Sprint 8c, migration 020) ═══
+  sentiment_avg_7d NUMERIC(6,4),         -- Avg sentiment score (7-day rolling)
+  sentiment_avg_30d NUMERIC(6,4),        -- Avg sentiment score (30-day rolling)
+  sentiment_momentum NUMERIC(6,4),       -- 7d avg - 30d avg (trend indicator)
   sentiment_neg_count_7d INTEGER,        -- Negative articles in last 7 days
   sentiment_article_count_7d INTEGER,    -- Total articles in last 7 days
-  market_sentiment_7d NUMERIC(10,4),     -- Global market sentiment (no ticker)
+  market_sentiment_7d NUMERIC(6,4),      -- Global market sentiment (no ticker)
+  news_volume_ratio_7d NUMERIC(10,4),    -- Sprint 9.5b E3 (migration 024)
+  
+  -- ═══ Liquidity Features (Sprint 9.5b E4, migration 024) ═══
+  dollar_volume_20d NUMERIC(20,0),
+  amihud_illiquidity_20d NUMERIC(16,6),
+  
+  -- ═══ Macro Features (market-wide, Sprint 9.5b D1, migration 024) ═══
+  macro_yield_spread NUMERIC(10,4),
+  macro_vix NUMERIC(10,2),
+  macro_vix_regime INTEGER,
+  macro_hy_spread NUMERIC(10,4),
+  macro_dollar_index NUMERIC(10,2),
+  macro_inflation_expectation NUMERIC(10,4),
+  
+  -- ═══ Market Breadth (Sprint 9.5b D2, migration 024) ═══
+  breadth_advance_decline NUMERIC(6,4),
+  breadth_pct_above_sma50 NUMERIC(6,4),
+  
+  -- ═══ Sector-Relative (Sprint 9.5b B4, migrations 024/025) ═══
+  sector_relative_return_20d NUMERIC(10,6),
+  sector_relative_momentum NUMERIC(10,6),
+  
+  -- ═══ Short Volume Features (Sprint 9.5c B5, migration 027) ═══
+  short_volume_ratio_5d NUMERIC(10,4),
+  short_volume_ratio_20d NUMERIC(10,4),
+  short_volume_change_20d NUMERIC(10,4),
+  
+  -- ═══ Options IV Features (migration 028, from options_iv_snapshot) ═══
+  options_iv_atm_30d NUMERIC(8,4),
+  options_iv_skew_25d NUMERIC(8,4),
+  options_iv_term_slope NUMERIC(8,4),
+  options_iv_put_call_oi NUMERIC(8,4),
+  
+  -- ═══ Estimates Features (migration 028, from estimates_snapshot) ═══
+  eps_revision_pct_30d NUMERIC(10,6),
+  eps_revision_pct_90d NUMERIC(10,6),
+  revenue_revision_pct_30d NUMERIC(10,6),
+  eps_revisions_net_7d INTEGER,
+  eps_revisions_net_30d INTEGER,
   
   -- ═══ SHORT-TERM PRICE FEATURES (migration 034, derived/short_term_features.py) ═══
   st_return_1d, st_return_5d, st_gap, st_close_location, st_dist_52w_high,
   st_rsi_2, st_bollinger_pctb, st_signed_volume_shock,
-  st_earnings_reaction NUMERIC(12,6),    -- definitions: concept 2026-10-06 §7.1
+  st_earnings_reaction NUMERIC(12,6),    -- all nine NUMERIC(12,6); definitions: concept 2026-10-06 §7.1
 
   -- ═══ TARGET VARIABLES (backfilled retrospectively) ═══
-  return_1d NUMERIC(10,6),               -- 1-day forward return
-  return_5d NUMERIC(10,6),               -- 5-day forward return
-  return_20d NUMERIC(10,6),              -- 20-day forward return
-  return_60d NUMERIC(10,6),              -- 60-day forward return
+  -- Definition since migration 030 (FEATURE_VERSION >= 2026.10-1):
+  --   return_h = close(d+h) / open(d+1) - 1 on the NYSE calendar
+  -- (migration 030 reset all old values to NULL; target_backfill recomputes them)
+  return_1d NUMERIC(10,6),               -- 1-session forward return
+  return_5d NUMERIC(10,6),               -- 5-session forward return
+  return_20d NUMERIC(10,6),              -- 20-session forward return
+  return_60d NUMERIC(10,6),              -- 60-session forward return
   -- Barrier trade label (migration 033): entry open d+1, TP +1 % / SL -2 % / max 14 sessions, net of 0.05 % costs
   return_barrier_14d NUMERIC(10,6),      -- net trade return (model target of the feature analysis)
   barrier_outcome SMALLINT,              -- 1 = take profit, -1 = stop, 0 = time stop
   barrier_ambiguous BOOLEAN,             -- TP and SL touched on the same day (resolved via OHLC rule)
   
+  -- ═══ Metadata ═══
   computed_at TIMESTAMP DEFAULT NOW(),
+  feature_version VARCHAR(20),           -- derived.feature_pipeline.FEATURE_VERSION (migration 030);
+                                         -- NULL = computed before 2026.10-1
   PRIMARY KEY (snapshot_date, ticker)
 );
 
 CREATE INDEX idx_features_date ON signals.feature_snapshots(snapshot_date);
 CREATE INDEX idx_features_ticker ON signals.feature_snapshots(ticker);
+```
+
+### `signals.analysis_reports` (Migration 021)
+Monthly feature-analysis results (Spearman correlations, Random-Forest and LASSO importance, hypothesis tests, consensus ranking) plus the HTML report served by the API.
+
+```sql
+CREATE TABLE signals.analysis_reports (
+  id                       SERIAL PRIMARY KEY,   -- Integer autoincrement
+  report_date              DATE NOT NULL UNIQUE,
+  snapshot_count           INTEGER NOT NULL,
+  ticker_count             INTEGER NOT NULL,
+  date_range_start         DATE NOT NULL,
+  date_range_end           DATE NOT NULL,
+  feature_correlations     JSONB,     -- {feature: {return_1d: {rho, pvalue}, ...}}
+  feature_importance_rf    JSONB,     -- {feature: {importance, std}}
+  feature_importance_lasso JSONB,     -- {feature: coefficient}
+  hypothesis_results       JSONB,     -- {H1: {verdict, pvalue, effect_size, detail}, ...}
+  consensus_features       JSONB,     -- [{feature, spearman_rank, rf_rank, lasso_rank}, ...]
+  html_report              TEXT,
+  computation_time_seconds DOUBLE PRECISION,
+  computed_at              TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_analysis_reports_date ON signals.analysis_reports(report_date);
 ```
 
 ### `signals.stage2_reviews` / `signals.stage2_decisions` (Migration 035)
@@ -626,77 +805,135 @@ CREATE TABLE signals.stage2_decisions (
   id            BIGSERIAL PRIMARY KEY,
   session_date  DATE NOT NULL REFERENCES signals.stage2_reviews(session_date) ON DELETE CASCADE,
   ticker        VARCHAR(20) NOT NULL,
-  action        VARCHAR(10) NOT NULL CHECK (action IN ('buy', 'no_entry')),
+  action        VARCHAR(10) NOT NULL,
   pack_rank     SMALLINT,                   -- NN of NN_TICKER.md, NULL if not in the pack
   reason        TEXT,
   limit_price   NUMERIC(12,4),              -- informational only
   target_pct    NUMERIC(8,4),               -- informational only
   stop_pct      NUMERIC(8,4),               -- informational only
-  UNIQUE (session_date, ticker)
+  CONSTRAINT ck_stage2_decisions_action CHECK (action IN ('buy', 'no_entry')),
+  CONSTRAINT uq_stage2_session_ticker UNIQUE (session_date, ticker)
 );
 ```
 
 A changed `decisions.yaml` replaces the stored day (review + decisions); its new `file_mtime` decides `on_time`.
 
 ### `signals.collection_log`
-Audit log for all collector runs.
+Audit log for all collector runs (one row per run).
 
 ```sql
 CREATE TABLE signals.collection_log (
   id              BIGSERIAL PRIMARY KEY,
   collector_name  VARCHAR(100),
-  started_at      TIMESTAMP,
-  finished_at     TIMESTAMP,
-  status          VARCHAR(20),            -- 'success', 'partial', 'failed'
+  started_at      TIMESTAMPTZ,            -- TIMESTAMP until migration 031 (old values = Berlin wall clock)
+  finished_at     TIMESTAMPTZ,            -- TIMESTAMP until migration 031
+  status          VARCHAR(20),            -- 'success', 'partial', 'failed' (see utils/job_status.py)
   records_fetched INTEGER,
   records_written INTEGER,
+  gaps_detected   INTEGER DEFAULT 0,
+  gaps_repaired   INTEGER DEFAULT 0,
+  gaps_extrapolated INTEGER DEFAULT 0,
   errors          JSONB,
-  log_lines       JSONB,                  -- Captured WARNING/ERROR + INFO lines
+  log_lines       JSONB,                  -- Captured WARNING/ERROR + INFO lines (migration 014)
   notes           TEXT
 );
+
+-- Migration 031 (dashboard / health / retention look-ups)
+CREATE INDEX ix_collection_log_collector_started ON signals.collection_log(collector_name, started_at DESC);
+CREATE INDEX ix_collection_log_started_at ON signals.collection_log(started_at);
 ```
+
+---
+
+## Data Retention
+
+Decision 2026-10-05: the system keeps exactly the last **20 calendar quarters** (5 years; `DATA_RETENTION_QUARTERS` in `src/trading_signals/utils/retention.py`). The cutoff is the first day of the quarter 20 quarters back (`quarter_cutoff()`, e.g. today 2026-09-22 → 2021-07-01); rows strictly older than the cutoff are deleted. Collectors and backfills must not store data older than `data_start_date()` (= the same cutoff).
+
+**`data_retention` job** – weekly, Sunday 03:00 Europe/Berlin (`scheduler/setup.py`). `retention_statements()` in `src/trading_signals/scheduler/jobs.py` issues `DELETE … WHERE <column> < cutoff` per table; each table runs in its own savepoint + commit, so one failing table does not undo the others (job status `partial`/`failed`).
+
+| Table | Date column used |
+|---|---|
+| `news_sentiment` | via its article: `article_id IN (SELECT id FROM news_articles WHERE published_at < cutoff)` (runs first) |
+| `news_articles` | `published_at` (FK `ON DELETE CASCADE` from `news_sentiment`, migration 031) |
+| `prices_daily` | `trade_date` |
+| `technical_indicators` | `trade_date` |
+| `insider_trades` | `filing_date` (not `transaction_date`, which contains bogus years) |
+| `insider_clusters` | `cluster_start` |
+| `analyst_ratings` | `rating_date` |
+| `ark_holdings` | `snapshot_date` |
+| `ark_deltas` | `delta_date` |
+| `fundamentals_snapshot` | `snapshot_date` |
+| `form13f_holdings` | `filing_date` |
+| `politician_trades` | `disclosure_date` |
+| `feature_snapshots` | `snapshot_date` |
+| `options_iv_snapshot` | `snapshot_date` |
+| `estimates_snapshot` | `as_of` |
+| `short_volume` | `trade_date` |
+| `short_interest` | `settlement_date` |
+| `macro_series` | `obs_date` |
+| `analysis_reports` | `report_date` |
+
+**Not covered by `data_retention`:**
+
+- `earnings_calendar` – excluded on purpose (historical value).
+- `collection_log` – own **`log_retention`** job, daily 03:30 Europe/Berlin: deletes rows with `started_at` older than 90 days (`LOG_RETENTION_DAYS`) and marks orphaned running rows as failed.
+- `universe`, `ticker_blacklist`, `index_membership` – excluded (reference data).
+- `cusip_map` – lookup table without a date dimension.
+- `stage2_reviews`, `stage2_decisions` – not listed in `retention_statements()` (no retention).
+
+> [!NOTE]
+> Rows with a NULL value in the retention date column (e.g. `insider_trades.filing_date IS NULL`) are never matched by `< cutoff` and therefore never deleted by this job.
 
 ---
 
 ## Migrations
 
-Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–035.
+Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–035 (linear chain, head = 035).
 
 | Migration | Description |
 |---|---|
 | 001 | Schema `signals` |
-| 002 | Table `universe` |
-| 003 | Tables `prices_daily`, `collection_log` |
-| 004 | Table `ark_holdings` |
-| 005 | Table `ark_deltas` |
-| 006 | Tables `insider_trades`, `insider_clusters` |
-| 007 | Table `form13f_holdings` |
-| 008 | Table `politician_trades` |
+| 002 | Table `universe` (+ `idx_universe_active`) |
+| 003 | Tables `prices_daily` (FK → `universe`, partial index `idx_prices_extrapolated`) and `collection_log` (incl. `gaps_*` counters) |
+| 004 | Tables `ark_holdings` and `ark_deltas` |
+| 005 | `universe.index_membership` `VARCHAR(20)[]` column |
+| 006 | Tables `insider_trades` (unique `uq_insider_trade_dedup`) and `insider_clusters` |
+| 007 | Table `form13f_holdings` (unique `uq_13f_holding_dedup` on filer_cik, report_period, cusip) |
+| 008 | Table `politician_trades` (unique `uq_politician_trade_dedup`) |
 | 009 | Table `fundamentals_snapshot` |
-| 010 | Table `analyst_ratings` |
+| 010 | Table `analyst_ratings` (unique `uq_analyst_rating_dedup`) |
 | 011 | Table `earnings_calendar` |
-| 012 | Table `technical_indicators` |
-| 013 | Dividend yield normalization (fix /100) |
+| 012 | Table `technical_indicators` (+ `idx_technical_indicators_date`) |
+| 013 | Data fix: `fundamentals_snapshot.dividend_yield` values > 0.25 divided by 100 |
 | 014 | `collection_log.log_lines` JSONB column |
 | 015 | Table `ticker_blacklist` |
-| 016 | `universe.index_membership` array |
-| 017 | `insider_clusters` unique constraint + dedup |
-| 018 | Table `feature_snapshots` (Sprint 8) |
-| 019 | Tables `news_articles` + `news_sentiment` (Sprint 8c) |
-| 020 | Add 6 sentiment columns to `feature_snapshots` (Sprint 8c) |
+| 016 | `fundamentals_snapshot.target_price_low/mean/median/high` (analyst consensus price targets) |
+| 017 | `insider_clusters`: duplicates removed (keep max id), unique `uq_insider_cluster_ticker_start` (ticker, cluster_start) |
+| 018 | Table `feature_snapshots` (Sprint 8: ARK, insider, analyst, politician, 13F, fundamentals, technical, earnings features + `return_1d/5d/20d/60d`) |
+| 019 | Tables `news_articles` (GIN index on `symbols`) + `news_sentiment` (FK `fk_news_sentiment_article_id`) (Sprint 8c) |
+| 020 | 6 sentiment columns on `feature_snapshots` (Sprint 8c) |
 | 021 | Table `analysis_reports` (monthly feature analysis) |
-| 022 | Table `estimates_snapshot` |
-| 023 | Table `index_membership` |
-| 024 | Table `macro_series` |
-| 025 | Sector-relative feature columns (Sprint 9.5b B4) |
+| 022 | Table `estimates_snapshot` (Sprint 9.5a) |
+| 023 | Table `index_membership` (Sprint 9.5a A1, survivorship bias) |
+| 024 | Table `macro_series` (FRED) + 19 `feature_snapshots` columns: `macro_*` (6), `sue_last`, `days_since_last_earnings`, `news_volume_ratio_7d`, `dollar_volume_20d`, `amihud_illiquidity_20d`, `insider_buy_ratio_30d/90d`, `form13f_exited_positions_count`, `form13f_holder_delta_qoq`, `breadth_*` (2), `sector_relative_return_20d`, `sector_relative_momentum` |
+| 025 | Adds `sector_relative_return_20d`, `sector_relative_momentum` to `feature_snapshots` (Sprint 9.5b B4) – same two columns as in 024, see note below |
 | 026 | Table `options_iv_snapshot` (Sprint 9.5b D3) |
-| 027 | Short-interest tables + feature columns (Sprint 9.5c B5) |
-| 028 | Options-IV and estimates features in `feature_snapshots` |
-| 029 | Collector data-integrity fixes (13F, Form 4, insider clusters, alt-data keys) |
-| 030 | Feature-store integrity (derived/ML layer) |
-| 031 | Ops integrity (timestamptz for logs/news, cascade FK, `collection_log` indexes) |
-| 032 | Table `cusip_map` (CUSIP → ticker cache for 13F) |
+| 027 | Tables `short_volume` + `short_interest`; `feature_snapshots.short_volume_ratio_5d/20d`, `short_volume_change_20d` (Sprint 9.5c B5) |
+| 028 | `feature_snapshots`: options-IV features `options_iv_atm_30d/skew_25d/term_slope/put_call_oi` and estimates features `eps_revision_pct_30d/90d`, `revenue_revision_pct_30d`, `eps_revisions_net_7d/30d` |
+| 029 | Collector data integrity: `form13f_holdings` + `accession_number/form_type/amendment_type`, market_value ÷1000 for filings ≥ 2023-01-03, `put_call` NOT NULL DEFAULT 'SH', unique key → `uq_13f_holding_key` (+ put_call); `insider_trades` + `accession_number/form_type/row_index/acceptance_datetime/insider_cik/owner_count`, exact duplicates removed, `uq_insider_trade_dedup` → partial unique index `uq_insider_trade_filing_row`; `insider_clusters.known_date`; `politician_trades.owner` normalised, NOT NULL DEFAULT 'Self', added to `uq_politician_trade_dedup`; `earnings_calendar.first_seen/last_seen`; `fundamentals_snapshot.most_recent_quarter` |
+| 030 | Feature-store integrity: `feature_snapshots.feature_version`; rows on weekends/exchange holidays deleted; `return_*` targets reset to NULL (new definition close(d+h)/open(d+1) − 1); `technical_indicators` rows on extrapolated prices deleted; signed full-size `ark_deltas` for new/closed positions |
+| 031 | Ops integrity: `collection_log.started_at/finished_at`, `news_articles.published_at/fetched_at`, `news_sentiment.scored_at`, `ticker_blacklist.detected_at` → `timestamptz`; `fk_news_sentiment_article_id` → `ON DELETE CASCADE`; indexes `ix_collection_log_collector_started`, `ix_collection_log_started_at` |
+| 032 | Table `cusip_map` (CUSIP → ticker cache for 13F) + index `idx_13f_ticker_period` on `form13f_holdings(ticker, report_period)` |
 | 033 | Barrier trade label on `feature_snapshots`: `return_barrier_14d`, `barrier_outcome`, `barrier_ambiguous` |
-| 034 | Nine short-term price features `st_*` on `feature_snapshots` (concept 2026-10-06 §7.1) |
-| 035 | Tables `stage2_reviews` + `stage2_decisions` (stage-2 forward test, concept 2026-10-06 §7.7) |
+| 034 | Nine short-term price features `st_*` (NUMERIC(12,6)) on `feature_snapshots` (concept 2026-10-06 §7.1) |
+| 035 | Tables `stage2_reviews` + `stage2_decisions` (FK `ON DELETE CASCADE`, check `ck_stage2_decisions_action`, unique `uq_stage2_session_ticker`; stage-2 forward test, concept 2026-10-06 §7.7) |
 
+> [!WARNING]
+> Migration 024 already adds `sector_relative_return_20d` and `sector_relative_momentum` to `feature_snapshots`, and migration 025 adds the same two columns again without an existence check. On an empty database, `alembic upgrade head` would therefore fail at 025 with a duplicate-column error, unless the migration files are adjusted. Databases that were already at 025 or later are not affected.
+
+**Schema differences between migrations and ORM** (no `metadata.create_all` in `src/` or `scripts/` – the live schema is defined by the migrations):
+
+- `technical_indicators.ticker`: the ORM declares `ForeignKey("signals.universe.ticker")`; migration 012 creates no FK.
+- `prices_daily`: partial index `idx_prices_extrapolated` exists only in migration 003, not in the ORM.
+- `collection_log`: migration 031 creates `ix_collection_log_collector_started` on `(collector_name, started_at DESC)`; the ORM declares it without `DESC`.
+- `collection_log.gaps_*`, `universe.is_active`, `prices_daily.is_extrapolated/source`, `insider_trades.is_derivative`, `ark_holdings.source`, `short_volume.source`, `short_interest.source`: server defaults come from the migrations; the ORM only sets Python-side defaults.

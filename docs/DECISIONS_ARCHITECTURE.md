@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_DATA.md](DECISIONS_DATA.md) · [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md)
 
-**Last updated:** May 2026
+**Last updated:** October 2026
 
 ---
 
@@ -147,6 +147,44 @@
 ### [2026-04-16] TA Job: Observability via CollectorLogCapture
 
 **Decision:** Integrated into existing CollectorLogCapture pattern. All jobs use same observability.
+
+---
+
+### [2026-05-13] Feature Coverage Endpoint: Latest Snapshot Day Only
+
+**Decision:** `GET /features/coverage` aggregates only the latest `snapshot_date` (not the history) to keep the ticker × feature-group matrix cheap. *(From the archived Sprint 8b plan, `docs/archive/implementation_plan2.md`.)*
+
+---
+
+## Review 2026-10-05 and Follow-ups (Operations)
+
+### [2026-10-05] Nightly Chain Instead of Fixed-Time Derived Jobs
+
+**Context:** Feature pipeline, target backfill and context pack ran at fixed times and could start before upstream collectors had finished (or on the wrong date label).
+**Decision:** One `nightly_chain` job (04:30 Europe/Berlin) runs TA catch-up → `feature_pipeline` → `target_backfill` → `stage2_review` → `context_pack_generator` for the **last completed NYSE session**. It waits for running upstream collectors (`scheduler/registry.NIGHTLY_UPSTREAM`; prices are critical). The chain steps stay registered as **paused** jobs so they remain visible and manually triggerable. Job definitions live in `scheduler/setup.py`, job ↔ collector names in `scheduler/registry.py`.
+
+### [2026-10-05] Market-Session Date Labels
+
+**Decision:** All collectors and derived jobs label data with `utils/market_calendar.last_completed_session()` instead of the Berlin calendar date. Context-pack folders are named after the market session, not after the run date.
+
+### [2026-10-05] Non-Root Container (UID 99 / GID 100)
+
+**Decision:** The runtime image runs as `99:100` (Unraid `nobody:users`), matching the ownership of `/mnt/user/Workfiles`. `/app` is owned by the app user (`64089e2`).
+**Consequence:** The host directory `/mnt/user/Workfiles/AlpacaBroker` must be owned by `99:100`. Files created by `docker exec -u root …` cannot be overwritten later by the app (cause of the context-pack `PermissionError` on 2026-10-05/06). Plain `docker exec` already runs as `99:100`.
+
+### [2026-10-05] Write Protection for Mutating Endpoints
+
+**Decision:** `POST` endpoints under `/ops/*` and `/analysis/*` depend on `api/deps.require_write_access`: header `X-API-Key` must match `API_KEY` if configured, otherwise at least `X-Requested-With` must be present (CSRF guard). The UI stores the key under *Einstellungen*.
+
+### [2026-10-05] Alerting and Startup Catch-up
+
+**Decision:** `partial`/`failed` runs and APScheduler error/missed events are pushed to `ALERT_WEBHOOK_URL` (ntfy-compatible, optional; `utils/alerting.py`). Because the job store is in-memory, `registry.CATCHUP_JOBS` re-runs `price_collector`, `estimates_collector` and `nightly_chain` shortly after a restart if their last scheduled run was missed.
+
+### [2026-10-15] Target Backfill Retries on Deadlock
+
+**Context:** On 2026-10-05 a manually triggered chain run hit a PostgreSQL deadlock (SQLSTATE 40P01) against an untracked concurrent writer on `feature_snapshots`.
+**Decision:** `_target_backfill_body` retries up to 3 times (5 s / 15 s backoff) on 40P01 only (`97fcdb0`). Safe because `backfill_all` only processes rows whose targets are still NULL.
+**Operational rule:** Do not start manual scripts that write `feature_snapshots` during the nightly chain (≈ 04:30–05:00).
 
 ---
 

@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) · [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md)
 
-**Last updated:** May 2026
+**Last updated:** October 2026
 
 ---
 
@@ -347,4 +347,32 @@
 - **Coverage:** What percentage of active universe tickers have data in each table?
 
 **Rationale:** Row counts alone hide distribution problems. A single ticker with 500 trades looks healthy in aggregate but masks 640 tickers with zero trades. Coverage + depth catches both volume and distribution gaps.
+
+---
+
+### [2026-09-22] Global Data Retention: 20 Calendar Quarters (≈ 5 Years), Quarter-Based Cutoff
+
+**Context:** The warehouse had grown to ~2.7 M rows; some tables reached back further than 5 years (insider trades to 2019, prices/TA to late 2020, earnings calendar to 1999). Sebastian wanted one global maximum data age instead of per-table rules.
+
+**Decision (Sebastian, 2026-09-22, commit `a2978cf`):**
+- Keep at most **20 calendar quarters**. The cutoff is the **start of the quarter** that lies 20 quarters back (`utils/retention.quarter_cutoff()`), not "today − 5 years". Data older than the cutoff is deleted when a new quarter starts (the weekly job, Sun 03:00, picks up the moved cutoff).
+- **`earnings_calendar` is excluded**: small (~19k rows over 27 years) and historically valuable (earnings history per ticker).
+- `collection_log` keeps its own 90-day `log_retention`.
+
+**Refinement (Code review, 2026-10-05):** Retention became the single source of truth for every start date: `data_start_date()` replaces the former fixed `DATA_START_DATE = 2021-01-01`; backfills must never re-collect data older than the cutoff; **no database backups** are kept (see CLAUDE.md, principle 2). Each table is deleted in its own savepoint; insider trades and 13F holdings are pruned by `filing_date` (their event dates contain bogus years), politician trades by `disclosure_date`, news sentiment via its article.
+
+**Consequence:** The dashboard shows `insider_trades.transaction_date` / `form13f_holdings.report_period` as date range, so these tables can legitimately display dates older than the cutoff.
+
+**Supersedes:** [2026-05-02] Universal DATA_START_DATE.
+
+---
+
+### [2026-10-01] Sprint 10 Readiness: Realistic Thresholds for Sparse Signal Groups
+
+**Context:** `scripts/sprint10_readiness.py` failed the feature-coverage check for ARK (7.1 % vs. 15 %), politician (8.5 % vs. 20 %) and 13F (0 % vs. 10 %). These groups are structurally sparse: ARK holds only a few dozen of ~750 universe tickers, few tickers are traded by senators, 13F is quarterly with ~45-day lag.
+
+**Decision (commit `a008047`):** Thresholds lowered to ARK 3 %, politician 5 %, 13F 5 %. Also fixed: the FRED maturity check queried the non-existent table `fred_observations` (correct: `macro_series`).
+
+**Result 2026-10-01:** 26/30 checks passed. Remaining failures were time-dependent (total snapshots, options IV / short volume / estimates history) plus 13F (0 %, fixed later by the CUSIP→ticker resolver, 2026-10-05) and ranking stability across monthly analysis reports (40 % top-10 overlap).
+
 
