@@ -11,6 +11,7 @@ are cached in-process for ``STATS_TTL_SECONDS``.
 
 import threading
 import time
+from datetime import datetime
 from collections.abc import Callable
 from typing import Any
 
@@ -191,8 +192,12 @@ def _compute_table_stats(db: Session) -> list[TableStats]:
                             func.min(date_col), func.max(date_col)
                         ).first()
                         if result:
-                            min_date = result[0]
-                            max_date = result[1]
+                            # DateTime columns (news_*) → date; Pydantic rejects
+                            # datetimes with non-zero time for a `date` field.
+                            min_date, max_date = (
+                                v.date() if isinstance(v, datetime) else v
+                                for v in (result[0], result[1])
+                            )
 
             table_stats.append(
                 TableStats(
