@@ -429,7 +429,8 @@ class TestPoliticianTradesCollector:
             }
         ]
 
-        fetched, written = collector.store(session, data)
+        with patch("trading_signals.universe.onboarder.NewTickerOnboarder"):
+            fetched, written = collector.store(session, data)
 
         assert fetched == 1
         assert written == 1
@@ -462,7 +463,8 @@ class TestPoliticianTradesCollector:
             }
         ]
 
-        fetched, written = collector.store(session, data)
+        with patch("trading_signals.universe.onboarder.NewTickerOnboarder"):
+            fetched, written = collector.store(session, data)
         assert fetched == 1
         assert written == 0
 
