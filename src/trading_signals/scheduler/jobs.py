@@ -360,12 +360,42 @@ def _feature_pipeline_body(target_date: date) -> JobOutcome:
     return JobOutcome(records_written=written, notes=notes)
 
 
+_DEADLOCK_RETRIES = 3
+_DEADLOCK_BACKOFF_SECONDS = (5, 15)
+
+
 def _target_backfill_body() -> int:
+    """Run the backfill; retry on PostgreSQL deadlock (SQLSTATE 40P01).
+
+    Retrying is safe: ``backfill_all`` only processes rows whose targets are
+    still NULL, so a rolled-back attempt is simply redone. Deadlocks occur
+    when another writer (e.g. a manual backfill script) touches
+    feature_snapshots concurrently.
+    """
+    import time as _time
+
+    from sqlalchemy.exc import OperationalError
+
     from trading_signals.db.session import get_session
     from trading_signals.derived.target_backfill import TargetBackfillComputer
 
-    with get_session() as session:
-        return TargetBackfillComputer(session).backfill_all()
+    for attempt in range(1, _DEADLOCK_RETRIES + 1):
+        try:
+            with get_session() as session:
+                return TargetBackfillComputer(session).backfill_all()
+        except OperationalError as e:
+            is_deadlock = getattr(e.orig, "pgcode", None) == "40P01"
+            if not is_deadlock or attempt == _DEADLOCK_RETRIES:
+                raise
+            wait = _DEADLOCK_BACKOFF_SECONDS[
+                min(attempt - 1, len(_DEADLOCK_BACKOFF_SECONDS) - 1)
+            ]
+            logger.warning(
+                f"[target_backfill] deadlock detected (attempt "
+                f"{attempt}/{_DEADLOCK_RETRIES}), retrying in {wait}s"
+            )
+            _time.sleep(wait)
+    raise RuntimeError("unreachable")  # pragma: no cover
 
 
 def _context_pack_body(target_date: date) -> JobOutcome:
