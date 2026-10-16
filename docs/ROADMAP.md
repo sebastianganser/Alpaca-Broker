@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** 15 October 2026 (takeover in Claude Code – see [SESSION_LOG.md](SESSION_LOG.md), Session 32)
+**Last updated:** 16 October 2026 (legacy AI-workflow documents removed; takeover in Claude Code – see [SESSION_LOG.md](SESSION_LOG.md), Session 32)
 
 ---
 
@@ -221,8 +221,8 @@
     - 9.5c: Short Interest (B5, 3 Features)
   - Monatlich automatisch (1. des Monats, 07:00) via `feature_analysis`, oder manuell (`POST /analysis/trigger`); nächster Lauf 01.11.2026
 - [ ] **F1:** Rule-based Composite Score + Guardrails — offen; Einschätzung bei der Übergabe: ohne validiertes Ranking (R1, K1–K4 ohne Edge) derzeit nicht sinnvoll gewichtbar. Context Pack nutzt bis dahin den Risiko-Vorfilter (Stufe 1)
-  - [ ] Min. liquidity, max 2/sector, pairwise correlation, churn lock, min-score
-  - [ ] `candidate_selections` + `candidate_rejections` tables
+  - [ ] Min. liquidity, max 2/sector, pairwise correlation, churn lock, min-score — Schwellen **nicht hartcodiert**, sondern über die Einstellungen in der UI konfigurierbar (Entscheidung Sebastian, [DECISIONS_FEATURES](DECISIONS_FEATURES.md) 2026-08-18); Earnings in ≤ 5 Handelstagen markieren statt ausschließen (Konzept §5.1)
+  - [ ] `candidate_selections` (append-only, mit Feature-Attribution je Auswahl) + `candidate_rejections` (Guardrail-Ausschlüsse) tables (Konzept §5.2, §8)
 - [ ] **K1–K5:** Kurzfrist-Kandidaten ([Konzept 2026-10-06](2026-10-06_Konzept_Kurzfrist_Kandidaten.md)) — K1–K4 abgeschlossen (alle ohne verwertbaren Edge), K5 läuft
   - [x] K1: Barrier-Backtest des aktuellen Scores (TP 0,5–1 %, SL 2–3×, max. 14 Tage) — Ergebnis: ≈ Zufall, siehe LEARNINGS 2026-10-06
   - [x] K2 (Schritt A): Barrier-Label +1 %/−2 %/14d (`return_barrier_14d`, Migration 033) als Zielgröße der Feature-Analyse — Ergebnis: kein robustes Signal, siehe LEARNINGS 2026-10-06
@@ -251,6 +251,7 @@
 - [ ] Sprint-10-Readiness erneut laufen lassen (`docker exec -it alpaca-broker uv run python scripts/sprint10_readiness.py`); Ranking-Stabilität der Monatsreports war am 01.10. bei 40 %
 - [ ] `sector_relative_momentum` erneut prüfen (Nov 2026), IV-Rank ab ~252 Sessions IV-Historie (IV-Daten seit 31.08.2026 → ~September 2027)
 - [ ] „Recompute History“-Button in den Einstellungen (zurückgestellt, skriptbasiert)
+- [x] Auf Unraid prüfen, ob noch ein alter täglicher `pg_dump`-Cron existiert – geprüft 16.10. mit `alpaca-ops status`: kein Cron-Eintrag und kein User Script greift auf die Alpaca-DB zu (Session 33)
 
 ### Nächste Schritte
 1. ✅ `b60038e` deployt (15.10.); Log-Check am 16.10. (erste Nightly Chain mit neuem Image)
@@ -294,8 +295,10 @@
 
 - **News sentiment:** ~~NLP analysis of headlines with Haiku~~ ✅ Implemented with FinBERT (Sprint 8c). Haiku upgrade planned for Sprint 9.
 - **Reddit/social sentiment:** StockTwits, WSB mentions as contrarian signal
-- **Options flow:** Unusual options activity
+- **Options flow:** Unusual options activity (paid flow feeds at ≈ 150 USD/month not recommended, [concept §11](2026-08-18_Konzept_Datenerweiterung.md))
 - **ML models:** XGBoost, neural networks after 12+ months of data
 - **Multiple ETFs:** Not only ARK but other "smart money" funds
 - **European stocks:** German/European small caps
 - **Live trading:** Only after 12+ months of successful paper trading
+- **Context-pack extensions ([concept 2026-08-18](2026-08-18_Konzept_Datenerweiterung.md) §6, not implemented):** cross-sectional percentiles (universe/sector), own point-in-time history blocks (estimates, ratings, fundamentals drift), signal stack with availability dates, peer set computed from the universe, and the historical analogue (feature constellation → 20/60-day forward returns with hit rate and sample size, §6.2). The current pack has the stage-1 risk pre-filter, provisional score attribution and the stage-2 feedback template. The analogue only makes sense once a ranking passes the walk-forward (K3).
+- **Small data/feature ideas from the same concept, not implemented:** insider buy ratio split into discretionary vs. planned 10b5-1 sales and a 180-day window (E2; the Form 4 10b5-1 flag is not collected); 13F holder concentration (top-10 share, E1); `market_cap_bucket` in `universe` (B4); exponential lag decay for politician trades instead of the hard 45-day cut-off (C1); quarantine table for rejected ticker symbols instead of silently discarding them (C3); a uniform `available_from` column per signal table (A2 – lookahead is currently guarded per feature, see DECISIONS_FEATURES "Information Cut-offs").

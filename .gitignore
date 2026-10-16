@@ -51,3 +51,6 @@ src/alembic/__pycache__/
 # Frontend
 node_modules/
 frontend/dist/
+
+# Claude Code (personal permissions stay local; settings.json is shared)
+.claude/settings.local.json

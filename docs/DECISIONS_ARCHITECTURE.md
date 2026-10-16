@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_DATA.md](DECISIONS_DATA.md) · [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md)
 
-**Last updated:** 15 October 2026
+**Last updated:** 16 October 2026
 
 ---
 
@@ -152,7 +152,7 @@
 
 ### [2026-05-13] Feature Coverage Endpoint: Latest Snapshot Day Only
 
-**Decision:** `GET /features/coverage` aggregates only the latest `snapshot_date` (not the history) to keep the ticker × feature-group matrix cheap. *(From the archived Sprint 8b plan, `docs/archive/implementation_plan2.md`.)*
+**Decision:** `GET /features/coverage` aggregates only the latest `snapshot_date` (not the history) to keep the ticker × feature-group matrix cheap. *(Origin: Sprint 8b plan, see ROADMAP.)*
 
 ---
 
@@ -192,6 +192,15 @@
 **Decision (Sebastian):** Further development happens in Claude Code; Antigravity no longer edits this repo. The repo documentation remains the only project memory – no tool-specific artifacts are needed.
 **Rationale:** The project memory already lives entirely in the repo docs. Claude Code loads `CLAUDE.md` automatically at the start of every session, so the existing session start checklist applies unchanged. One tool per working tree avoids conflicting edits.
 **Consequence:** Unit tests must not need a database (since Session 32 none does; checked with the DB deliberately unreachable). Claude Code has no SSH access to Unraid, so the Unraid deploy remains a manual step for Sebastian.
+**Tooling notes (takeover assessment):** The MCP servers used in Antigravity (context7, StitchMCP, NotebookLM, ObsidianUnraid) are not set up in Claude Code; add them (`claude mcp add` / `.mcp.json`) only when needed – Stitch only for UI design work. Locally, `ruff` is available only inside the venv (`uv run ruff`), and there is no `psql` (database queries via Python/SQLAlchemy or Docker).
+
+### [2026-10-16] Unraid Operations via WebGUI and One User Script (No SSH)
+
+**Context:** To work autonomously Claude Code needs to deploy, read container logs and run project scripts on the Unraid host. SSH is disabled on the server; a restricted forced-command SSH key was prepared but not installed.
+**Decision (Sebastian):** Claude works on Unraid through the WebGUI in Claude Code's built-in browser – Sebastian logs in himself. Host actions run through **one** User Script `alpaca-ops` whose argument is the command (`status`, `logs`, `deploy`, `deploy-log`, `restart`, `run scripts/…py`). Deploys of finished, tested, pushed work may be run autonomously; data-changing actions (repair scripts with `--apply`, mutating `/ops/*` calls) only on request.
+**Implementation:** The User Script is a 10-line wrapper that fetches [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) from `origin/main` (`git show`, working tree untouched) – the ops logic is versioned and changes by push, the deployed app only by `deploy`. Every run mirrors its output to `Workfiles/AlpacaBroker/ops/<command>.log`, which Claude reads as text via `\\HOMENAS\Workfiles` instead of interpreting terminal screenshots. Guards in the script: no deploy/restart 22:15–05:15 or while a job has `is_running: true`; deploy builds before recreating (old container keeps serving), detached with a lock.
+**Scope:** in the WebGUI only `alpaca-broker`, its appdata/Workfiles folders and its own User Script – never other containers (GynOrg, other projects on the host), array, shares, users, network or security settings (CLAUDE.md, "Unraid WebGUI scope").
+**Trade-off:** the wrapper runs repo code as root on the host, so anyone who can push to `main` can act on the host when the script is run – acceptable for a single-developer private repo; the previous 2026-10-15 note "deploy remains a manual step" is superseded.
 
 ---
 

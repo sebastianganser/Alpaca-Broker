@@ -3,7 +3,7 @@
 > Central navigator for all project documentation.
 > Start here to find the right document for your question.
 
-**Last updated:** 15 October 2026 (takeover in Claude Code)
+**Last updated:** 16 October 2026 (legacy AI-workflow documents removed)
 
 ---
 
@@ -35,6 +35,8 @@
 |---|---|---|
 | [CLAUDE.md](../CLAUDE.md) | Entry point for every AI session – project identity, principles, status, quick facts, session checklists | Status after every session |
 | [README.md](../README.md) | GitHub-facing project overview | After major milestones |
+| [.claude/](../.claude/) | Shared Claude Code setup: subagents (`log-checker` Haiku, `doc-keeper` Sonnet, `code-reviewer` Opus), skills (`/log-check`, `/deploy`, `/session-end`), permissions (`settings.json`) | When the workflow changes |
+| [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) | Host operations (status, logs, deploy, run) behind the Unraid User Script `alpaca-ops` | When ops change |
 
 ### Architecture & Infrastructure
 
@@ -63,9 +65,7 @@
 | Document | Purpose | Update Frequency |
 |---|---|---|
 | [ROADMAP.md](ROADMAP.md) | Sprint definitions, status overview, open points, next steps, deployment notes, backlog | After every sprint / session |
-| [SESSION_LOG.md](SESSION_LOG.md) | Chronological record of every session, incl. handover (Session 31) | After every session |
-| [.claude/UEBERNAHME_PRUEFUNG.md](../.claude/UEBERNAHME_PRUEFUNG.md) | Takeover assessment Antigravity → Claude Code (read-only check of code, docs, config) incl. re-check of `e09cc90` | Historical reference |
-| [.claude/ANTIGRAVITY_ABSCHLUSS.md](../.claude/ANTIGRAVITY_ABSCHLUSS.md) | Final instruction given to Antigravity before the handover (result: `e09cc90`) | Historical reference |
+| [SESSION_LOG.md](SESSION_LOG.md) | Chronological record of every session, incl. handover (Session 31) and takeover in Claude Code (Session 32) | After every session |
 
 ### Learnings & Research
 
@@ -78,9 +78,7 @@
 
 | Document | Purpose | Status |
 |---|---|---|
-| [2026-08-18_Konzept_Datenerweiterung.md](2026-08-18_Konzept_Datenerweiterung.md) | Concept for data extension and candidate pipeline (basis of Sprint 9.5a–c) | Status per item in ROADMAP (9.5a–c) |
-| [2026-08-18_Anmerkungen_Datenerweiterung.md](2026-08-18_Anmerkungen_Datenerweiterung.md) | Checklist version of the concept (priority, effort, check box per item) | Historical reference |
-| [klaerungspunkte_datenerweiterung.md](klaerungspunkte_datenerweiterung.md) | Clarification points / answered questions on the data-extension concept | Historical reference |
+| [2026-08-18_Konzept_Datenerweiterung.md](2026-08-18_Konzept_Datenerweiterung.md) | Concept for data extension and candidate pipeline (basis of Sprint 9.5a–c); answers and decisions are in DECISIONS_*, ideas not yet implemented in the ROADMAP backlog | Status per item in ROADMAP (9.5a–c) |
 | [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) | Short-term candidates: barrier evaluation, pre-registered steps A–D, stage-1 risk pre-filter, stage-2 forward test (§7.7) | Active (K5 running) |
 | [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) | File format `decisions.yaml` written by the analysis skill, read by `stage2_review` | Active |
 
@@ -100,16 +98,6 @@
 |---|---|
 | [notebooks/README.md](../notebooks/README.md) | Sprint 9 analysis notebooks (setup, usage) |
 | [scripts/archive/README.md](../scripts/archive/README.md) | Archived one-off scripts (not maintained, not in the Docker image) |
-
-### Archive (`docs/archive/`)
-
-Completed planning files, kept for history only. Their content is covered by SESSION_LOG (Sessions 19/20), ROADMAP (Sprint 8/8b) and DECISIONS_ARCHITECTURE.
-
-| Document | Content |
-|---|---|
-| [archive/implementation_plan1.md](archive/implementation_plan1.md) | Sprint 8 plan (feature pipeline) |
-| [archive/implementation_plan2.md](archive/implementation_plan2.md) | Sprint 8b plan (features page) |
-| [archive/task.md](archive/task.md) | Sprint 8/8b task checklist |
 
 ---
 
@@ -133,5 +121,4 @@ After every productive session, update these documents as needed:
 - **Prefix grouping** – Related documents share a prefix (`DECISIONS_*`, `LEARNINGS_*`)
 - **`YYYY-MM-DD_*.md`** – Dated concept documents (snapshot of a design at that date)
 - **`docs/reports/`** – Generated analysis reports (dated)
-- **`docs/archive/`** – Completed plans, not maintained
 - **No sprint-specific living files** – Sprint plans are integrated into `ROADMAP.md` and `SESSION_LOG.md`

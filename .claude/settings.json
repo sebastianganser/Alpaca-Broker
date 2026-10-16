@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest)",
+      "Bash(uv run pytest *)",
+      "Bash(DB_HOST=127.0.0.1 DB_PORT=1 uv run pytest)",
+      "Bash(DB_HOST=127.0.0.1 DB_PORT=1 uv run pytest *)",
+      "Bash(uv run ruff check *)",
+      "PowerShell(uv run pytest)",
+      "PowerShell(uv run pytest *)",
+      "PowerShell(uv run ruff check *)",
+      "Bash(git status)",
+      "Bash(git status *)",
+      "Bash(git diff)",
+      "Bash(git diff *)",
+      "Bash(git log)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git fetch origin)",
+      "Bash(git ls-files *)",
+      "PowerShell(git status)",
+      "PowerShell(git status *)",
+      "PowerShell(git diff *)",
+      "PowerShell(git log *)",
+      "Bash(npm ci)",
+      "Bash(npm run build)",
+      "Bash(npm run build *)",
+      "Bash(npm run lint)",
+      "Bash(npm run lint *)",
+      "Bash(curl -s http://192.168.1.93:8090/api/v1/*)",
+      "Bash(curl -s \"http://192.168.1.93:8090/api/v1/*)",
+      "Bash(curl -s -m * http://192.168.1.93:8090/api/v1/*)",
+      "Bash(curl -s -m * \"http://192.168.1.93:8090/api/v1/*)",
+      "Bash(ls //HOMENAS/Workfiles/AlpacaBroker/*)",
+      "Read(///HOMENAS/Workfiles/AlpacaBroker/**)"
+    ],
+    "ask": [
+      "Bash(curl *-X *)",
+      "Bash(curl *--request*)",
+      "Bash(curl *-d *)",
+      "Bash(curl *--data*)",
+      "Bash(curl *-F *)",
+      "Bash(curl *--form*)",
+      "Bash(curl *-T *)",
+      "Bash(curl *--upload-file*)",
+      "Bash(curl *-H *)",
+      "Bash(curl *--header*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Edit(./.env)",
+      "Read(./.env.local)",
+      "Edit(./.env.local)",
+      "Read(./.env.production)",
+      "Edit(./.env.production)"
+    ]
+  }
+}

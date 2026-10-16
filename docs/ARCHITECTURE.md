@@ -72,18 +72,30 @@
 ### Deploy Workflow
 
 ```bash
-ssh unraid
+# Manual route (Sebastian, Unraid web terminal)
 cd /mnt/user/appdata/alpaca-broker && git pull
 # then either: Compose Manager → Stack "Alpaca-Broker" → Compose Down → Compose Up (rebuild)
 # or directly:
 docker compose -f /boot/config/plugins/compose.manager/projects/Alpaca-Broker/docker-compose.yml up --build -d
 ```
 
-Migrations run automatically on container start. [scripts/repair/deploy_review_fixes.sh](../scripts/repair/deploy_review_fixes.sh) is a one-off helper from the 2026-10-05 review (git pull → rebuild → wait for `healthy` → repair scripts in the container); it is not the regular deploy path.
+Migrations run automatically on container start. Claude Code deploys through the Unraid User Script `alpaca-ops` with the argument `deploy` (see [Operations Access](#operations-access-claude-code); skill `.claude/skills/deploy`): git pull → `docker compose build` → `up -d`, detached, so the old container keeps serving during the ~7 min build and is only recreated once the image is built. [scripts/repair/deploy_review_fixes.sh](../scripts/repair/deploy_review_fixes.sh) is a one-off helper from the 2026-10-05 review (git pull → rebuild → wait for `healthy` → repair scripts in the container); it is not the regular deploy path.
 
 **Network:** the container connects to PostgreSQL via host IP (`DB_HOST` default `192.168.1.93`, `DB_PORT` default `5435`).
-**Backup:** by decision (2026-10-05, CLAUDE.md principle 2) **no database backups** are kept; the warehouse is a rolling 20-quarter window. Older docs mentioned a daily `pg_dump` cron on Unraid – whether such a cron still exists on the server is not visible from this repo.
+**Backup:** by decision (2026-10-05, CLAUDE.md principle 2) **no database backups** are kept; the warehouse is a rolling 20-quarter window. Older docs mentioned a daily `pg_dump` cron on Unraid – checked 2026-10-16 (`alpaca-ops status`): no cron entry and no User Script references the alpaca DB.
 **In production since:** 13 April 2026.
+
+### Operations Access (Claude Code)
+
+Claude Code reaches the production system through three channels (no SSH):
+
+| Channel | Access | Used for |
+|---------|--------|----------|
+| Production API | `http://192.168.1.93:8090/api/v1/…`, read-only `GET` via `curl`: `health`, `dashboard/summary` (collectors with `last_status`/`is_running`, `table_stats`, `system_health` incl. Alembic revision and job count), `logs` (filters `status`, `collector`, `page`, `limit`) | Health and log checks (agent `log-checker`, skill `log-check`) |
+| Context-pack share | `\\HOMENAS\Workfiles\AlpacaBroker\context_packs\` – read-only, by hostname (access via IP is denied) | Context packs, `decisions.yaml`, `stage2_auswertung.md` |
+| Unraid WebGUI | `http://192.168.1.93` in Claude Code's built-in browser pane; Sebastian logs in himself. One User Script **`alpaca-ops`** (Settings → User Scripts → Run Script, argument = command: `status`, `logs [N] [SINCE]`, `deploy`, `deploy-log`, `restart`, `run scripts/…py [args]`). The wrapper fetches [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) from `origin/main` on every run (a push changes the ops logic, the deployed app only changes with `deploy`) and mirrors each run's output to `\\HOMENAS\Workfiles\AlpacaBroker\ops\<command>.log` | Deploy (skill `deploy`), container state, container logs, project scripts in the container |
+
+Scope and guard rules: in the WebGUI only the container `alpaca-broker`, its folders and its own User Scripts may be touched – never other containers (GynOrg, PostgreSQL), array, shares, users, network or security settings. Deploys/restarts are not allowed between 22:15 and 05:15 (collectors + nightly chain) or while a job is running (`is_running` in `dashboard/summary`). The shared Claude Code setup (permissions, subagents, skills) lives in `.claude/`; the working rules are in [CLAUDE.md](../CLAUDE.md).
 
 ---
 
@@ -92,6 +104,10 @@ Migrations run automatically on container start. [scripts/repair/deploy_review_f
 ```
 Alpaca-Broker/
 ├── CLAUDE.md / README.md            # Project entry point / GitHub overview
+├── .claude/                         # Claude Code project setup (shared via Git)
+│   ├── settings.json                # Shared permissions (settings.local.json is git-ignored)
+│   ├── agents/                      # Subagents: log-checker (Haiku), doc-keeper (Sonnet), code-reviewer (Opus)
+│   └── skills/                      # Workflows: log-check, deploy, session-end
 ├── docs/                            # Documentation (INDEX.md = navigator)
 │   ├── STAGE2_DECISIONS.md          # decisions.yaml format (stage-2 forward test)
 │   ├── 2026-10-06_Konzept_Kurzfrist_Kandidaten.md  # short-term candidate concept
@@ -99,7 +115,9 @@ Alpaca-Broker/
 ├── infra/
 │   ├── docker-compose.yml           # Service alpaca-broker only (DB runs separately)
 │   ├── Dockerfile.collector         # 3-stage build (Node → uv/Python → slim runtime, user 99:100)
-│   └── entrypoint.sh                # pg_isready → alembic upgrade head → CMD
+│   ├── entrypoint.sh                # pg_isready → alembic upgrade head → CMD
+│   └── unraid/
+│       └── alpaca-ops.sh            # Host ops (status/logs/deploy/run), run via User Script "alpaca-ops"
 ├── src/
 │   ├── alembic/versions/            # Migrations 001–035
 │   └── trading_signals/             # Python package (see below)
