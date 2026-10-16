@@ -3,6 +3,7 @@
 from trading_signals.scheduler.registry import (
     CATCHUP_JOBS,
     CHAIN_STEP_JOB_IDS,
+    JOB_COLLECTOR_NAMES,
     MANUAL_SUFFIX,
     NIGHTLY_UPSTREAM,
     get_collector_name,
@@ -26,6 +27,7 @@ class TestCreateScheduler:
             "data_retention",
             "log_retention",
             "short_interest_collector",
+            "short_interest_positions_collector",
             "options_iv_collector",
             *CHAIN_STEP_JOB_IDS,
             *CATCHUP_JOBS,
@@ -46,6 +48,18 @@ class TestCreateScheduler:
             assert _hm(sched.get_job(jid)) == hm, jid
         fa = {f.name: str(f) for f in sched.get_job("feature_analysis").trigger.fields}
         assert (fa["day"], fa["hour"], fa["minute"]) == ("1", "7", "0")
+
+    def test_job_count(self):
+        assert len(JOB_DEFINITIONS) == 25
+        assert len(create_scheduler().get_jobs()) == 25
+
+    def test_short_interest_positions_runs_weekly_sunday_noon(self):
+        job = create_scheduler().get_job("short_interest_positions_collector")
+        f = {x.name: str(x) for x in job.trigger.fields}
+        assert (f["day_of_week"], f["hour"], f["minute"]) == ("sun", "12", "0")
+        # after the politician trades collector (Sunday 11:00)
+        pol = create_scheduler().get_job("politician_trades_collector")
+        assert _hm(pol) == ("11", "0")
 
     def test_chain_steps_paused_after_start(self):
         sched = create_scheduler()
@@ -80,3 +94,31 @@ class TestRegistry:
 
     def test_upstream_contains_prices(self):
         assert "prices_alpaca" in NIGHTLY_UPSTREAM
+
+    def test_short_interest_positions_registry(self):
+        job_id = "short_interest_positions_collector"
+        assert JOB_COLLECTOR_NAMES[job_id] == "short_interest_positions"
+        assert get_collector_name(job_id) == "short_interest_positions"
+        assert get_collector_name(f"{job_id}{MANUAL_SUFFIX}") == (
+            "short_interest_positions"
+        )
+        # features use a lagged availability rule -> not a nightly upstream
+        assert "short_interest_positions" not in NIGHTLY_UPSTREAM
+        assert job_id not in NIGHTLY_UPSTREAM
+
+    def test_every_job_has_a_registry_entry(self):
+        for job_id, *_ in JOB_DEFINITIONS:
+            assert job_id in JOB_COLLECTOR_NAMES, job_id
+
+    def test_job_runner_wires_collector(self):
+        from unittest.mock import patch
+
+        from trading_signals.scheduler import jobs
+
+        with patch.object(jobs, "_run_collector") as run:
+            jobs.run_short_interest_positions_collector()
+
+        job_id, factory = run.call_args.args
+        assert job_id == "short_interest_positions_collector"
+        assert factory.__name__ == "ShortInterestPositionsCollector"
+        assert run.call_args.kwargs == {"skip_on_value_error": True}

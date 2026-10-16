@@ -393,6 +393,30 @@ for source_name, cfg in SOURCE_MATURITY.items():
 
 results.append(maturity_ok)
 
+# Short Interest (FINRA) is informational and does not enter the verdict:
+# settlements come twice a month, so depth is counted in distinct settlement
+# dates within the retention window (the collector backfills the whole
+# window); 12 settlement dates ≈ 6 months for the 1-month change feature.
+SHORT_INTEREST_MIN_SETTLEMENTS = 12
+try:
+    si_dates = pd.read_sql(
+        text(
+            "SELECT COUNT(DISTINCT settlement_date) FROM signals.short_interest "
+            "WHERE settlement_date >= :start"
+        ),
+        engine,
+        params={"start": data_start_date()},
+    ).iloc[0, 0]
+    si_ready = si_dates >= SHORT_INTEREST_MIN_SETTLEMENTS
+    print(
+        f"\n  Short Interest (FINRA): {si_dates:>4} settlement dates since "
+        f"{data_start_date()}  (min: {SHORT_INTEREST_MIN_SETTLEMENTS})  "
+        f"{_ok(si_ready)}"
+    )
+    print("                     ↳ Informational only – not blocking Sprint 10")
+except Exception as e:
+    print(f"\n  Short Interest (FINRA): QUERY FAILED ({e})")
+
 # Check IV-Rank readiness separately (informational, not blocking)
 try:
     iv_days = pd.read_sql(

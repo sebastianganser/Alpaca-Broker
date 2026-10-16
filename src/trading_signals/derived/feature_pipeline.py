@@ -20,6 +20,8 @@ Feature Groups:
   - Sentiment (7): News sentiment, momentum, attention, volume ratio (Sprint 9.5b E3)
   - Macro (6): VIX, yields, HY spread, dollar, inflation (Sprint 9.5b D1)
   - Breadth (2), Sector-relative (2), Short volume (3)
+  - Short interest (2): FINRA days-to-cover and 1-month change, usable only
+    9 sessions after the settlement date (derived/short_interest_features.py)
   - Options IV (4): ATM IV, skew, term slope, put/call OI (Sprint 9.5b D3)
   - Estimates (5): EPS/revenue revision %, net revision counts (Sprint 9.5a B1)
 
@@ -46,6 +48,9 @@ next session's open (see target_backfill.py). Concretely:
   * Earnings dates: ``first_seen <= d`` when the collector provides it
     (M2); legacy rows without ``first_seen`` and rows first seen only
     after the earnings date (retroactive) keep a documented lookahead.
+  * Short interest (FINRA): a settlement date is usable for d only if it
+    is <= the NYSE session 9 sessions before d (publication lag ~7 business
+    days + margin; the table has no publication date), max age 40 days.
   * Prices flagged ``is_extrapolated`` are never used (H7).
   * Forward-fill of snapshot-type sources is bounded (M3):
     ``MAX_SNAPSHOT_AGE_DAYS`` for fundamentals/estimates/IV/TA/price
@@ -93,6 +98,11 @@ from trading_signals.derived.insider_clusters import (
     FALLBACK_FILING_LAG_DAYS,
     find_clusters,
 )
+from trading_signals.derived.short_interest_features import (
+    SI_LOAD_WINDOW_DAYS,
+    publication_cutoff,
+    short_interest_features_at,
+)
 from trading_signals.derived.short_term_features import (
     load_short_term_inputs,
     short_term_features_at,
@@ -111,7 +121,10 @@ logger = get_logger(__name__)
 #: the semantics of any feature (or of the targets) change.
 #: 2026.10-2: + short-term price features ``st_*`` (concept 2026-10-06
 #: §7.1); all other definitions unchanged from 2026.10-1.
-FEATURE_VERSION = "2026.10-2"
+#: 2026.10-3: + ``short_interest_days_to_cover`` / ``short_interest_change_1m``
+#: (FINRA settlements, derived/short_interest_features.py); other definitions
+#: unchanged from 2026.10-2.
+FEATURE_VERSION = "2026.10-3"
 
 #: News sentiment model whose scores feed the features (M9). Must match
 #: ``SentimentScorer.model_version`` of the active scorer.
@@ -1475,10 +1488,17 @@ class FeaturePipeline:
         self._breadth_cache[d] = result
         return result
 
-    # ── Short Volume Features (3, Sprint 9.5c B5) ────────────────────
+    # ── Short Interest Features (5, Sprint 9.5c B5) ──────────────────
 
     def _short_interest_features(self, ticker: str, d: date) -> dict:
-        """Short interest features from daily short volume data.
+        """Short volume (3, daily) + FINRA settlement features (2)."""
+        return {
+            **self._short_volume_features(ticker, d),
+            **self._short_interest_settlement_features(ticker, d),
+        }
+
+    def _short_volume_features(self, ticker: str, d: date) -> dict:
+        """Short features from daily short volume data.
 
         - short_volume_ratio_5d: 5-day average of short_volume / total_volume
         - short_volume_ratio_20d: 20-day average
@@ -1527,6 +1547,64 @@ class FeaturePipeline:
             "short_volume_ratio_20d": avg_20d,
             "short_volume_change_20d": change,
         }
+
+    def _short_interest_day_rows(
+        self, d: date
+    ) -> tuple[date | None, dict[str, list[tuple]]]:
+        """``(cutoff(d), {ticker: settlement rows})`` for d – one query per day.
+
+        Rows are ``(settlement_date, short_interest, days_to_cover)`` of the
+        window that can influence the result (see ``SI_LOAD_WINDOW_DAYS``),
+        ordered by settlement date and fetch time (a later fetch of the same
+        settlement wins).
+        """
+        from trading_signals.db.models.short_interest import ShortInterest
+
+        key = ("short_interest", d)
+        if key not in self._day_cache:
+            cutoff = publication_cutoff(d)
+            by_ticker: dict[str, list[tuple]] = {}
+            if cutoff is not None:
+                rows = self.session.execute(
+                    select(
+                        ShortInterest.ticker,
+                        ShortInterest.settlement_date,
+                        ShortInterest.short_interest,
+                        ShortInterest.days_to_cover,
+                    )
+                    .where(ShortInterest.settlement_date <= cutoff)
+                    .where(
+                        ShortInterest.settlement_date
+                        >= cutoff - timedelta(days=SI_LOAD_WINDOW_DAYS)
+                    )
+                    .order_by(
+                        ShortInterest.settlement_date, ShortInterest.fetched_at
+                    )
+                ).all()
+                for tk, settlement_date, short_interest, days_to_cover in rows:
+                    by_ticker.setdefault(tk, []).append(
+                        (settlement_date, short_interest, days_to_cover)
+                    )
+            self._day_cache[key] = (cutoff, by_ticker)
+        return self._day_cache[key]
+
+    def _short_interest_settlement_features(self, ticker: str, d: date) -> dict:
+        """FINRA settlement features (point-in-time, 9-session publication lag).
+
+        - short_interest_days_to_cover: days to cover of the newest usable
+          settlement
+        - short_interest_change_1m: short interest vs the settlement two
+          reporting periods (~1 month) earlier
+
+        Rules and constants: :mod:`trading_signals.derived.short_interest_features`
+        (shared with the history backfill). Returns ``{}`` for tickers without
+        any usable settlement.
+        """
+        cutoff, by_ticker = self._short_interest_day_rows(d)
+        rows = by_ticker.get(ticker)
+        if not rows:
+            return {}
+        return short_interest_features_at(rows, d, cutoff=cutoff)
 
     def _options_iv_features(self, ticker: str, d: date) -> dict:
         """Options implied volatility features from daily IV snapshots.

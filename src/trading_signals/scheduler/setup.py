@@ -138,6 +138,12 @@ JOB_DEFINITIONS: list[tuple[str, object, dict, str]] = [
         {"day_of_week": "sun", "hour": 11, "minute": 0},
         "Weekly Politician Trades (Senate eFD)",
     ),
+    (
+        "short_interest_positions_collector",
+        jobs.run_short_interest_positions_collector,
+        {"day_of_week": "sun", "hour": 12, "minute": 0},
+        "Weekly FINRA Short Interest Positions (Massive API)",
+    ),
     # ── Monthly (1st) ──
     (
         "index_sync",

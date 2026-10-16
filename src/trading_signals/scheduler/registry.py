@@ -30,6 +30,7 @@ JOB_COLLECTOR_NAMES: dict[str, str] = {
     "stage2_review": "stage2_review",
     "form13f_collector": "form13f_collector",
     "politician_trades_collector": "politician_trades_collector",
+    "short_interest_positions_collector": "short_interest_positions",
     "fundamentals_collector": "fundamentals_yf",
     "earnings_calendar_collector": "earnings_calendar_collector",
     "index_sync": "index_sync",

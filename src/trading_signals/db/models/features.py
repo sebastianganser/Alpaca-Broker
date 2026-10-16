@@ -17,6 +17,7 @@ Feature groups:
   - Technical: Point-in-time (6) = 6 features
   - Earnings: Context (3) = 3 features
   - Sentiment: News-based (6) = 6 features
+  - Short Interest: daily short volume (3) + FINRA settlements (2) = 5 features
   - Options IV: point-in-time (4) = 4 features
   - Estimates: revision signals (5) = 5 features
   - Targets: Forward returns (4) = 4 target variables
@@ -186,6 +187,12 @@ class FeatureSnapshot(Base):
     short_volume_ratio_5d: Mapped[float | None] = mapped_column(Numeric(10, 4))
     short_volume_ratio_20d: Mapped[float | None] = mapped_column(Numeric(10, 4))
     short_volume_change_20d: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    # FINRA settlement data (twice a month, published with a lag), migration 036.
+    # Point-in-time rules: derived/short_interest_features.py
+    short_interest_days_to_cover: Mapped[float | None] = mapped_column(
+        Numeric(10, 4)
+    )
+    short_interest_change_1m: Mapped[float | None] = mapped_column(Numeric(10, 4))
 
     # ── Options IV Features (Sprint 9.5b D3 → feature integration) ────
     options_iv_atm_30d: Mapped[float | None] = mapped_column(Numeric(8, 4))

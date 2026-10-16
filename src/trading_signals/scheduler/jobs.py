@@ -294,6 +294,26 @@ def run_short_interest_collector() -> None:
     _run_collector("short_interest_collector", ShortInterestCollector)
 
 
+def run_short_interest_positions_collector() -> None:
+    """Weekly FINRA short interest (settlement-date positions) via Massive API.
+
+    Scheduled for Sundays at 12:00 Europe/Berlin (after the politician trades
+    collector). FINRA publishes twice a month; a weekly run picks up new
+    settlement dates and re-fetches the two most recent ones (revisions).
+    ~3 requests per run. Not an upstream of the nightly chain: the feature
+    pipeline applies a publication lag, so staleness is tolerated.
+    """
+    from trading_signals.collectors.short_interest_positions_collector import (
+        ShortInterestPositionsCollector,
+    )
+
+    _run_collector(
+        "short_interest_positions_collector",
+        ShortInterestPositionsCollector,
+        skip_on_value_error=True,
+    )
+
+
 # ── Derived computations ────────────────────────────────────────────────
 
 
