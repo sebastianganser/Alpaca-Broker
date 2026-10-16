@@ -894,7 +894,7 @@ Decision 2026-10-05: the system keeps exactly the last **20 calendar quarters** 
 
 ## Migrations
 
-Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–036 (linear chain, head = 036; production is at 035 until the 036 deploy).
+Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–036 (linear chain, head = 036; production at 036 since 2026-10-16).
 
 | Migration | Description |
 |---|---|

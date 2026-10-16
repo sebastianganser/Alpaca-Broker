@@ -254,11 +254,12 @@
 - [ ] `sector_relative_momentum` erneut prüfen (Nov 2026), IV-Rank ab ~252 Sessions IV-Historie (IV-Daten seit 31.08.2026 → ~September 2027)
 - [ ] „Recompute History“-Button in den Einstellungen (zurückgestellt, skriptbasiert)
 - [x] Auf Unraid prüfen, ob noch ein alter täglicher `pg_dump`-Cron existiert – geprüft 16.10. mit `alpaca-ops status`: kein Cron-Eintrag und kein User Script greift auf die Alpaca-DB zu (Session 33)
+- [ ] **Universum-Pflege:** 8 als aktiv geführte Ticker haben seit April–August 2026 weder Kurse noch Short Interest (AVB, BK, CTRA, EA, EQR, LBRDK, PSTG, SATS) – Übernahme/Delisting oder Ticker-Wechsel klären, `is_active` korrigieren bzw. neues Symbol aufnehmen (Befund 16.10., Session 33)
 
 ### Nächste Schritte
 1. ✅ `b60038e` deployt (15.10.); Log-Check am 16.10. (erste Nightly Chain mit neuem Image)
 2. ✅ Politician-Tests isoliert (Session 32), Migrationskette 024/025 auf leerer DB behoben (Session 33); Migration ↔ ORM angeglichen (Session 33)
-3. Short Interest: Deploy (Migration 036), Erstbefüllung der Historie (`alpaca-ops run scripts/repair/collect_short_interest.py`, ~25 min) + Feature-Backfill (`backfill_short_interest_features.py`, erst Dry-Run, dann `--apply`), Bewertung im Monatsbericht (01.11.)
+3. ✅ Short Interest: deployt (`b873d4d`, Migration 036), Historie befüllt (94.370 Zeilen, 120 Stichtage 2021-10-15 bis 2026-09-30), Features nachgerechnet (610.887 Snapshots, Abdeckung im ML-Fenster 99 %) – Bewertung im Monatsbericht 01.11. / Readiness Anfang Dezember
 4. Daten weiter sammeln, Readiness Anfang Dezember erneut prüfen (16.10.: 29/31 „GO“, aber Ranking-Stabilität 0/10); K5 (Vorwärtstest) bewusst zurückgestellt bis nach den Sprints
 5. Sprint 10 frühestens ab Mitte Dezember 2026 – Inhalt hängt davon ab, ob bis dahin ein Ranking den Walk-forward besteht (K3 erneut frühestens Januar 2027)
 
@@ -286,7 +287,7 @@
 - Alembic migrations run automatically via `entrypoint.sh`
 - 25 scheduler jobs registered (`scheduler/setup.py`): 13 daily (incl. `nightly_chain`, `log_retention`), 6 weekly (incl. `data_retention`, `short_interest_positions_collector`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps (`feature_pipeline`, `target_backfill`, `stage2_review`, `context_pack_generator`) – see [SCHEDULER.md](SCHEDULER.md)
 - Volume mount: `/mnt/user/Workfiles/AlpacaBroker` for Context Pack output (must be owned by `99:100`)
-- **Deployed as of 2026-10-16:** `d88febf`, Alembic revision `035` (not yet: FINRA short interest, migration 036)
+- **Deployed as of 2026-10-16 18:14:** `b873d4d`, Alembic revision `036` (FINRA short interest collector + features live; initial backfill of the history running)
 
 **Update workflow:**
 1. `git push` from Windows
