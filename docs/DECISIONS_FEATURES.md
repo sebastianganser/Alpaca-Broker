@@ -274,6 +274,10 @@ Daily cross-sectional rank IC (mean, ICIR, Newey-West t with lag ≥ h−1), per
 **Context:** The purpose is 0–5 long candidates per day for short trades (≤ 14 trading days, take profit +0.5–1 % net). The context pack always emits 5 candidates from unvalidated weights, and the analysis targets fixed-horizon returns, which do not match a take-profit/stop trade.
 **Decision:** Evaluate candidates with a barrier model: entry `open(d+1)`, take profit a ∈ {0.5, 0.75, 1.0} %, stop = 2–3 × a, time stop 14 trading days, same-day TP+SL → stop, gaps filled at open, 0.05 % round-trip costs. Benchmark = random hit rate b/(a+b) and the universe average. "No candidates" must be a valid output (threshold + market filter). See [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md).
 
+### [2026-10-16] Forward Testing Waits for the Sprints (Data First)
+**Context:** The stage-2 forward test (K5) is deployed since 2026-10-07 (`stage2_review` runs nightly), but no `decisions.yaml` has been written.
+**Decision (Sebastian):** Forward testing and the related tests wait until the sprints are through and the data supports them – first enough data for Sprint 10 (ML scoring), measured with `scripts/sprint10_readiness.py`. Until then no `decisions.yaml` is expected; "0 decisions read" in `stage2_auswertung.md` is the intended state, not an issue. The nightly `stage2_review` step stays deployed (harmless without input).
+
 ### Known Limits
 - `universe.sector` is not point-in-time.
 - A 13F filed on day d counts as public on d.
