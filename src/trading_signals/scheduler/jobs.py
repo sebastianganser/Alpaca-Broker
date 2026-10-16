@@ -505,9 +505,15 @@ def run_context_pack_generator() -> None:
 CHAIN_MAX_WAIT = timedelta(hours=2)
 CHAIN_POLL_SECONDS = 300
 
-#: Minimum share of the previous session's price rows the target session must
-#: reach before the chain builds features on it (see :func:`coverage_ok`).
+#: Minimum share of the baseline price rows the target session must reach
+#: before the chain builds features on it (see :func:`coverage_ok`).
 MIN_PRICE_COVERAGE = 0.8
+
+#: The baseline is the maximum real price-row count over this many NYSE
+#: sessions before the target. A single previous session is not enough: after
+#: a multi-night outage of the same tickers every night would be compared with
+#: an equally broken night (467 vs 467 = 100 %).
+COVERAGE_BASELINE_SESSIONS = 5
 
 
 def _session_close(session_date: date) -> datetime:
@@ -568,22 +574,26 @@ def wait_for_upstream(
 
 
 def coverage_ok(
-    current: int, previous: int, min_ratio: float = MIN_PRICE_COVERAGE
+    current: int, baseline: int, min_ratio: float = MIN_PRICE_COVERAGE
 ) -> bool:
-    """True if ``current`` reaches ``min_ratio`` of ``previous`` price rows.
+    """True if ``current`` reaches ``min_ratio`` of the ``baseline`` price rows.
 
-    No rows for the target session are never OK. ``previous == 0`` with rows
+    No rows for the target session are never OK. ``baseline == 0`` with rows
     on the target (bootstrap, nothing to compare against) counts as OK.
     """
     if current <= 0:
         return False
-    if previous <= 0:
+    if baseline <= 0:
         return True
-    return current / previous >= min_ratio
+    return current / baseline >= min_ratio
 
 
 def price_coverage(target: date) -> tuple[int, int]:
-    """Return ``(target, previous session)`` counts of real price rows.
+    """Return ``(target count, baseline)`` of real price rows.
+
+    The baseline is the maximum per-date count over the
+    ``COVERAGE_BASELINE_SESSIONS`` NYSE sessions before ``target`` (0 if there
+    are none). Both come from one grouped query.
 
     Completeness is per-date ticker coverage, not ``MAX(trade_date)``: a fresh
     prices run can still cover only part of the universe (e.g. IEX fallback).
@@ -593,18 +603,21 @@ def price_coverage(target: date) -> tuple[int, int]:
 
     from trading_signals.db.models.prices import PriceDaily
     from trading_signals.db.session import get_session
-    from trading_signals.utils.market_calendar import previous_trading_day
+    from trading_signals.utils.market_calendar import trading_days
 
-    previous = previous_trading_day(target)
+    # 21 calendar days always hold >= 5 sessions, even around holidays
+    window = trading_days(target - timedelta(days=21), target - timedelta(days=1))
+    baseline_days = window[-COVERAGE_BASELINE_SESSIONS:]
     with get_session() as session:
         rows = session.execute(
             select(PriceDaily.trade_date, func.count())
-            .where(PriceDaily.trade_date.in_((target, previous)))
+            .where(PriceDaily.trade_date.in_([target, *baseline_days]))
             .where(PriceDaily.is_extrapolated.is_not(True))
             .group_by(PriceDaily.trade_date)
         ).all()
     counts = dict(rows)
-    return counts.get(target, 0), counts.get(previous, 0)
+    baseline = max((counts.get(d, 0) for d in baseline_days), default=0)
+    return counts.get(target, 0), baseline
 
 
 def _critical_stale(target: date, stale: list[str]) -> list[str]:
@@ -612,17 +625,43 @@ def _critical_stale(target: date, stale: list[str]) -> list[str]:
 
     Stale collectors flagged critical in ``NIGHTLY_UPSTREAM`` plus a price
     coverage check: the prices run may count as fresh (SUCCESS/PARTIAL) while
-    the target session is still mostly missing.
+    the target session is still mostly missing. If the coverage query itself
+    fails the inputs cannot be vouched for, so that counts as critical too
+    (the chain must not crash before TA/target backfill/stage-2 review run).
     """
     critical = [n for n in stale if NIGHTLY_UPSTREAM.get(n)]
     if "prices_alpaca" not in critical:
-        current, previous = price_coverage(target)
-        if not coverage_ok(current, previous):
-            pct = current * 100 // previous if previous else 0
-            critical.append(
-                f"prices_alpaca (coverage {current}/{previous} = {pct}%)"
+        try:
+            current, baseline = price_coverage(target)
+        except Exception as e:
+            logger.exception(
+                f"[nightly_chain] price coverage check failed for {target}"
             )
+            critical.append(
+                f"prices_alpaca (coverage check failed: {type(e).__name__})"
+            )
+        else:
+            if not coverage_ok(current, baseline):
+                pct = current * 100 // baseline if baseline else 0
+                critical.append(
+                    f"prices_alpaca (coverage {current}/{baseline} = {pct}% "
+                    f"of {COVERAGE_BASELINE_SESSIONS}-session max)"
+                )
     return critical
+
+
+def _skipped_step(job_id: str, collector_name: str, note: str) -> JobOutcome:
+    """Record a chain step that is deliberately not run as a SKIPPED log row.
+
+    Without the row the dashboard keeps showing the previous night's success
+    as the step's last run.
+    """
+    return run_logged_job(
+        job_id,
+        collector_name,
+        lambda: JobOutcome(status=job_status.SKIPPED, notes=note),
+        alert=False,
+    )
 
 
 def _chain_done_for(target: date) -> bool:
@@ -672,7 +711,7 @@ def _nightly_chain_body() -> JobOutcome:
     # a feature row built on missing prices would silently carry the previous
     # session's price features, and the next night targets the next session
     if critical:
-        fp = JobOutcome(status=job_status.SKIPPED, notes=skip_note)
+        fp = _skipped_step("feature_pipeline", "feature_pipeline", skip_note)
     else:
         fp = run_logged_job(
             "feature_pipeline",
@@ -688,7 +727,9 @@ def _nightly_chain_body() -> JobOutcome:
         "stage2_review", "stage2_review", _stage2_review_body, alert=False
     )
     if critical:
-        cp = JobOutcome(status=job_status.SKIPPED, notes=skip_note)
+        cp = _skipped_step(
+            "context_pack_generator", "context_pack_generator", skip_note
+        )
     elif fp.status in (job_status.SUCCESS, job_status.PARTIAL):
         cp = run_logged_job(
             "context_pack_generator",
@@ -750,8 +791,10 @@ def run_nightly_chain() -> None:
     proceeds and records stale inputs (status PARTIAL → alert).
 
     Critical inputs (``NIGHTLY_UPSTREAM`` ``True``, plus price coverage of the
-    target session below ``MIN_PRICE_COVERAGE``) are different: feature
-    pipeline and context pack are skipped, the other steps still run, and the
+    target session below ``MIN_PRICE_COVERAGE`` of the max of the last
+    ``COVERAGE_BASELINE_SESSIONS`` sessions, or a failing coverage check) are
+    different: feature pipeline and context pack are skipped (recorded as
+    SKIPPED ``collection_log`` rows), the other steps still run, and the
     chain ends FAILED (alert). A FAILED chain is not "done", so re-running it
     for the same session once prices are complete repairs the gap.
     """

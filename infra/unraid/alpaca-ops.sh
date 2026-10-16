@@ -32,13 +32,14 @@ LOCK=/tmp/alpaca-deploy.lock
 die() { echo "ERROR: $*" >&2; exit 1; }
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 
-# Collectors run 22:30–~03:00, the nightly chain from 04:30. A restart in
-# that window kills runs (they are only marked stale on the next start).
+# Collectors run 22:30–~03:00, the nightly chain from 04:30 (Europe/Berlin).
+# A restart in that window kills runs (they are only marked stale on the next
+# start). The window is Berlin time whatever timezone the host is set to.
 guard_window() {
     local hm
-    hm=$(date +%H%M)
+    hm=$(TZ=Europe/Berlin date +%H%M)
     if [ "$hm" -ge 2215 ] || [ "$hm" -lt 0515 ]; then
-        die "no deploy/restart between 22:15 and 05:15 (collectors + nightly chain), now $(date +%H:%M)"
+        die "no deploy/restart/run between 22:15 and 05:15 Berlin time (collectors + nightly chain), now $(TZ=Europe/Berlin date +%H:%M)"
     fi
 }
 
@@ -66,6 +67,12 @@ deploy_worker() {
     # Build first, then recreate: the old container keeps running during the
     # ~7 min build. Migrations run in the entrypoint of the new container.
     compose build || die "build failed – old container still running"
+    # The guards were checked when "deploy" was started, but the build takes
+    # ~7 min: the window may have opened or a job may have started meanwhile.
+    # Re-check right before the recreate (in a subshell: die exits only that).
+    if ! (guard_window && guard_no_running_jobs); then
+        die "image built, recreate skipped – run deploy again later (old container keeps running)"
+    fi
     compose up -d || die "compose up failed"
     echo "$commit (deployed $(date -Is))" > "$OPS_DIR/deployed.txt"
     echo "==> $(date -Is) deploy finished – check: alpaca-ops status"
@@ -73,7 +80,11 @@ deploy_worker() {
 
 # Detached deploy worker (started by "deploy" below from a private copy, so
 # a concurrent run of the wrapper cannot rewrite the file while bash reads it).
+# Internal only: it skips the guards of "deploy", so it must not be reachable
+# through the User Script argument – "deploy" sets the private env var.
 if [ "${1:-}" = "_deploy_worker" ]; then
+    [ "${ALPACA_OPS_DEPLOY_WORKER:-}" = "1" ] || die "_deploy_worker is internal – use: deploy"
+    unset ALPACA_OPS_DEPLOY_WORKER
     deploy_worker
     exit $?
 fi
@@ -94,14 +105,17 @@ case "$CMD" in
 alpaca-ops – commands (argument of the "alpaca-ops" user script):
   status                     container, health, API system health, deployed/fetched commit, disk, alpaca cron entries
   logs [N] [SINCE]           last N container log lines (default 500, max 5000), optional SINCE (e.g. 2026-10-16T04:00 or 12h)
-  deploy                     git pull + build + recreate (detached; blocked 22:15–05:15 and while a job runs)
+  deploy                     git pull + build + recreate (detached; blocked 22:15–05:15 Berlin time and while a job runs; guards re-checked before the recreate)
   deploy-log [N]             progress/result of the last deploy
   restart                    restart the container (same guards as deploy)
-  run <scripts/…py> [args]   run a project script inside the container (as app user 99:100)
+  run <scripts/…py> [args]   run a project script inside the container (as app user 99:100; blocked 22:15–05:15 Berlin time)
 Output of every run: /mnt/user/Workfiles/AlpacaBroker/ops/<command>.log
 EOF
         ;;
     status)
+        # guard_window relies on tzdata: both lines must show the same wall time in Berlin
+        echo "## time"
+        echo "Berlin: $(TZ=Europe/Berlin date '+%F %H:%M %Z')   host: $(date '+%F %H:%M %Z')"
         echo "## container"
         docker inspect -f '{{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}} started={{.State.StartedAt}}' "$CONTAINER" 2>&1
         echo "## image"
@@ -132,8 +146,11 @@ EOF
     deploy)
         guard_window
         guard_no_running_jobs
+        # Before cp and the log redirect below: a second deploy must neither
+        # overwrite the script a running worker is reading nor truncate its log.
+        flock -n "$LOCK" true || die "another deploy is running"
         cp "$0" /tmp/alpaca-deploy-worker.sh
-        setsid nohup bash /tmp/alpaca-deploy-worker.sh _deploy_worker >"$OPS_DIR/deploy-worker.log" 2>&1 </dev/null &
+        ALPACA_OPS_DEPLOY_WORKER=1 setsid nohup bash /tmp/alpaca-deploy-worker.sh _deploy_worker >"$OPS_DIR/deploy-worker.log" 2>&1 </dev/null &
         echo "deploy started in background – progress: alpaca-ops deploy-log (or ops/deploy-worker.log)"
         ;;
     deploy-log)
@@ -153,6 +170,8 @@ EOF
         for a in "${ARGS[@]:1}"; do
             [[ "$a" =~ ^[A-Za-z0-9_.,:=/@+-]+$ ]] || die "run: invalid argument: $a"
         done
+        # scripts may write feature_snapshots → deadlock risk during the nightly chain
+        guard_window
         docker exec "$CONTAINER" .venv/bin/python -u "$script" "${ARGS[@]:1}"
         ;;
     *)
