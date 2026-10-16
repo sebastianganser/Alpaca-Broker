@@ -110,7 +110,7 @@ Dev machine: Windows 11, working directory = project root. The Bash tool is Git 
 | `restart` | container restart (same guards) |
 | `run scripts/…py [args]` | project script inside the container as `99:100` (e.g. repair scripts) |
 
-The wrapper fetches [infra/unraid/alpaca-ops.sh](infra/unraid/alpaca-ops.sh) from `origin/main` on every run – change the ops logic by pushing, never by editing the script in the WebGUI. Read results as text from `//HOMENAS/Workfiles/AlpacaBroker/ops/<command>.log` (Git Bash path), not from screenshots. Deploy workflow: skill `/deploy`. Scope limits: see Safety rules.
+The wrapper fetches [infra/unraid/alpaca-ops.sh](infra/unraid/alpaca-ops.sh) from `origin/main` on every run – change the ops logic by pushing, never by editing the script in the WebGUI. Read results as text from `//HOMENAS/Workfiles/AlpacaBroker/ops/<command>.log` (Git Bash path), not from screenshots. Windows caches share files: a log that was rewritten in place (e.g. `deploy-worker.log`) can show stale content for minutes – trust `ops/deployed.txt`, file mtimes (`ls -la`) and the API over a stale log. Deploy workflow: skill `/deploy`. Scope limits: see Safety rules.
 
 ## Working Agreements
 

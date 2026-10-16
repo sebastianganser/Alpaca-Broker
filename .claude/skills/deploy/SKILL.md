@@ -26,7 +26,7 @@ Access path: Unraid WebGUI (http://192.168.1.93) in Claude Code's built-in brows
 1. Navigate the built-in browser to `http://192.168.1.93/Settings/Userscripts`. If the login page appears, ask Sebastian to log in (check with `tabs_context` that the pane is displayed first) and wait.
 2. Click **Run Script** in the `alpaca-ops` row (first row). In the dialog "Enter In Script Arguments" replace the default `status` with `deploy` and confirm with **OK**. Do not run any other script.
 3. Read `//HOMENAS/Workfiles/AlpacaBroker/ops/deploy.log` (Git Bash): it must say `deploy started in background`. If it shows `ERROR: …` (time window, running job, lock), stop and report.
-4. Follow the build: read `//HOMENAS/Workfiles/AlpacaBroker/ops/deploy-worker.log` every 1–2 minutes (text, no screenshots needed) until it ends with `deploy finished` or `ERROR`. It prints the pulled commit. Alternatively run `alpaca-ops` with `deploy-log`.
+4. Follow the build: read `//HOMENAS/Workfiles/AlpacaBroker/ops/deploy-worker.log` every 1–2 minutes (text, no screenshots needed) until it ends with `deploy finished` or `ERROR`. Windows may serve a cached old copy of that log – if it does not change, check `ops/deployed.txt` (written at the end of a successful deploy) and the API `uptime_seconds` instead (a cached build typically finishes in ~2 min, a full one in ~5–7 min). It prints the pulled commit. Alternatively run `alpaca-ops` with `deploy-log`.
 
 ## 3. Verify (production API, read-only)
 
