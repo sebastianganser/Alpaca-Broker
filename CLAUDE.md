@@ -49,7 +49,7 @@ Critical paths (data fetching, computations, later order execution) are pure Pyt
 
 **Phase:** 🟡 Sprint 9.5c (Candidate Pipeline MVP), Phase 2 – review fixes deployed, short-term research K1–K4 finished without a usable edge, K5 (stage-2 forward test) running
 **Current sprint:** 9.5c Phase 2 – collect stage-2 decisions (K5), keep data quality stable; F1 composite score open
-**Next step:** keep collecting data; Sprint 10 readiness on 16.10.: 29/31 "GO" by volume, but ranking stability 0/10 and Options IV (33 d) / Estimates (52 d) history still short → re-run `alpaca-ops run scripts/sprint10_readiness.py` in early December, Sprint 10 from mid-December. Forward testing (K5) deliberately waits until after the sprints. Open points in ROADMAP (migrations 024/025 on a fresh DB, `NIGHTLY_UPSTREAM` critical flag, 13F feature check) – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 33
+**Next step:** keep collecting data; Sprint 10 readiness on 16.10.: 29/31 "GO" by volume, but ranking stability 0/10 and Options IV (33 d) / Estimates (52 d) history still short → re-run `alpaca-ops run scripts/sprint10_readiness.py` in early December, Sprint 10 from mid-December. Forward testing (K5) deliberately waits until after the sprints. Open points in ROADMAP (migration ↔ ORM drift, `NIGHTLY_UPSTREAM` critical flag, 13F feature check) – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 33
 **Last updated:** 16 October 2026 (Claude Code setup, Unraid ops via User Script)
 **Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `b60038e` (deployed 15 October 2026), Alembic revision `035`
 
@@ -89,6 +89,7 @@ Dev machine: Windows 11, working directory = project root. The Bash tool is Git 
 | Frontend | `cd frontend && npm run dev` · `npm run build` (`tsc -b` + vite) · `npm run lint` |
 | Run the app | `uv run python -m trading_signals.main` – needs the DB from `.env`. The local `.env` points at the **production** DB and the app starts the scheduler + startup catch-up → do not start it locally without Sebastian's OK |
 | Migrations | `src/alembic/versions/` (001–035), applied by the container entrypoint on every start (fails hard). Do not run `alembic upgrade` against the local `.env`. A new migration is a new file `036_<name>.py` with `down_revision = "035"` ([DATABASE.md](docs/DATABASE.md)) |
+| Test migrations on a fresh DB | Docker Desktop: `docker run -d --rm --name alpaca-migtest -e POSTGRES_USER=migtest -e POSTGRES_PASSWORD=migtest -e POSTGRES_DB=broker_data -p 127.0.0.1:55435:5432 postgres:18`, then `DB_HOST=127.0.0.1 DB_PORT=55435 DB_NAME=broker_data DB_USER=migtest DB_PASSWORD=migtest .venv/Scripts/alembic.exe upgrade head` (set **all** `DB_*` – `.env` points at production), finally `docker rm -f alpaca-migtest` |
 
 **Production checks (read-only – the primary text channels):**
 
@@ -145,7 +146,7 @@ Each item is backed by `docs/DECISIONS_*.md`, `docs/LEARNINGS.md` or the code.
 - **Unit tests never open a DB session** (DECISIONS_ARCHITECTURE 2026-10-15). Code that calls `get_session()` internally – e.g. `NewTickerOnboarder` inside `PoliticianTradesCollector.store()` – must be patched (`patch("trading_signals.universe.onboarder.NewTickerOnboarder")`), otherwise the test talks to the production DB. Prove isolation with the unreachable-DB run above.
 
 **Operations**
-- **Migrations:** never edit an applied migration (production is at 035) – add a new one. Known: 024 and 025 both add the `sector_relative_*` columns, so a fresh-DB `alembic upgrade head` breaks at 025 (production unaffected, open point in ROADMAP).
+- **Migrations:** never change what an applied migration does (production is at 035) – schema changes go into a new migration. The only allowed edit of 001–035 is making a migration idempotent so a fresh DB replays cleanly (precedent: 025, 2026-10-16 – 024 had been extended after production applied it). Test every migration on a fresh DB (command above) before deploying – a failing migration sends the container into a restart loop.
 - **Container user `99:100`:** never `docker exec -u root` (root-owned files in `context_packs/` cannot be overwritten → `PermissionError`, LEARNINGS 2026-10-15); `/mnt/user/Workfiles/AlpacaBroker` must be owned by `99:100`.
 - **Night window:** collectors 22:30–~03:00, `nightly_chain` 04:30 ([SCHEDULER.md](docs/SCHEDULER.md)). No deploy/restart between 22:15 and 05:15 or while any job has `is_running: true` (a restart kills runs; they are marked stale on the next start). No manual writes to `feature_snapshots` during the chain (04:30–05:00, deadlock risk).
 - **Expected states:** weekend/holiday → `nightly_chain` `skipped` ("no new session"); IEX fallback or stale chain inputs → `partial`; `row_count = -1` in `table_stats` is a bug sentinel. After a deploy hard-reload the browser (Ctrl+F5) before debugging the UI.

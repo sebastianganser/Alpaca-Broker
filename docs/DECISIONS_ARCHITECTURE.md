@@ -202,6 +202,12 @@
 **Scope:** in the WebGUI only `alpaca-broker`, its appdata/Workfiles folders and its own User Script – never other containers (GynOrg, other projects on the host), array, shares, users, network or security settings (CLAUDE.md, "Unraid WebGUI scope").
 **Trade-off:** the wrapper runs repo code as root on the host, so anyone who can push to `main` can act on the host when the script is run – acceptable for a single-developer private repo; the previous 2026-10-15 note "deploy remains a manual step" is superseded.
 
+### [2026-10-16] Applied Migrations: Only Idempotency Fixes, Fresh-DB Replay Tested
+
+**Context:** Migration 024 had been extended after production applied it, so 025 re-added the same columns; production was fine, but a fresh `alembic upgrade head` failed at 025.
+**Decision:** Applied migrations (001–035) never change their effect. The only allowed edit is making a migration idempotent so both histories replay (025: `ADD COLUMN IF NOT EXISTS`, downgrade no-op because 024 owns the columns). Every new migration is tested on a throwaway local `postgres:18` (Docker Desktop, all `DB_*` overridden – the local `.env` points at production) before it is deployed: fresh `upgrade head` and a downgrade/upgrade round trip.
+**Rationale:** production only runs revisions after its current head, so idempotency edits are no-ops there; a broken chain blocks rebuilding the DB (the system keeps no backups) and a failing migration puts the container into a restart loop.
+
 ---
 
 ## Pending Decisions

@@ -916,7 +916,7 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 | 022 | Table `estimates_snapshot` (Sprint 9.5a) |
 | 023 | Table `index_membership` (Sprint 9.5a A1, survivorship bias) |
 | 024 | Table `macro_series` (FRED) + 19 `feature_snapshots` columns: `macro_*` (6), `sue_last`, `days_since_last_earnings`, `news_volume_ratio_7d`, `dollar_volume_20d`, `amihud_illiquidity_20d`, `insider_buy_ratio_30d/90d`, `form13f_exited_positions_count`, `form13f_holder_delta_qoq`, `breadth_*` (2), `sector_relative_return_20d`, `sector_relative_momentum` |
-| 025 | Adds `sector_relative_return_20d`, `sector_relative_momentum` to `feature_snapshots` (Sprint 9.5b B4) – same two columns as in 024, see note below |
+| 025 | Adds `sector_relative_return_20d`, `sector_relative_momentum` to `feature_snapshots` (Sprint 9.5b B4) – same two columns as in 024; idempotent since 2026-10-16, see note below |
 | 026 | Table `options_iv_snapshot` (Sprint 9.5b D3) |
 | 027 | Tables `short_volume` + `short_interest`; `feature_snapshots.short_volume_ratio_5d/20d`, `short_volume_change_20d` (Sprint 9.5c B5) |
 | 028 | `feature_snapshots`: options-IV features `options_iv_atm_30d/skew_25d/term_slope/put_call_oi` and estimates features `eps_revision_pct_30d/90d`, `revenue_revision_pct_30d`, `eps_revisions_net_7d/30d` |
@@ -928,8 +928,8 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 | 034 | Nine short-term price features `st_*` (NUMERIC(12,6)) on `feature_snapshots` (concept 2026-10-06 §7.1) |
 | 035 | Tables `stage2_reviews` + `stage2_decisions` (FK `ON DELETE CASCADE`, check `ck_stage2_decisions_action`, unique `uq_stage2_session_ticker`; stage-2 forward test, concept 2026-10-06 §7.7) |
 
-> [!WARNING]
-> Migration 024 already adds `sector_relative_return_20d` and `sector_relative_momentum` to `feature_snapshots`, and migration 025 adds the same two columns again without an existence check. On an empty database, `alembic upgrade head` would therefore fail at 025 with a duplicate-column error, unless the migration files are adjusted. Databases that were already at 025 or later are not affected.
+> [!NOTE]
+> Migration 024 was extended after production had applied it (commit `81446a4` added `sector_relative_return_20d` / `sector_relative_momentum`), so 025 (`32168a0`) created the two columns in production. On an empty database both added them and `alembic upgrade head` failed at 025. **Fixed 2026-10-16:** 025 uses `ADD COLUMN IF NOT EXISTS` and its downgrade is a no-op (024's downgrade drops the columns). Verified on a throwaway `postgres:18`: fresh `upgrade head` → 035, round trip `025 → 023 → head`, and the production history (old 024 without the columns → 025 creates them). No effect on databases already at 025 or later.
 
 **Schema differences between migrations and ORM** (no `metadata.create_all` in `src/` or `scripts/` – the live schema is defined by the migrations):
 
@@ -937,3 +937,4 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 - `prices_daily`: partial index `idx_prices_extrapolated` exists only in migration 003, not in the ORM.
 - `collection_log`: migration 031 creates `ix_collection_log_collector_started` on `(collector_name, started_at DESC)`; the ORM declares it without `DESC`.
 - `collection_log.gaps_*`, `universe.is_active`, `prices_daily.is_extrapolated/source`, `insider_trades.is_derivative`, `ark_holdings.source`, `short_volume.source`, `short_interest.source`: server defaults come from the migrations; the ORM only sets Python-side defaults.
+- Schema-aware comparison of a fresh `upgrade head` with the ORM metadata (2026-10-16): no missing/extra tables or columns, no type mismatches, but 39 differences – ~28 columns `NOT NULL` in the ORM but nullable in the DB (mostly `fetched_at`/`computed_at`/`source` and booleans with server defaults), indexes only in the migrations (`ark_deltas.idx_ark_deltas_ticker`, `ark_holdings.idx_ark_date`/`idx_ark_ticker`, `prices_daily.idx_prices_date`/`idx_prices_extrapolated`, `technical_indicators.idx_technical_indicators_date`), the `DESC` index and FK above, and a column comment on `universe.index_membership`. `alembic check` cannot show this as configured: `src/alembic/env.py` lacks `include_schemas=True`, so every `signals` table appears as "added".

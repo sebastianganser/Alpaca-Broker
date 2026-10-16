@@ -2,9 +2,16 @@
 
 Revision ID: 025
 Revises: 024
+
+History note: migration 024 was edited after production had already applied
+it (commit 81446a4 added these two columns to its feature_snapshots list), so
+025 was added to create them on the production database. A fresh database
+replaying 024 -> 025 therefore already has the columns when 025 runs.
+``upgrade()`` is idempotent (``ADD COLUMN IF NOT EXISTS``) so both histories
+replay cleanly. ``downgrade()`` is a no-op because 024's downgrade drops the
+columns.
 """
 
-import sqlalchemy as sa
 from alembic import op
 
 revision = "025"
@@ -12,18 +19,15 @@ down_revision = "024"
 
 
 def upgrade() -> None:
-    new_columns = [
-        ("sector_relative_return_20d", sa.Numeric(10, 6)),
-        ("sector_relative_momentum", sa.Numeric(10, 6)),
-    ]
-    for col_name, col_type in new_columns:
-        op.add_column(
-            "feature_snapshots",
-            sa.Column(col_name, col_type, nullable=True),
-            schema="signals",
+    # NUMERIC(10, 6), nullable – identical to the former op.add_column call.
+    for col_name in ("sector_relative_return_20d", "sector_relative_momentum"):
+        op.execute(
+            f"ALTER TABLE signals.feature_snapshots "
+            f"ADD COLUMN IF NOT EXISTS {col_name} NUMERIC(10, 6)"
         )
 
 
 def downgrade() -> None:
-    for col_name in ["sector_relative_momentum", "sector_relative_return_20d"]:
-        op.drop_column("feature_snapshots", col_name, schema="signals")
+    # No-op: the columns are owned by 024 (its downgrade drops them). Dropping
+    # them here would make 024's downgrade fail on a fresh database.
+    pass
