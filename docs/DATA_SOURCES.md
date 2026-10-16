@@ -306,6 +306,7 @@ Daily short volume data per ticker from FINRA:
 - **Free tier rate limit** makes full universe scan slow (~2.5h)
 - **T+1 delay** – data available next trading day
 - **Short volume ≠ short interest** – volume is daily flow, interest is outstanding positions (bi-monthly FINRA data, separate endpoint)
+- **Short interest endpoint verified (2026-10-16, probe, not yet collected):** `GET /stocks/v1/short-interest` works on the free tier. History reaches back to 2017-12-29 (AAPL: 211 settlement dates, twice a month). One request per `settlement_date` returns **all** tickers in one page (2026-09-30: 22,579 rows incl. OTC, no `next_url`) → backfill from `data_start_date()` ≈ 120 requests (~25 min at 12 s), ongoing 2 requests per month. Fields: `ticker`, `settlement_date`, `short_interest`, `avg_daily_volume`, `days_to_cover` (`999.99` when `avg_daily_volume` is 0 → treat as NULL). No publication date in the payload – FINRA publishes several business days after the settlement date (2026-09-30 was available on 2026-10-16), so features need a conservative availability lag (lookahead).
 
 ---
 
