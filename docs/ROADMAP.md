@@ -245,7 +245,7 @@
 - [x] **Deploy** `050ff32` + `97fcdb0` auf Unraid – deployt am 15.10. als `b60038e` (Session 32), Dashboard zeigt echte Zeilenzahlen für `news_*`
 - [x] **Test-Isolation:** `test_store_writes_trades` und `test_store_dedup_counts` (`tests/unit/test_politician_trades.py`) öffneten über `NewTickerOnboarder` eine **echte DB-Session** – behoben am 15.10. in Session 32 (`NewTickerOnboarder` gepatcht, 850 Tests laufen ohne DB)
 - [x] **Migrationskette auf leerer DB:** 024 und 025 legten beide `sector_relative_*` an → frisches `upgrade head` brach an 025 ab. Behoben 16.10. (Session 33): 025 idempotent (`ADD COLUMN IF NOT EXISTS`, Downgrade no-op), auf Wegwerf-`postgres:18` geprüft; Produktion unberührt
-- [ ] **Migration ↔ ORM angleichen** (Befund 16.10., [DATABASE.md](DATABASE.md)): 39 Abweichungen (Nullability, Indizes nur in Migrationen, fehlender FK `technical_indicators → universe`, `DESC`-Index); zuerst `include_schemas=True` in `src/alembic/env.py`, damit `alembic check` nutzbar wird – dann entscheiden, ob ORM oder neue Migration 036 angepasst wird
+- [x] **Migration ↔ ORM angeglichen** (16.10., Session 33): 39 Abweichungen behoben, indem das ORM an das migrierte Schema angepasst wurde (Produktion unverändert); `alembic check` schema-aware inkl. Server-Defaults, Ergebnis „No new upgrade operations detected“ ([DATABASE.md](DATABASE.md))
 - [ ] `registry.NIGHTLY_UPSTREAM`: das Flag „kritisch“ (`True` bei `prices_alpaca`) wird von `check_upstream()` nicht ausgewertet – alle Eingänge werden gleich behandelt. Klären, ob gewollt
 - [ ] `short_interest`-Tabelle (Migration 027) wird von keinem Collector befüllt – FINRA-Short-Interest (zweiwöchentlich) sammeln oder Tabelle bewusst leer lassen
 - [ ] Prüfen, ob historische 13F-Feature-Spalten nach dem Ticker-Backfill neu berechnet wurden (SQL in SESSION_LOG, Session 31)
@@ -257,7 +257,7 @@
 
 ### Nächste Schritte
 1. ✅ `b60038e` deployt (15.10.); Log-Check am 16.10. (erste Nightly Chain mit neuem Image)
-2. ✅ Politician-Tests isoliert (Session 32), Migrationskette 024/025 auf leerer DB behoben (Session 33); als Nächstes ggf. Migration ↔ ORM angleichen
+2. ✅ Politician-Tests isoliert (Session 32), Migrationskette 024/025 auf leerer DB behoben (Session 33); Migration ↔ ORM angeglichen (Session 33)
 3. Daten weiter sammeln, Readiness Anfang Dezember erneut prüfen (16.10.: 29/31 „GO“, aber Ranking-Stabilität 0/10); K5 (Vorwärtstest) bewusst zurückgestellt bis nach den Sprints
 4. Sprint 10 frühestens ab Mitte Dezember 2026 – Inhalt hängt davon ab, ob bis dahin ein Ranking den Walk-forward besteht (K3 erneut frühestens Januar 2027)
 

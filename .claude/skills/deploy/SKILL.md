@@ -13,7 +13,7 @@ Access path: Unraid WebGUI (http://192.168.1.93) in Claude Code's built-in brows
 
 1. Working tree clean: `git status` shows nothing to commit.
 2. Pushed: `git fetch origin`, then `git rev-parse HEAD` equals `git rev-parse origin/main`.
-3. `uv run pytest` is green (note the count). If the diff since the deployed commit contains a migration or a change to collectors, features, targets or the scheduler and it has not been reviewed yet, run the `code-reviewer` agent first – a failing migration sends the new container into a restart loop.
+3. `uv run pytest` is green (note the count). If the diff since the deployed commit contains a migration or a change to collectors, features, targets or the scheduler and it has not been reviewed yet, run the `code-reviewer` agent first; with a migration also run the fresh-DB test from CLAUDE.md (`upgrade head` + `alembic check` clean) – a failing migration sends the new container into a restart loop.
 4. Timing, from the production API (`curl -s http://192.168.1.93:8090/api/v1/dashboard/summary`) and `date`:
    - local Berlin time is **outside 22:15–05:15** (collectors 22:30–~03:00, nightly chain 04:30);
    - **no collector has `is_running: true`** (includes the Sunday daytime jobs `form13f_collector` 10:00 and `politician_trades_collector` 11:00);

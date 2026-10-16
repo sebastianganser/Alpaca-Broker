@@ -14,9 +14,11 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Numeric,
     String,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +29,15 @@ class PriceDaily(Base):
     """Daily OHLCV price data for a ticker."""
 
     __tablename__ = "prices_daily"
+    __table_args__ = (
+        Index("idx_prices_date", "trade_date"),
+        # Partial index (only gap-filled rows), migration 003
+        Index(
+            "idx_prices_extrapolated",
+            "is_extrapolated",
+            postgresql_where=text("is_extrapolated = true"),
+        ),
+    )
 
     ticker: Mapped[str] = mapped_column(
         String(20),
@@ -43,10 +54,14 @@ class PriceDaily(Base):
     close: Mapped[float | None] = mapped_column(Numeric(16, 4))
     adj_close: Mapped[float | None] = mapped_column(Numeric(16, 4))
     volume: Mapped[int | None] = mapped_column(BigInteger)
-    source: Mapped[str] = mapped_column(String(50), default="yfinance")
-    is_extrapolated: Mapped[bool] = mapped_column(Boolean, default=False)
+    source: Mapped[str] = mapped_column(
+        String(50), nullable=True, default="yfinance", server_default="yfinance"
+    )
+    is_extrapolated: Mapped[bool] = mapped_column(
+        Boolean, nullable=True, default=False, server_default=text("false")
+    )
     fetched_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        DateTime, nullable=True, server_default=func.now()
     )
 
     def __repr__(self) -> str:

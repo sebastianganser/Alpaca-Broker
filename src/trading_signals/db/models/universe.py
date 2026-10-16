@@ -10,7 +10,7 @@ Once added, tickers are never deleted – only marked as inactive.
 
 from datetime import date
 
-from sqlalchemy import Boolean, Date, Index, String
+from sqlalchemy import Boolean, Date, Index, String, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,12 +40,16 @@ class Universe(Base):
     # Lifecycle
     added_date: Mapped[date] = mapped_column(Date, nullable=False)
     added_by: Mapped[str | None] = mapped_column(String(50))
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=True, default=True, server_default=text("true")
+    )
     last_seen: Mapped[date | None] = mapped_column(Date)
 
     # Index membership (e.g. ["sp500", "nasdaq100"])
     index_membership: Mapped[list[str] | None] = mapped_column(
-        ARRAY(String(20)), default=None
+        ARRAY(String(20)),
+        default=None,
+        comment="Index memberships, e.g. {sp500, nasdaq100}",
     )
 
     # Flexible storage for additional data

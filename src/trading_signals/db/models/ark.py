@@ -9,6 +9,7 @@ from datetime import date, datetime
 from sqlalchemy import (
     Date,
     DateTime,
+    Index,
     Integer,
     Numeric,
     String,
@@ -23,6 +24,10 @@ class ARKHolding(Base):
     """Daily snapshot of a single holding within an ARK ETF."""
 
     __tablename__ = "ark_holdings"
+    __table_args__ = (
+        Index("idx_ark_ticker", "ticker"),
+        Index("idx_ark_date", "snapshot_date"),
+    )
 
     snapshot_date: Mapped[date] = mapped_column(Date, primary_key=True)
     etf_ticker: Mapped[str] = mapped_column(String(10), primary_key=True)
@@ -34,9 +39,11 @@ class ARKHolding(Base):
     weight_pct: Mapped[float | None] = mapped_column(Numeric(8, 4))
     weight_rank: Mapped[int | None] = mapped_column(Integer)
     share_price: Mapped[float | None] = mapped_column(Numeric(16, 4))
-    source: Mapped[str] = mapped_column(String(50), default="arkfunds.io")
+    source: Mapped[str] = mapped_column(
+        String(50), nullable=True, default="arkfunds.io", server_default="arkfunds.io"
+    )
     fetched_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        DateTime, nullable=True, server_default=func.now()
     )
 
     def __repr__(self) -> str:
@@ -50,6 +57,7 @@ class ARKDelta(Base):
     """Daily change in an ARK ETF position (derived from holdings snapshots)."""
 
     __tablename__ = "ark_deltas"
+    __table_args__ = (Index("idx_ark_deltas_ticker", "ticker"),)
 
     delta_date: Mapped[date] = mapped_column(Date, primary_key=True)
     etf_ticker: Mapped[str] = mapped_column(String(10), primary_key=True)
@@ -62,7 +70,7 @@ class ARKDelta(Base):
     weight_curr: Mapped[float | None] = mapped_column(Numeric(8, 4))
     weight_delta: Mapped[float | None] = mapped_column(Numeric(8, 4))
     computed_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        DateTime, nullable=True, server_default=func.now()
     )
 
     def __repr__(self) -> str:

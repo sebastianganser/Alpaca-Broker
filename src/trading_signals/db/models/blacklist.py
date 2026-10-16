@@ -28,7 +28,7 @@ class TickerBlacklist(Base):
     quote_type: Mapped[str | None] = mapped_column(String(20))
     source: Mapped[str | None] = mapped_column(String(50))
     detected_at: Mapped[datetime] = mapped_column(
-        TZDateTime(), server_default=func.now()
+        TZDateTime(), nullable=True, server_default=func.now()
     )
 
     def __repr__(self) -> str:

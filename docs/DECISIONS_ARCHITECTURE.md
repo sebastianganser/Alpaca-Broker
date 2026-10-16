@@ -205,7 +205,7 @@
 ### [2026-10-16] Applied Migrations: Only Idempotency Fixes, Fresh-DB Replay Tested
 
 **Context:** Migration 024 had been extended after production applied it, so 025 re-added the same columns; production was fine, but a fresh `alembic upgrade head` failed at 025.
-**Decision:** Applied migrations (001–035) never change their effect. The only allowed edit is making a migration idempotent so both histories replay (025: `ADD COLUMN IF NOT EXISTS`, downgrade no-op because 024 owns the columns). Every new migration is tested on a throwaway local `postgres:18` (Docker Desktop, all `DB_*` overridden – the local `.env` points at production) before it is deployed: fresh `upgrade head` and a downgrade/upgrade round trip.
+**Decision:** Applied migrations (001–035) never change their effect. The only allowed edit is making a migration idempotent so both histories replay (025: `ADD COLUMN IF NOT EXISTS`, downgrade no-op because 024 owns the columns). Every new migration is tested on a throwaway local `postgres:18` (Docker Desktop, all `DB_*` overridden – the local `.env` points at production) before it is deployed: fresh `upgrade head`, a downgrade/upgrade round trip and `alembic check`. The ORM mirrors the migrated schema (aligned 2026-10-16: nullability, server defaults, indexes, no FK `technical_indicators → universe`); `env.py` compares only the `signals` schema and also server defaults, so `alembic check` is a real gate.
 **Rationale:** production only runs revisions after its current head, so idempotency edits are no-ops there; a broken chain blocks rebuilding the DB (the system keeps no backups) and a failing migration puts the container into a restart loop.
 
 ---

@@ -95,11 +95,13 @@ class EstimatesSnapshot(Base):
     revenue_growth: Mapped[float | None] = mapped_column(Numeric(10, 6))
 
     # ── Metadata ─────────────────────────────────────────────────────
-    source: Mapped[str] = mapped_column(String(50), nullable=False, default="yfinance")
+    source: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="yfinance", server_default="yfinance"
+    )
     # Complete raw response for future-proofing
     raw: Mapped[dict | None] = mapped_column(JSONB)
     fetched_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        DateTime, nullable=True, server_default=func.now()
     )
 
     def __repr__(self) -> str:

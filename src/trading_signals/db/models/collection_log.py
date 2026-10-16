@@ -6,7 +6,7 @@ status, record counts, gap statistics, and any errors encountered.
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,7 +19,11 @@ class CollectionLog(Base):
     __tablename__ = "collection_log"
     __table_args__ = (
         # Migration 031: dashboard/health look up the latest run per collector
-        Index("ix_collection_log_collector_started", "collector_name", "started_at"),
+        Index(
+            "ix_collection_log_collector_started",
+            "collector_name",
+            text("started_at DESC"),
+        ),
         Index("ix_collection_log_started_at", "started_at"),
     )
 
@@ -30,9 +34,15 @@ class CollectionLog(Base):
     status: Mapped[str | None] = mapped_column(String(20))  # see utils.job_status
     records_fetched: Mapped[int | None] = mapped_column(Integer)
     records_written: Mapped[int | None] = mapped_column(Integer)
-    gaps_detected: Mapped[int] = mapped_column(Integer, default=0)
-    gaps_repaired: Mapped[int] = mapped_column(Integer, default=0)
-    gaps_extrapolated: Mapped[int] = mapped_column(Integer, default=0)
+    gaps_detected: Mapped[int] = mapped_column(
+        Integer, nullable=True, default=0, server_default=text("0")
+    )
+    gaps_repaired: Mapped[int] = mapped_column(
+        Integer, nullable=True, default=0, server_default=text("0")
+    )
+    gaps_extrapolated: Mapped[int] = mapped_column(
+        Integer, nullable=True, default=0, server_default=text("0")
+    )
     errors: Mapped[dict | None] = mapped_column(JSONB)
     notes: Mapped[str | None] = mapped_column(Text)
     log_lines: Mapped[list | None] = mapped_column(JSONB)

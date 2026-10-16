@@ -29,6 +29,21 @@ settings = get_settings()
 target_metadata = Base.metadata
 
 
+def include_name(name, type_, parent_names):
+    """Schema-aware autogenerate: only reflect the 'signals' schema.
+
+    ``name`` is ``None`` for the connection's default schema (``public``);
+    every schema other than ``signals`` is skipped. The Alembic version table
+    lives in ``signals`` (``version_table_schema``) and is never compared
+    against the ORM metadata.
+    """
+    if type_ == "schema":
+        return name == "signals"
+    if type_ == "table":
+        return name != "alembic_version"
+    return True
+
+
 def include_object(object, name, type_, reflected, compare_to):
     """Only include objects in the 'signals' schema."""
     if type_ == "table":
@@ -43,7 +58,10 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_schemas=True,
+        include_name=include_name,
         include_object=include_object,
+        compare_server_default=True,
         version_table_schema="signals",
     )
     with context.begin_transaction():
@@ -69,7 +87,11 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
+            include_schemas=True,
+            include_name=include_name,
             include_object=include_object,
+            # alembic check also guards server defaults (clean as of 2026-10-16)
+            compare_server_default=True,
             version_table_schema="signals",
         )
         with context.begin_transaction():

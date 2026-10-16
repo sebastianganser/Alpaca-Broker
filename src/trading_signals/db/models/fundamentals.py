@@ -60,7 +60,7 @@ class FundamentalsSnapshot(Base):
     # Fiscal quarter end the TTM figures refer to (yfinance mostRecentQuarter)
     most_recent_quarter: Mapped[date | None] = mapped_column(Date)
     fetched_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        DateTime, nullable=True, server_default=func.now()
     )
 
     def __repr__(self) -> str:
@@ -97,7 +97,7 @@ class AnalystRating(Base):
     action: Mapped[str | None] = mapped_column(String(50))  # up, down, main, init, reit
     raw_data: Mapped[dict | None] = mapped_column(JSONB)
     fetched_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        DateTime, nullable=True, server_default=func.now()
     )
 
     def __repr__(self) -> str:
@@ -127,7 +127,7 @@ class EarningsCalendar(Base):
     # only, last_seen is bumped on every run that still reports the date
     # (Migration 029).
     fetched_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        DateTime, nullable=True, server_default=func.now()
     )
     first_seen: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now()

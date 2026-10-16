@@ -39,8 +39,12 @@ class ShortVolume(Base):
     short_volume: Mapped[int | None] = mapped_column(BigInteger)
     total_volume: Mapped[int | None] = mapped_column(BigInteger)
     short_volume_ratio: Mapped[float | None] = mapped_column(Numeric(6, 4))
-    source: Mapped[str] = mapped_column(String(50), default="massive")
-    fetched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    source: Mapped[str] = mapped_column(
+        String(50), nullable=True, default="massive", server_default="massive"
+    )
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=True, server_default=func.now()
+    )
 
 
 class ShortInterest(Base):
@@ -59,5 +63,9 @@ class ShortInterest(Base):
     short_interest: Mapped[int | None] = mapped_column(BigInteger)
     avg_daily_volume: Mapped[int | None] = mapped_column(BigInteger)
     days_to_cover: Mapped[float | None] = mapped_column(Numeric(10, 4))
-    source: Mapped[str] = mapped_column(String(50), default="massive")
-    fetched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    source: Mapped[str] = mapped_column(
+        String(50), nullable=True, default="massive", server_default="massive"
+    )
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=True, server_default=func.now()
+    )

@@ -236,7 +236,7 @@ class FeatureSnapshot(Base):
 
     # ── Metadata ─────────────────────────────────────────────────────
     computed_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        DateTime, nullable=True, server_default=func.now()
     )
     # Version of the feature definitions that produced this row
     # (derived.feature_pipeline.FEATURE_VERSION, migration 030).

@@ -566,7 +566,7 @@ Technical indicators per ticker and day. Since migration 030, rows on gap-filled
 
 ```sql
 CREATE TABLE signals.technical_indicators (
-  ticker          VARCHAR(20),            -- ORM declares FK → universe(ticker); migration 012 creates none
+  ticker          VARCHAR(20),            -- no FK to universe (neither migration 012 nor ORM, aligned 2026-10-16)
   trade_date      DATE,
   sma_20          NUMERIC(16,4),
   sma_50          NUMERIC(16,4),
@@ -931,10 +931,4 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 > [!NOTE]
 > Migration 024 was extended after production had applied it (commit `81446a4` added `sector_relative_return_20d` / `sector_relative_momentum`), so 025 (`32168a0`) created the two columns in production. On an empty database both added them and `alembic upgrade head` failed at 025. **Fixed 2026-10-16:** 025 uses `ADD COLUMN IF NOT EXISTS` and its downgrade is a no-op (024's downgrade drops the columns). Verified on a throwaway `postgres:18`: fresh `upgrade head` → 035, round trip `025 → 023 → head`, and the production history (old 024 without the columns → 025 creates them). No effect on databases already at 025 or later.
 
-**Schema differences between migrations and ORM** (no `metadata.create_all` in `src/` or `scripts/` – the live schema is defined by the migrations):
-
-- `technical_indicators.ticker`: the ORM declares `ForeignKey("signals.universe.ticker")`; migration 012 creates no FK.
-- `prices_daily`: partial index `idx_prices_extrapolated` exists only in migration 003, not in the ORM.
-- `collection_log`: migration 031 creates `ix_collection_log_collector_started` on `(collector_name, started_at DESC)`; the ORM declares it without `DESC`.
-- `collection_log.gaps_*`, `universe.is_active`, `prices_daily.is_extrapolated/source`, `insider_trades.is_derivative`, `ark_holdings.source`, `short_volume.source`, `short_interest.source`: server defaults come from the migrations; the ORM only sets Python-side defaults.
-- Schema-aware comparison of a fresh `upgrade head` with the ORM metadata (2026-10-16): no missing/extra tables or columns, no type mismatches, but 39 differences – ~28 columns `NOT NULL` in the ORM but nullable in the DB (mostly `fetched_at`/`computed_at`/`source` and booleans with server defaults), indexes only in the migrations (`ark_deltas.idx_ark_deltas_ticker`, `ark_holdings.idx_ark_date`/`idx_ark_ticker`, `prices_daily.idx_prices_date`/`idx_prices_extrapolated`, `technical_indicators.idx_technical_indicators_date`), the `DESC` index and FK above, and a column comment on `universe.index_membership`. `alembic check` cannot show this as configured: `src/alembic/env.py` lacks `include_schemas=True`, so every `signals` table appears as "added".
+**Migrations and ORM are aligned** (2026-10-16): the live schema is defined by the migrations (no `metadata.create_all` in `src/` or `scripts/`); the ORM models mirror it exactly – nullability, server defaults, all indexes (incl. the partial `idx_prices_extrapolated` and `ix_collection_log_collector_started` on `started_at DESC`), column comments. `technical_indicators.ticker` has **no** FK to `universe` (none was ever migrated; derived table). Gate: `alembic check` on a fresh `upgrade head` – `src/alembic/env.py` compares the `signals` schema only (`include_schemas` + `include_name`) and server defaults (`compare_server_default`); expected output "No new upgrade operations detected." A schema change therefore always means a new migration **and** the matching ORM change in the same commit.

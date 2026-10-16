@@ -14,7 +14,7 @@ from datetime import date
 
 from sqlalchemy import (
     Date,
-    ForeignKey,
+    Index,
     Numeric,
     String,
 )
@@ -27,12 +27,10 @@ class TechnicalIndicator(Base):
     """Technical analysis indicators for a ticker on a given trading day."""
 
     __tablename__ = "technical_indicators"
+    __table_args__ = (Index("idx_technical_indicators_date", "trade_date"),)
 
-    ticker: Mapped[str] = mapped_column(
-        String(20),
-        ForeignKey("signals.universe.ticker"),
-        primary_key=True,
-    )
+    # No FK to signals.universe: no migration creates one (derived table).
+    ticker: Mapped[str] = mapped_column(String(20), primary_key=True)
     trade_date: Mapped[date] = mapped_column(
         Date,
         primary_key=True,

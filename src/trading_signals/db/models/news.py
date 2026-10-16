@@ -49,9 +49,11 @@ class NewsArticle(Base):
     published_at: Mapped[datetime] = mapped_column(TZDateTime(), nullable=False)
     article_url: Mapped[str | None] = mapped_column(Text)
     symbols: Mapped[list[str] | None] = mapped_column(ARRAY(String(20)))
-    is_global: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    is_global: Mapped[bool] = mapped_column(
+        Boolean, nullable=True, server_default="false"
+    )
     fetched_at: Mapped[datetime] = mapped_column(
-        TZDateTime(), server_default=func.now()
+        TZDateTime(), nullable=True, server_default=func.now()
     )
 
     def __repr__(self) -> str:
@@ -98,7 +100,7 @@ class NewsSentiment(Base):
     confidence: Mapped[float | None] = mapped_column(Numeric(6, 4))
     model_version: Mapped[str] = mapped_column(String(50), nullable=False)
     scored_at: Mapped[datetime] = mapped_column(
-        TZDateTime(), server_default=func.now()
+        TZDateTime(), nullable=True, server_default=func.now()
     )
 
     def __repr__(self) -> str:

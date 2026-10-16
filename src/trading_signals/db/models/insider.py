@@ -80,11 +80,13 @@ class InsiderTrade(Base):
     price_per_share: Mapped[float | None] = mapped_column(Numeric(16, 4))
     total_value: Mapped[float | None] = mapped_column(Numeric(20, 2))
     shares_owned_after: Mapped[float | None] = mapped_column(Numeric(20, 4))
-    is_derivative: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_derivative: Mapped[bool] = mapped_column(
+        Boolean, nullable=True, default=False, server_default=text("false")
+    )
     form4_url: Mapped[str | None] = mapped_column(Text)
     raw_data: Mapped[dict | None] = mapped_column(JSONB)
     fetched_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        DateTime, nullable=True, server_default=func.now()
     )
 
     def __repr__(self) -> str:
@@ -122,7 +124,7 @@ class InsiderCluster(Base):
     # cluster computation.
     known_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     computed_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        DateTime, nullable=True, server_default=func.now()
     )
 
     def __repr__(self) -> str:

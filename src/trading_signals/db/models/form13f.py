@@ -65,7 +65,7 @@ class Form13FHolding(Base):
     amendment_type: Mapped[str | None] = mapped_column(String(20))
     source_url: Mapped[str | None] = mapped_column(Text)
     fetched_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        DateTime, nullable=True, server_default=func.now()
     )
 
     def __repr__(self) -> str:

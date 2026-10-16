@@ -54,10 +54,12 @@ class MacroSeries(Base):
     series_id: Mapped[str] = mapped_column(String(30), nullable=False)
     obs_date: Mapped[date] = mapped_column(Date, nullable=False)
     value: Mapped[float | None] = mapped_column(Numeric(16, 6))
-    source: Mapped[str] = mapped_column(String(20), nullable=False, default="fred")
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="fred", server_default="fred"
+    )
     as_of: Mapped[date] = mapped_column(Date, nullable=False)  # When we fetched it
     fetched_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+        DateTime, nullable=True, server_default=func.now()
     )
 
     def __repr__(self) -> str:
