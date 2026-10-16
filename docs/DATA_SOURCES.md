@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** September 2026
+**Last updated:** 16 October 2026
 
 ---
 
@@ -26,7 +26,7 @@
 | **ProsusAI/finbert** | NLP Sentiment Scoring | Free (local) | Daily | <1 min | 8c | ✅ Active |
 | **FRED (St. Louis Fed)** | Macro Indicators | Free | Daily | ~6h after US close | 9.5b | ✅ Active |
 | **yfinance – Options** | Implied Volatility | Free | Daily | ~20 min EOD | 9.5b | ✅ Active |
-| **Massive (ex Polygon)** | Short Interest / Volume | Free | Daily | T+1 | 9.5c | ✅ Active |
+| **Massive (ex Polygon)** | Short Volume (daily) + FINRA Short Interest (twice a month) | Free | Daily (volume) / weekly run (interest) | T+1 (volume) / ~7 business days after settlement date (interest) | 9.5c | ✅ Active |
 
 ---
 
@@ -278,7 +278,7 @@ Sentiment scores for financial news headlines:
 ## 10. Massive API – Short Interest / Volume (Sprint 9.5c)
 
 **Category:** Short selling data (FINRA reported)
-**API Endpoint:** `https://api.massive.com/stocks/v1/short-volume`
+**API Endpoints:** `https://api.massive.com/stocks/v1/short-volume` (daily short volume), `https://api.massive.com/stocks/v1/short-interest` (FINRA settlement-date positions)
 **Docs:** https://massive.com/docs (formerly https://polygon.io/docs)
 **Status:** ✅ Implemented (Sprint 9.5c)
 
@@ -290,23 +290,34 @@ Daily short volume data per ticker from FINRA:
 - `total_volume` – total consolidated volume
 - `short_volume_ratio` – short_volume / total_volume
 
+In addition the twice-monthly FINRA **short interest** (outstanding positions per settlement date) – see "FINRA Short Interest" below.
+
 ### Configuration
 - **API Key:** Free tier at https://massive.com (registration required)
 - **Rate Limit:** 5 requests/minute (free tier) → 12s between tickers
 - **~765 tickers in ~2.5 hours** per daily run
-- **Schedule:** Daily 04:45 CET (after Options IV)
-- **Auth:** API key as query parameter `apiKey={key}`
+- **Schedule:** Daily 00:15 Europe/Berlin (short volume, `short_interest_collector`); Sunday 12:00 (FINRA short interest, `short_interest_positions_collector`)
+- **Auth:** API key as `Authorization: Bearer` header (never as a query parameter – URLs end up in logs)
 
 ### Feature Signals
 - `short_volume_ratio_5d` – 5-day average short volume ratio
 - `short_volume_ratio_20d` – 20-day average short volume ratio
 - `short_volume_change_20d` – 20-day momentum change in short ratio
 
+### FINRA Short Interest (settlement data, since 2026-10-16)
+Outstanding short positions per settlement date, published twice a month. A **different dataset** than the daily short volume above; stored in `signals.short_interest` ([DATABASE.md](DATABASE.md)).
+- **Collector:** `collectors/short_interest_positions_collector.py` (`ShortInterestPositionsCollector`, `collection_log` name `short_interest_positions`), job `short_interest_positions_collector`, **Sunday 12:00 Europe/Berlin**, not part of `NIGHTLY_UPSTREAM` ([SCHEDULER.md](SCHEDULER.md)).
+- **Requests:** one reference request (AAPL) lists the settlement dates; then **one bulk request per settlement date** (all tickers in one page), filtered client-side to all universe tickers incl. inactive ones. Fetched: dates not stored yet + the 2 most recent stored dates (FINRA revisions) + stored dates with < 50 % of the median row count; never before `data_start_date()`. 12 s pause between requests, retries on 429/5xx, `next_url` to foreign hosts is refused. Upsert on `(ticker, settlement_date, source)`. A normal run needs ~3 requests.
+- **Initial history:** `scripts/repair/collect_short_interest.py` (~120 requests, ~25 min at 12 s; `--refetch-all` fetches every date again, e.g. for tickers that joined later). Feature history: `scripts/repair/backfill_short_interest_features.py` (dry run by default, `--apply`).
+- **Features** (migration 036, `FEATURE_VERSION` 2026.10-3, group "Short Interest"): `short_interest_days_to_cover`, `short_interest_change_1m` (rules: `derived/short_interest_features.py`). **Availability rule (no lookahead):** a settlement date is usable for day `d` only if it is <= the 9th NYSE session before `d` (`SI_PUBLICATION_LAG_SESSIONS = 9`: FINRA publishes ~7 business days after settlement + 2 sessions margin); newest usable settlement older than 40 days → NULL; `change_1m` = SI(newest) / SI(2 usable settlements earlier) − 1 within 45 days, earlier SI must be > 0. `days_to_cover = 999.99` / `avg_daily_volume = 0` are stored as NULL.
+- **Use:** to be evaluated in the monthly feature analysis before any score use – expected value mainly as risk filter / longer horizons, not as a +1 %/14-day edge ([DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-10-16).
+- **Endpoint facts** (history since 2017-12-29, rows per date, fields, sentinel): see the "Short interest endpoint verified" bullet under Limitations.
+
 ### Limitations
 - **Free tier rate limit** makes full universe scan slow (~2.5h)
 - **T+1 delay** – data available next trading day
 - **Short volume ≠ short interest** – volume is daily flow, interest is outstanding positions (bi-monthly FINRA data, separate endpoint)
-- **Short interest endpoint verified (2026-10-16, probe, not yet collected):** `GET /stocks/v1/short-interest` works on the free tier. History reaches back to 2017-12-29 (AAPL: 211 settlement dates, twice a month). One request per `settlement_date` returns **all** tickers in one page (2026-09-30: 22,579 rows incl. OTC, no `next_url`) → backfill from `data_start_date()` ≈ 120 requests (~25 min at 12 s), ongoing 2 requests per month. Fields: `ticker`, `settlement_date`, `short_interest`, `avg_daily_volume`, `days_to_cover` (`999.99` when `avg_daily_volume` is 0 → treat as NULL). No publication date in the payload – FINRA publishes several business days after the settlement date (2026-09-30 was available on 2026-10-16), so features need a conservative availability lag (lookahead).
+- **Short interest endpoint verified (2026-10-16, probe; collected since the same day, see above):** `GET /stocks/v1/short-interest` works on the free tier. History reaches back to 2017-12-29 (AAPL: 211 settlement dates, twice a month). One request per `settlement_date` returns **all** tickers in one page (2026-09-30: 22,579 rows incl. OTC, no `next_url`) → backfill from `data_start_date()` ≈ 120 requests (~25 min at 12 s), ongoing 2 requests per month. Fields: `ticker`, `settlement_date`, `short_interest`, `avg_daily_volume`, `days_to_cover` (`999.99` when `avg_daily_volume` is 0 → treat as NULL). No publication date in the payload – FINRA publishes several business days after the settlement date (2026-09-30 was available on 2026-10-16), so features need a conservative availability lag (lookahead) – implemented as 9 NYSE sessions.
 
 ---
 

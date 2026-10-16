@@ -390,4 +390,18 @@
 
 **Result 2026-10-01:** 26/30 checks passed. Remaining failures were time-dependent (total snapshots, options IV / short volume / estimates history) plus 13F (0 %, fixed later by the CUSIP→ticker resolver, 2026-10-05) and ranking stability across monthly analysis reports (40 % top-10 overlap).
 
+---
 
+### [2026-10-16] FINRA Short Interest via Massive (Settlement Data)
+
+**Context:** The `short_interest` table (migration 027) had been empty since Sprint 9.5c: `short_interest_collector` writes only the daily short *volume*. ROADMAP carried the open point "collect FINRA short interest or leave the table empty on purpose". A probe on 2026-10-16 showed that `GET /stocks/v1/short-interest` works on the free tier, reaches back to 2017-12-29 and returns **all** tickers of one settlement date in a single page (details: [DATA_SOURCES.md](DATA_SOURCES.md) §10).
+
+**Decision (Sebastian):** Collect it – chosen over leaving the table empty or dropping it – because the free tier offers the full history and needs only one request per settlement date (initial backfill ≈ 120 requests, ~25 min; afterwards ~3 requests per week). Implementation:
+- Weekly job `short_interest_positions_collector` (Sunday 12:00 Europe/Berlin, `collection_log` name `short_interest_positions`), upsert on `(ticker, settlement_date, source)`; fetches new dates, the 2 most recent stored dates (FINRA revisions) and dates with < 50 % of the median row count; never before `data_start_date()`. Not a nightly upstream.
+- Features `short_interest_days_to_cover` and `short_interest_change_1m` (migration 036, `FEATURE_VERSION` 2026.10-3, group "Short Interest").
+- **Availability lag:** the payload carries no publication date, so a settlement date counts as public for day `d` only if it is <= the 9th NYSE session before `d` (FINRA publishes ~7 business days after settlement + 2 sessions margin); newest usable settlement older than 40 days → NULL. Rules: `derived/short_interest_features.py`, recorded in "Information Cut-offs" ([DECISIONS_FEATURES.md](DECISIONS_FEATURES.md)).
+- **Evaluation first:** the features are judged in the monthly feature analysis before any score use. Expected value is mainly as a risk filter / for longer horizons, **not** a +1 %/14-day edge (see LEARNINGS 2026-10-06: no validated edge for the short-term barrier trade).
+
+**Rationale:** Cheap to collect (one request per settlement date, free tier), point-in-time safe through the fixed lag, and the whole retention window (≈ 5 years) is available as history. The universe filter includes inactive tickers (survivorship).
+
+**Consequence:** The history is back-filled for the whole retention window (`scripts/repair/collect_short_interest.py`, then `scripts/repair/backfill_short_interest_features.py --apply`), unlike the "organic growth" rule of 2026-04-12 – acceptable here because availability is derived from the settlement date and the fixed lag, so the backfilled feature rows are free of lookahead. Backfilled rows keep their old `feature_version`.

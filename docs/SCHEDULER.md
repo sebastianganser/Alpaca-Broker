@@ -5,11 +5,11 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** 15 October 2026 (verified against `scheduler/setup.py` + `scheduler/registry.py`)
+**Last updated:** 16 October 2026 (verified against `scheduler/setup.py` + `scheduler/registry.py`)
 
-**24 registered jobs:** 13 daily (11 upstream jobs, `log_retention`, `nightly_chain`), 5 weekly (Sunday, incl. `data_retention`), 2 monthly, 4 paused chain steps. All times Europe/Berlin.
+**25 registered jobs:** 13 daily (11 upstream jobs, `log_retention`, `nightly_chain`), 6 weekly (Sunday, incl. `data_retention`), 2 monthly, 4 paused chain steps. All times Europe/Berlin.
 
-**Log names:** `collection_log.collector_name` differs from the job id for some jobs (`scheduler/registry.JOB_COLLECTOR_NAMES`), e.g. `price_collector` → `prices_alpaca`, `news_collector` → `news_alpaca`, `fundamentals_collector` → `fundamentals_yf`. The jobs `ark_holdings` and `form4_collector` additionally write the follow-up runs `ark_deltas` and `insider_clusters`.
+**Log names:** `collection_log.collector_name` differs from the job id for some jobs (`scheduler/registry.JOB_COLLECTOR_NAMES`), e.g. `price_collector` → `prices_alpaca`, `news_collector` → `news_alpaca`, `fundamentals_collector` → `fundamentals_yf`, `short_interest_positions_collector` → `short_interest_positions`. The jobs `ark_holdings` and `form4_collector` additionally write the follow-up runs `ark_deltas` and `insider_clusters`.
 
 ---
 
@@ -63,6 +63,7 @@ Before starting, the chain waits up to 2 h for upstream collectors (`registry.NI
 | 02:00 | `earnings_calendar_collector` | Earnings dates (BMO/AMC, `first_seen`/`last_seen`) |
 | 10:00 | `form13f_collector` | 13F filings (all filings in window, amendments, PUT/CALL separated) |
 | 11:00 | `politician_trades_collector` | Senate eFD PTRs (skips known source URLs) + auto-onboarding |
+| 12:00 | `short_interest_positions_collector` (`short_interest_positions`) | FINRA short interest (settlement-date positions, twice a month) via Massive `GET /stocks/v1/short-interest`: 1 reference request (AAPL) for the settlement-date list + 1 bulk request per date to fetch (dates not stored yet, the 2 most recent for revisions, dates with < 50 % of the median row count; never before `data_start_date()`), 12 s pause, ~3 requests per run. Not part of `NIGHTLY_UPSTREAM` (features apply a 9-session publication lag). Initial history: `scripts/repair/collect_short_interest.py` (~120 requests, ~25 min) |
 
 ## Monthly (1st of month)
 

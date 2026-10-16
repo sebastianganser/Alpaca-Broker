@@ -34,7 +34,7 @@ Poll `curl -s -m 10 http://192.168.1.93:8090/api/v1/health` until HTTP 200 (star
 
 - `health`: `status: ok`, `scheduler_running` and `db_connected` true.
 - `system_health.alembic_revision` equals the newest migration number in `src/alembic/versions/`.
-- `system_health.job_count` equals the number of jobs in `docs/SCHEDULER.md` (24 at the time of writing).
+- `system_health.job_count` equals the number of jobs in `docs/SCHEDULER.md` (25 at the time of writing).
 - `system_health.uptime_seconds` is small (new container).
 - `table_stats[]`: no `row_count < 0`.
 - `curl -s "http://192.168.1.93:8090/api/v1/logs?status=failed&limit=5"`: no new failed run started after the deploy.

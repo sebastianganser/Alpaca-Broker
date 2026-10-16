@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** October 2026 (migrations 001–035)
+**Last updated:** October 2026 (migrations 001–036)
 
 ---
 
@@ -491,10 +491,10 @@ CREATE INDEX idx_short_volume_date ON signals.short_volume(trade_date);
 ```
 
 ### `signals.short_interest` (Sprint 9.5c B5)
-Bi-monthly FINRA short interest settlement data.
+Bi-monthly FINRA short interest settlement data (outstanding short positions per settlement date). Written by the weekly `short_interest_positions_collector` (`collectors/short_interest_positions_collector.py`, collector name `short_interest_positions`, since 2026-10-16; Massive `GET /stocks/v1/short-interest`, upsert on `(ticker, settlement_date, source)`, so FINRA revisions overwrite). Initial history via `scripts/repair/collect_short_interest.py`; details: [DATA_SOURCES.md](DATA_SOURCES.md) §10.
 
 > [!NOTE]
-> The table exists (migration 027) but is **currently not filled**: despite its name, `collectors/short_interest_collector.py` only imports `ShortVolume` and upserts into `short_volume`. No code in `src/` writes to `short_interest`; it is only read by the dashboard (`api/routes/dashboard.py`) and pruned by the data-retention job. The ORM classes `ShortVolume`/`ShortInterest` live in `db/models/short_interest.py` but are not re-exported from `db/models/__init__.py`.
+> The table exists since migration 027 but stayed empty until the collector was added (2026-10-16; before the first run on the server it is still empty). `short_interest_collector.py` writes only `short_volume` (daily short *volume*) – the two are different datasets. Rows cover all universe tickers incl. inactive ones (survivorship). `days_to_cover` and `avg_daily_volume` are NULL when the API reports the "no volume" sentinel (`days_to_cover = 999.99`, `avg_daily_volume = 0`). The payload has **no publication date**: consumers must apply an availability lag (feature pipeline: 9 NYSE sessions, see the feature columns below and `derived/short_interest_features.py`). The ORM classes `ShortVolume`/`ShortInterest` live in `db/models/short_interest.py` but are not re-exported from `db/models/__init__.py`; the dashboard reads `short_interest` (`api/routes/dashboard.py`), `data_retention` prunes it by `settlement_date`.
 
 ```sql
 CREATE TABLE signals.short_interest (
@@ -593,7 +593,7 @@ CREATE INDEX idx_technical_indicators_date ON signals.technical_indicators(trade
 ## Layer 3: Analysis (Feature Store + Backtests)
 
 ### `signals.feature_snapshots` ⭐
-**The heart of the project.** Daily feature vector per ticker, aggregated from all raw and derived data layers. This table serves as training data for ML models. Wide table design avoids JOINs during training: **106 columns** = 2 key + 95 features + 5 return targets + 2 trade labels + 2 metadata columns (`FEATURE_COLUMNS` / `TARGET_COLUMNS` / `LABEL_COLUMNS` / `META_COLUMNS` in `db/models/features.py`).
+**The heart of the project.** Daily feature vector per ticker, aggregated from all raw and derived data layers. This table serves as training data for ML models. Wide table design avoids JOINs during training: **108 columns** = 2 key + 97 features + 5 return targets + 2 trade labels + 2 metadata columns (`FEATURE_COLUMNS` / `TARGET_COLUMNS` / `LABEL_COLUMNS` / `META_COLUMNS` in `db/models/features.py`).
 
 > **Design:** All feature columns are nullable. Features self-activate when sufficient data exists. No imputation at the feature store level — the ML stage decides how to handle NULLs.
 
@@ -718,6 +718,12 @@ CREATE TABLE signals.feature_snapshots (
   short_volume_ratio_5d NUMERIC(10,4),
   short_volume_ratio_20d NUMERIC(10,4),
   short_volume_change_20d NUMERIC(10,4),
+  
+  -- ═══ Short Interest Features (FINRA settlements, migration 036, derived/short_interest_features.py) ═══
+  short_interest_days_to_cover NUMERIC(10,4),  -- days_to_cover of the newest usable settlement
+  short_interest_change_1m NUMERIC(10,4),      -- short_interest(newest) / short_interest(2 usable settlements earlier) - 1
+  -- usable for day d: settlement_date <= 9th NYSE session before d; newest older than 40 days -> NULL;
+  -- change_1m: comparison settlement max 45 days before the newest, short_interest > 0
   
   -- ═══ Options IV Features (migration 028, from options_iv_snapshot) ═══
   options_iv_atm_30d NUMERIC(8,4),
@@ -888,7 +894,7 @@ Decision 2026-10-05: the system keeps exactly the last **20 calendar quarters** 
 
 ## Migrations
 
-Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–035 (linear chain, head = 035).
+Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–036 (linear chain, head = 036; production is at 035 until the 036 deploy).
 
 | Migration | Description |
 |---|---|
@@ -927,6 +933,7 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 | 033 | Barrier trade label on `feature_snapshots`: `return_barrier_14d`, `barrier_outcome`, `barrier_ambiguous` |
 | 034 | Nine short-term price features `st_*` (NUMERIC(12,6)) on `feature_snapshots` (concept 2026-10-06 §7.1) |
 | 035 | Tables `stage2_reviews` + `stage2_decisions` (FK `ON DELETE CASCADE`, check `ck_stage2_decisions_action`, unique `uq_stage2_session_ticker`; stage-2 forward test, concept 2026-10-06 §7.7) |
+| 036 | `feature_snapshots.short_interest_days_to_cover` + `short_interest_change_1m` (NUMERIC(10,4), FINRA settlement features; `FEATURE_VERSION` 2026.10-3). History: `scripts/repair/backfill_short_interest_features.py` (only these two columns) |
 
 > [!NOTE]
 > Migration 024 was extended after production had applied it (commit `81446a4` added `sector_relative_return_20d` / `sector_relative_momentum`), so 025 (`32168a0`) created the two columns in production. On an empty database both added them and `alembic upgrade head` failed at 025. **Fixed 2026-10-16:** 025 uses `ADD COLUMN IF NOT EXISTS` and its downgrade is a no-op (024's downgrade drops the columns). Verified on a throwaway `postgres:18`: fresh `upgrade head` → 035, round trip `025 → 023 → head`, and the production history (old 024 without the columns → 025 creates them). No effect on databases already at 025 or later.

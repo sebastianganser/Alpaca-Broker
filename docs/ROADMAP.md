@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** 16 October 2026 (legacy AI-workflow documents removed; takeover in Claude Code – see [SESSION_LOG.md](SESSION_LOG.md), Session 32)
+**Last updated:** 16 October 2026 (FINRA short-interest source implemented, deploy pending – see [SESSION_LOG.md](SESSION_LOG.md), Session 33)
 
 ---
 
@@ -201,7 +201,7 @@
 
 **Phase 1 — Sept 2026:** ✅ Complete (`f721720`, `c309f7d`)
 - [x] **B5:** Short Interest Collector (Massive/Polygon API, 757/765 Ticker, 0 Errors)
-  - Scheduled daily at 00:15 Europe/Berlin since Oct 2026 (originally 04:45; ~2.5h runtime at free tier 5 req/min). Writes only `short_volume`; the `short_interest` table stays empty (see open points)
+  - Scheduled daily at 00:15 Europe/Berlin since Oct 2026 (originally 04:45; ~2.5h runtime at free tier 5 req/min). Writes only `short_volume`; the `short_interest` table was filled later by its own weekly collector (16.10.2026, see open points)
   - 3 new features: `short_volume_ratio_5d`, `short_volume_ratio_20d`, `short_volume_change_20d`
 - [x] **C1:** Politician Trades Lag Filter (max 45 days, STOCK Act compliance)
 - [x] **C2:** Ticker Parser Fix (leading/trailing strip + regex validation)
@@ -218,7 +218,7 @@
   - Correlations + Feature Importance neu berechnen mit **allen** neuen Features:
     - 9.5b: 19 Features (Macro, SUE, Breadth, Sector, Insider, 13F, Liquidity, Sentiment)
     - 9.5b: Options IV (ATM IV, Skew, Term Slope, Put/Call OI)
-    - 9.5c: Short Interest (B5, 3 Features)
+    - 9.5c: Short Interest (B5, 3 Features; + 2 FINRA-Settlement-Features `short_interest_*` ab Migration 036)
   - Monatlich automatisch (1. des Monats, 07:00) via `feature_analysis`, oder manuell (`POST /analysis/trigger`); nächster Lauf 01.11.2026
 - [ ] **F1:** Rule-based Composite Score + Guardrails — offen; Einschätzung bei der Übergabe: ohne validiertes Ranking (R1, K1–K4 ohne Edge) derzeit nicht sinnvoll gewichtbar. Context Pack nutzt bis dahin den Risiko-Vorfilter (Stufe 1)
   - [ ] Min. liquidity, max 2/sector, pairwise correlation, churn lock, min-score — Schwellen **nicht hartcodiert**, sondern über die Einstellungen in der UI konfigurierbar (Entscheidung Sebastian, [DECISIONS_FEATURES](DECISIONS_FEATURES.md) 2026-08-18); Earnings in ≤ 5 Handelstagen markieren statt ausschließen (Konzept §5.1)
@@ -247,7 +247,7 @@
 - [x] **Migrationskette auf leerer DB:** 024 und 025 legten beide `sector_relative_*` an → frisches `upgrade head` brach an 025 ab. Behoben 16.10. (Session 33): 025 idempotent (`ADD COLUMN IF NOT EXISTS`, Downgrade no-op), auf Wegwerf-`postgres:18` geprüft; Produktion unberührt
 - [x] **Migration ↔ ORM angeglichen** (16.10., Session 33): 39 Abweichungen behoben, indem das ORM an das migrierte Schema angepasst wurde (Produktion unverändert); `alembic check` schema-aware inkl. Server-Defaults, Ergebnis „No new upgrade operations detected“ ([DATABASE.md](DATABASE.md))
 - [x] `registry.NIGHTLY_UPSTREAM` „kritisch“ wirksam (16.10., Session 33): veraltete Preise oder Kurs-Abdeckung der Session < 80 % der Vorsession → Features + Context Pack übersprungen, Chain `failed` mit Reparatur-Hinweis; übrige Eingänge weiter nur `partial` ([SCHEDULER.md](SCHEDULER.md)). Dazu **automatisches Nachholen** fehlender Sessions (letzte 10 Handelstage, datenbasiert über die Snapshot-Abdeckung, sobald die Kurse vollständig sind)
-- [ ] `short_interest`-Tabelle (Migration 027) wird von keinem Collector befüllt – FINRA-Short-Interest (zweiwöchentlich) sammeln oder Tabelle bewusst leer lassen
+- [x] `short_interest`-Tabelle (Migration 027) wurde von keinem Collector befüllt – gelöst 16.10. (Session 33, **noch nicht deployt**): FINRA-Short-Interest wird gesammelt (Entscheidung Sebastian, [DECISIONS_DATA](DECISIONS_DATA.md) 2026-10-16). Wöchentlicher Job `short_interest_positions_collector` (So 12:00, Massive `GET /stocks/v1/short-interest`, 1 Bulk-Request je Settlement-Datum), Features `short_interest_days_to_cover` / `short_interest_change_1m` (Migration 036, `FEATURE_VERSION` 2026.10-3) mit 9-Handelstage-Veröffentlichungsverzug; Skripte `scripts/repair/collect_short_interest.py` und `backfill_short_interest_features.py`
 - [x] Historische 13F-Feature-Spalten nach dem Ticker-Backfill geprüft (16.10., Session 33, Lese-Abfrage): `cusip_map` aufgelöst 05.10. 17:58–19:18, gesamte Feature-Historie direkt danach neu berechnet (19:18–23:27) → 13F-Abdeckung ab Dez 2021 konstant 89–93 % (heute 92,3 %), `delta_qoq` ab März 2022. Anlaufphase erwartet: erste 13F-Meldung in der DB 12.11.2021 (Okt 2021 0 %, Nov 50 %). Keine Neuberechnung nötig; ML-Fenster ab 28.07.2022 voll abgedeckt
 - [x] Sprint-10-Readiness erneut laufen lassen – 16.10. (`alpaca-ops run scripts/sprint10_readiness.py`): **29/31, „GO“** (01.10.: 26/30). Offen: Ranking-Stabilität **0/10** Top-10-Überschneidung erster vs. letzter Monatsbericht (01.10.: 40 %), Options IV 33 Handelstage (min. 60, ≈ 20.11.), Estimates 52 (min. 60 ≈ 27.10., 90 für Revisions-Momentum ≈ 10.12.); IV-Rank 252 Tage ≈ September 2027 (nicht blockierend)
 - [ ] Readiness Anfang Dezember erneut prüfen (nach den Monatsberichten 01.11./01.12.): Ranking-Stabilität, Options-IV-/Estimates-Historie. Hinweis: Abschnitt 3 des Skripts misst die Feature-Abdeckung nur am letzten Tag – IV, Estimates und Short Volume haben erst 1–2 Monate Historie und fehlen im ML-Fenster ab 2022 fast überall
@@ -258,8 +258,9 @@
 ### Nächste Schritte
 1. ✅ `b60038e` deployt (15.10.); Log-Check am 16.10. (erste Nightly Chain mit neuem Image)
 2. ✅ Politician-Tests isoliert (Session 32), Migrationskette 024/025 auf leerer DB behoben (Session 33); Migration ↔ ORM angeglichen (Session 33)
-3. Daten weiter sammeln, Readiness Anfang Dezember erneut prüfen (16.10.: 29/31 „GO“, aber Ranking-Stabilität 0/10); K5 (Vorwärtstest) bewusst zurückgestellt bis nach den Sprints
-4. Sprint 10 frühestens ab Mitte Dezember 2026 – Inhalt hängt davon ab, ob bis dahin ein Ranking den Walk-forward besteht (K3 erneut frühestens Januar 2027)
+3. Short Interest: Deploy (Migration 036), Erstbefüllung der Historie (`alpaca-ops run scripts/repair/collect_short_interest.py`, ~25 min) + Feature-Backfill (`backfill_short_interest_features.py`, erst Dry-Run, dann `--apply`), Bewertung im Monatsbericht (01.11.)
+4. Daten weiter sammeln, Readiness Anfang Dezember erneut prüfen (16.10.: 29/31 „GO“, aber Ranking-Stabilität 0/10); K5 (Vorwärtstest) bewusst zurückgestellt bis nach den Sprints
+5. Sprint 10 frühestens ab Mitte Dezember 2026 – Inhalt hängt davon ab, ob bis dahin ein Ranking den Walk-forward besteht (K3 erneut frühestens Januar 2027)
 
 ### Sprint 10 – Signal Scoring
 - Weighted scoring model, optional LASSO/gradient boosting
@@ -283,9 +284,9 @@
 - Docker Compose via Compose Manager
 - PostgreSQL 18 external (`postgresql18-alpaca`, port 5435)
 - Alembic migrations run automatically via `entrypoint.sh`
-- 24 scheduler jobs registered (`scheduler/setup.py`): 13 daily (incl. `nightly_chain`, `log_retention`), 5 weekly (incl. `data_retention`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps (`feature_pipeline`, `target_backfill`, `stage2_review`, `context_pack_generator`) – see [SCHEDULER.md](SCHEDULER.md)
+- 25 scheduler jobs registered (`scheduler/setup.py`): 13 daily (incl. `nightly_chain`, `log_retention`), 6 weekly (incl. `data_retention`, `short_interest_positions_collector`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps (`feature_pipeline`, `target_backfill`, `stage2_review`, `context_pack_generator`) – see [SCHEDULER.md](SCHEDULER.md)
 - Volume mount: `/mnt/user/Workfiles/AlpacaBroker` for Context Pack output (must be owned by `99:100`)
-- **Deployed as of 2026-10-15:** `1583d59` (not yet: `050ff32`, `97fcdb0`)
+- **Deployed as of 2026-10-16:** `d88febf`, Alembic revision `035` (not yet: FINRA short interest, migration 036)
 
 **Update workflow:**
 1. `git push` from Windows

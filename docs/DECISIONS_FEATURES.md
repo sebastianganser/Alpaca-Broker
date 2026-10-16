@@ -259,10 +259,11 @@
 - **13F:** `filing_date` ≤ d, only `put_call = 'SH'`.
 - **Macro (FRED):** daily series up to the previous session; DTWEXBGS with 7-day lag; max age 14 days.
 - **Earnings dates:** `first_seen` ≤ d (legacy rows keep a documented lookahead, capped at 90 days).
+- **Short interest (FINRA, 2026-10-16):** the payload has no publication date, so a settlement date is usable for d only if it is ≤ the 9th NYSE session before d (`SI_PUBLICATION_LAG_SESSIONS`; FINRA publishes ~7 business days after settlement + 2 sessions margin); newest usable settlement older than 40 days → NULL. See [DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-10-16.
 - **Forward-fill limits:** 14 days (fundamentals, estimates, IV, TA), 10 days ARK, 152 days 13F.
 
 ### [2026-10-05] Feature Versioning & Upsert Semantics
-Every row stores `feature_version` (currently `2026.10-1`) and `computed_at`. The upsert overwrites **all** feature columns including NULL, so recomputes repair stale values. Snapshots and targets exist **only for NYSE trading days**.
+Every row stores `feature_version` (currently `2026.10-3`, `FEATURE_VERSION` in `derived/feature_pipeline.py`) and `computed_at`. The upsert overwrites **all** feature columns including NULL, so recomputes repair stale values. Snapshots and targets exist **only for NYSE trading days**.
 
 ### [2026-10-05] NULL vs. 0
 `0` = the source covers the ticker but nothing happened; `NULL` = no coverage. Extrapolated (gap-filled) prices are never used for TA, targets, liquidity or breadth.

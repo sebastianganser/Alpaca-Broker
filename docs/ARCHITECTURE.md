@@ -119,11 +119,12 @@ Alpaca-Broker/
 │   └── unraid/
 │       └── alpaca-ops.sh            # Host ops (status/logs/deploy/run), run via User Script "alpaca-ops"
 ├── src/
-│   ├── alembic/versions/            # Migrations 001–035
+│   ├── alembic/versions/            # Migrations 001–036
 │   └── trading_signals/             # Python package (see below)
 ├── scripts/                         # Run manually (locally or via docker exec)
 │   ├── repair/                      # One-off repairs/backfills (features_rebuild, refetch prices,
-│   │                                #   backfill_short_term_features, form13f_resolve_tickers, …)
+│   │                                #   backfill_short_term_features, form13f_resolve_tickers,
+│   │                                #   collect_short_interest, backfill_short_interest_features, …)
 │   ├── analysis/                    # Research: backtest_barrier, walkforward_hit_model,
 │   │                                #   event_study, collect_buyback_events
 │   ├── archive/                     # Obsolete one-time scripts (kept for reference)
@@ -173,6 +174,7 @@ trading_signals/
 │   │   earnings_calendar_collector.py / estimates_collector.py   # yfinance sources
 │   ├── options_iv_collector.py   # ATM IV, skew, term structure, put/call OI (yfinance)
 │   ├── short_interest_collector.py # Short volume (Massive API, ex-Polygon)
+│   ├── short_interest_positions_collector.py # FINRA short interest, twice-monthly settlements (Massive API, weekly)
 │   ├── fred_collector.py   # 6 FRED macro series
 │   ├── news_collector.py   # Alpaca News API (Benzinga)
 │   └── buyback_events.py   # 8-K buyback authorizations (EDGAR full-text) – research only,
@@ -184,7 +186,8 @@ trading_signals/
 │   ├── sentiment_scorer.py       # FinBERTScorer (CPU) behind a SentimentScorer ABC
 │   ├── sentiment_computer.py     # Scores unscored articles → news_sentiment
 │   ├── short_term_features.py    # 9 st_* price features (1–14 session horizon)
-│   ├── feature_pipeline.py       # ~95 features / 17 groups (incl. st_*) per PIT-universe ticker and session
+│   ├── short_interest_features.py # 2 FINRA short-interest features (9-session lag; pure + vectorised, kept identical by a test)
+│   ├── feature_pipeline.py       # ~97 features / 17 groups (incl. st_*, short_interest_*) per PIT-universe ticker and session
 │   ├── target_backfill.py        # Forward returns 1/5/20/60d + barrier label (return_barrier_14d, …)
 │   ├── recompute.py              # Recompute TA, targets, st_* after a price-history refresh
 │   ├── context_pack_generator.py # Stage-1 risk pre-filter + provisional ranking → Markdown packs
@@ -228,7 +231,7 @@ trading_signals/
 ```mermaid
 flowchart TD
     SRC["External sources: Alpaca prices + news, arkfunds.io, SEC EDGAR, Senate eFD, yfinance, FRED, Massive"] --> COL["Collectors (scheduled, BaseCollector)"]
-    COL --> RAW["Raw tables: prices_daily, ark_holdings, insider_trades, form13f_holdings, politician_trades, fundamentals_snapshot, analyst_ratings, earnings_calendar, estimates_snapshot, options_iv_snapshot, short_volume, macro_series, news_articles"]
+    COL --> RAW["Raw tables: prices_daily, ark_holdings, insider_trades, form13f_holdings, politician_trades, fundamentals_snapshot, analyst_ratings, earnings_calendar, estimates_snapshot, options_iv_snapshot, short_volume, short_interest, macro_series, news_articles"]
     RAW --> DER["Derived: technical_indicators, ark_deltas, insider_clusters, news_sentiment (FinBERT)"]
     RAW --> CHAIN
     DER --> CHAIN["Nightly chain 04:30"]

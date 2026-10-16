@@ -49,8 +49,8 @@ Critical paths (data fetching, computations, later order execution) are pure Pyt
 
 **Phase:** 🟡 Sprint 9.5c (Candidate Pipeline MVP), Phase 2 – review fixes deployed, short-term research K1–K4 finished without a usable edge, K5 (stage-2 forward test) running
 **Current sprint:** 9.5c Phase 2 – collect stage-2 decisions (K5), keep data quality stable; F1 composite score open
-**Next step:** keep collecting data; Sprint 10 readiness on 16.10.: 29/31 "GO" by volume, but ranking stability 0/10 and Options IV (33 d) / Estimates (52 d) history still short → re-run `alpaca-ops run scripts/sprint10_readiness.py` in early December, Sprint 10 from mid-December. Forward testing (K5) deliberately waits until after the sprints. Open point in ROADMAP: empty `short_interest` table – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 33
-**Last updated:** 16 October 2026 (Claude Code setup, Unraid ops via User Script)
+**Next step:** deploy the FINRA short-interest source (migration 036), then fill its history: `alpaca-ops run scripts/repair/collect_short_interest.py` (~25 min), afterwards `scripts/repair/backfill_short_interest_features.py --apply` (dry run first), and evaluate `short_interest_*` in the monthly feature analysis. Otherwise keep collecting data; Sprint 10 readiness on 16.10.: 29/31 "GO" by volume, but ranking stability 0/10 and Options IV (33 d) / Estimates (52 d) history still short → re-run `alpaca-ops run scripts/sprint10_readiness.py` in early December, Sprint 10 from mid-December. Forward testing (K5) deliberately waits until after the sprints – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 33
+**Last updated:** 16 October 2026 (FINRA short-interest source implemented, deploy pending)
 **Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `d88febf` (deployed 16 October 2026 via `alpaca-ops deploy`), Alembic revision `035`
 
 See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
@@ -65,14 +65,14 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 | **Backend API** | FastAPI (same process as APScheduler) |
 | **Frontend** | Vite + React SPA (Stitch "Precision Architect" Design) |
 | **ORM** | SQLAlchemy 2.0 |
-| **Migrations** | Alembic (001–035) |
+| **Migrations** | Alembic (001–036) |
 | **Database** | PostgreSQL 18 (`postgresql18-alpaca`, 192.168.1.93:5435, DB: `broker_data`, schema: `signals`) |
 | **Package managers** | uv (Python), npm (frontend) |
-| **Scheduler** | APScheduler, 24 jobs (`scheduler/setup.py`): 13 daily (collectors, `log_retention`, `nightly_chain` 04:30), 5 weekly (incl. `data_retention`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps run by `nightly_chain` |
+| **Scheduler** | APScheduler, 25 jobs (`scheduler/setup.py`): 13 daily (collectors, `log_retention`, `nightly_chain` 04:30), 6 weekly (incl. `data_retention`, FINRA `short_interest_positions_collector`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps run by `nightly_chain` |
 | **Price data** | Alpaca Market Data API, **SIP feed** (`ALPACA_DATA_FEED`, default `sip`; production logs show `feed=sip`), automatic IEX fallback marks the run `partial` |
 | **News sentiment** | Alpaca News API + ProsusAI/finbert (local CPU inference) |
 | **Universe** | 767 active tickers (2026-10-15; S&P 500 + Nasdaq 100 + ARK + benchmark/sector ETFs, other ETFs filtered via blacklist); features use the point-in-time universe |
-| **Tests** | 910 tests, none needs a database (2026-10-16); run with `uv run pytest` |
+| **Tests** | 1022 tests, none needs a database (2026-10-16); run with `uv run pytest` |
 | **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090, runs as `99:100`) |
 | **Broker (later)** | Alpaca Paper Trading (NEVER live!) |
 | **Version control** | Git, [GitHub](https://github.com/sebastianganser/Alpaca-Broker) |
@@ -88,7 +88,7 @@ Dev machine: Windows 11, working directory = project root. The Bash tool is Git 
 | Lint | `uv run ruff check src tests` – ≈154 pre-existing findings (mostly E501): do not mass-fix, keep new code clean |
 | Frontend | `cd frontend && npm run dev` · `npm run build` (`tsc -b` + vite) · `npm run lint` |
 | Run the app | `uv run python -m trading_signals.main` – needs the DB from `.env`. The local `.env` points at the **production** DB and the app starts the scheduler + startup catch-up → do not start it locally without Sebastian's OK |
-| Migrations | `src/alembic/versions/` (001–035), applied by the container entrypoint on every start (fails hard). Do not run `alembic upgrade` against the local `.env`. A new migration is a new file `036_<name>.py` with `down_revision = "035"` ([DATABASE.md](docs/DATABASE.md)) |
+| Migrations | `src/alembic/versions/` (001–036), applied by the container entrypoint on every start (fails hard). Do not run `alembic upgrade` against the local `.env`. A new migration is a new file `037_<name>.py` with `down_revision = "036"` ([DATABASE.md](docs/DATABASE.md)) |
 | Test migrations on a fresh DB | Docker Desktop: `docker run -d --rm --name alpaca-migtest -e POSTGRES_USER=migtest -e POSTGRES_PASSWORD=migtest -e POSTGRES_DB=broker_data -p 127.0.0.1:55435:5432 postgres:18`, then with `DB_HOST=127.0.0.1 DB_PORT=55435 DB_NAME=broker_data DB_USER=migtest DB_PASSWORD=migtest` (set **all** `DB_*` – `.env` points at production): `.venv/Scripts/alembic.exe upgrade head` and `.venv/Scripts/alembic.exe check` (must print "No new upgrade operations detected."), finally `docker rm -f alpaca-migtest` |
 
 **Production checks (read-only – the primary text channels):**
@@ -137,7 +137,7 @@ Each item is backed by `docs/DECISIONS_*.md`, `docs/LEARNINGS.md` or the code.
 
 **Data correctness**
 - **Market-session date labels:** use `utils/market_calendar.last_completed_session()`, never `date.today()` (the container runs in Berlin time). Snapshots and targets exist only for NYSE trading days.
-- **Point-in-time / no lookahead** (DECISIONS_FEATURES, "Information Cut-offs"): a feature for day `d` may only use what was public by `d` – politicians `disclosure_date <= d`, 13F `filing_date <= d` (`put_call = 'SH'`), Form 4 public if `acceptance_datetime` < 16:00 ET on `d` else `filing_date <= d`, news `published_at` < 16:00 ET, earnings `first_seen <= d`. Targets enter at `open(d+1)`. Universe via `get_universe_as_of(d)` (survivorship). `universe.sector` is not point-in-time (known limit).
+- **Point-in-time / no lookahead** (DECISIONS_FEATURES, "Information Cut-offs"): a feature for day `d` may only use what was public by `d` – politicians `disclosure_date <= d`, 13F `filing_date <= d` (`put_call = 'SH'`), Form 4 public if `acceptance_datetime` < 16:00 ET on `d` else `filing_date <= d`, news `published_at` < 16:00 ET, earnings `first_seen <= d`, FINRA short interest `settlement_date` <= the 9th NYSE session before `d` (publication lag, `derived/short_interest_features.py`). Targets enter at `open(d+1)`. Universe via `get_universe_as_of(d)` (survivorship). `universe.sector` is not point-in-time (known limit).
 - **Retention:** `data_start_date()` (analysis: `ml_start_date()`), never fixed start dates, never cached at import time (docstring of `utils/retention.py`); backfills must not collect before the window.
 - **NULL vs 0:** `0` = source covers the ticker but nothing happened, `NULL` = no coverage. Extrapolated (gap-filled) prices are never used for TA, targets, liquidity or breadth.
 - **Code hygiene:** `date(…) == pd.Timestamp(…)` is `False` – convert with `pd.Timestamp(d)` for DataFrame index lookups (LEARNINGS 2026-04-16). Every job writes a `collection_log` row (`BaseCollector` / `run_logged_job`); completeness checks use per-date ticker coverage, not `MAX(date)`; a catch-all `except` returning a sentinel (e.g. `row_count = -1`) needs a log line. Feature groups come from `analysis/feature_groups.group_features(FEATURE_COLUMNS)`; endpoints serving the same model share `api/serializers.py`.

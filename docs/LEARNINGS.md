@@ -286,3 +286,5 @@ On 2026-10-05 12:10 `target_backfill` (manually triggered chain) failed with a P
 
 ### [2026-10-15] 📊 `short_interest` Table Is Empty by Design (for Now)
 `short_interest_collector` only writes `short_volume` (daily short volume via the Massive API). The `short_interest` table (bi-weekly settlement-date short interest, migration 027) exists but is not filled by any collector. The short-interest feature group is built from `short_volume` only.
+
+**Update 2026-10-16:** no longer empty by design – the weekly `short_interest_positions_collector` now fills the table from Massive `GET /stocks/v1/short-interest` (free tier, history since 2017), and the group gains `short_interest_days_to_cover` / `short_interest_change_1m` (migration 036, 9-session publication lag). The table stays empty until the initial backfill ran after the deploy. Decision: [DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-10-16.
