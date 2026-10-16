@@ -254,7 +254,9 @@
 - [ ] `sector_relative_momentum` erneut prüfen (Nov 2026), IV-Rank ab ~252 Sessions IV-Historie (IV-Daten seit 31.08.2026 → ~September 2027)
 - [ ] „Recompute History“-Button in den Einstellungen (zurückgestellt, skriptbasiert)
 - [x] Auf Unraid prüfen, ob noch ein alter täglicher `pg_dump`-Cron existiert – geprüft 16.10. mit `alpaca-ops status`: kein Cron-Eintrag und kein User Script greift auf die Alpaca-DB zu (Session 33)
-- [ ] **Universum-Pflege:** 8 als aktiv geführte Ticker haben seit April–August 2026 weder Kurse noch Short Interest (AVB, BK, CTRA, EA, EQR, LBRDK, PSTG, SATS) – Übernahme/Delisting oder Ticker-Wechsel klären, `is_active` korrigieren bzw. neues Symbol aufnehmen (Befund 16.10., Session 33)
+- [x] **Universum-Pflege** (16.10., Session 33): 10 aktive Ticker ohne Daten per `scripts/validate_universe.py` deaktiviert (757 aktiv). Ursache laut Alpaca Corporate Actions: Fusionen AVB→EQR, CTRA→DVN, LBRDK→CHTR; Barübernahmen EA, WBD; Namenswechsel BK→BNY, EQR→VMRK, PSTG→P, SATS→ECHO, PSKY→SKYD. Die neuen Symbole stehen bereits im Universum (SKYD kommt mit dem Index-Abgleich am 01.11.)
+- [ ] **Universum automatisch prüfen:** `validate_universe.py` läuft nur von Hand – Delistings und Namenswechsel blieben monatelang unbemerkt. Als wöchentlichen Job einplanen (Abgleich mit Alpaca, optional Corporate Actions für neue Symbole)
+- [ ] **⚠ S&P-500-Austritte fehlen in `index_membership` (Survivorship):** 416 heutige Mitglieder ab 2021-01-01, 90 Aufnahmen korrekt datiert, aber nur 3 abgeschlossene Intervalle (alle 01.10.2026). Der Wikipedia-Parser nutzt für den S&P 500 offenbar nur die Spalte „Date added“ der heutigen Mitglieder (Code-Pfad „no removal data available“); Nasdaq-100 hat 56 Austritte. Folge: historisches Universum 458 (2022) statt ~503 Mitglieder – ausgeschiedene Firmen fehlen in Features und Analysen (R1, K1–K4). Reparatur: Austritte aus Wikipedia-Änderungstabelle bzw. GitHub-CSV einlesen, ausgeschiedene Ticker + Kurse nachladen, Features neu rechnen – Entscheidung Sebastian
 
 ### Nächste Schritte
 1. ✅ `b60038e` deployt (15.10.); Log-Check am 16.10. (erste Nightly Chain mit neuem Image)

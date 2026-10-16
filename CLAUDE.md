@@ -49,7 +49,7 @@ Critical paths (data fetching, computations, later order execution) are pure Pyt
 
 **Phase:** 🟡 Sprint 9.5c (Candidate Pipeline MVP), Phase 2 – review fixes deployed, short-term research K1–K4 finished without a usable edge, K5 (stage-2 forward test) running
 **Current sprint:** 9.5c Phase 2 – collect stage-2 decisions (K5), keep data quality stable; F1 composite score open
-**Next step:** keep collecting data; FINRA short interest is live and backfilled (16.10.) – evaluate it in the monthly feature analysis (01.11.) and the Sprint 10 readiness re-run in early December (29/31 on 16.10., ranking stability 0/10). Open point: 8 universe tickers marked active without prices since Apr–Aug 2026. Forward testing (K5) deliberately waits until after the sprints – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 33
+**Next step:** decide how to repair the S&P 500 removal history in `index_membership` (survivorship gap found 16.10. – see ROADMAP "Offene Punkte"); schedule universe validation weekly. Keep collecting data; evaluate FINRA short interest in the monthly analysis (01.11.) and the Sprint 10 readiness re-run in early December. Forward testing (K5) waits until after the sprints – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 33
 **Last updated:** 16 October 2026 (FINRA short-interest source implemented, deploy pending)
 **Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `b873d4d` (deployed 16 October 2026 18:14 via `alpaca-ops deploy`), Alembic revision `036`
 
@@ -71,7 +71,7 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 | **Scheduler** | APScheduler, 25 jobs (`scheduler/setup.py`): 13 daily (collectors, `log_retention`, `nightly_chain` 04:30), 6 weekly (incl. `data_retention`, FINRA `short_interest_positions_collector`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps run by `nightly_chain` |
 | **Price data** | Alpaca Market Data API, **SIP feed** (`ALPACA_DATA_FEED`, default `sip`; production logs show `feed=sip`), automatic IEX fallback marks the run `partial` |
 | **News sentiment** | Alpaca News API + ProsusAI/finbert (local CPU inference) |
-| **Universe** | 767 active tickers (2026-10-15; S&P 500 + Nasdaq 100 + ARK + benchmark/sector ETFs, other ETFs filtered via blacklist); features use the point-in-time universe |
+| **Universe** | 757 active tickers (2026-10-16, after deactivating 10 delisted/renamed; S&P 500 + Nasdaq 100 + ARK + benchmark/sector ETFs, other ETFs filtered via blacklist); features use the point-in-time universe |
 | **Tests** | 1022 tests, none needs a database (2026-10-16); run with `uv run pytest` |
 | **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090, runs as `99:100`) |
 | **Broker (later)** | Alpaca Paper Trading (NEVER live!) |
