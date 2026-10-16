@@ -72,7 +72,7 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 | **Price data** | Alpaca Market Data API, **SIP feed** (`ALPACA_DATA_FEED`, default `sip`; production logs show `feed=sip`), automatic IEX fallback marks the run `partial` |
 | **News sentiment** | Alpaca News API + ProsusAI/finbert (local CPU inference) |
 | **Universe** | 767 active tickers (2026-10-15; S&P 500 + Nasdaq 100 + ARK + benchmark/sector ETFs, other ETFs filtered via blacklist); features use the point-in-time universe |
-| **Tests** | 875 tests, none needs a database (2026-10-16); run with `uv run pytest` |
+| **Tests** | 910 tests, none needs a database (2026-10-16); run with `uv run pytest` |
 | **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090, runs as `99:100`) |
 | **Broker (later)** | Alpaca Paper Trading (NEVER live!) |
 | **Version control** | Git, [GitHub](https://github.com/sebastianganser/Alpaca-Broker) |
@@ -149,7 +149,7 @@ Each item is backed by `docs/DECISIONS_*.md`, `docs/LEARNINGS.md` or the code.
 - **Migrations:** never change what an applied migration does (production is at 035) – schema changes go into a new migration. The only allowed edit of 001–035 is making a migration idempotent so a fresh DB replays cleanly (precedent: 025, 2026-10-16 – 024 had been extended after production applied it). Test every migration on a fresh DB (command above) before deploying – a failing migration sends the container into a restart loop. The ORM must mirror the migrated schema: every schema change = new migration + matching ORM change in one commit, `alembic check` clean.
 - **Container user `99:100`:** never `docker exec -u root` (root-owned files in `context_packs/` cannot be overwritten → `PermissionError`, LEARNINGS 2026-10-15); `/mnt/user/Workfiles/AlpacaBroker` must be owned by `99:100`.
 - **Night window:** collectors 22:30–~03:00, `nightly_chain` 04:30 ([SCHEDULER.md](docs/SCHEDULER.md)). No deploy/restart between 22:15 and 05:15 or while any job has `is_running: true` (a restart kills runs; they are marked stale on the next start). No manual writes to `feature_snapshots` during the chain (04:30–05:00, deadlock risk).
-- **Expected states:** weekend/holiday → `nightly_chain` `skipped` ("no new session"); IEX fallback or stale non-critical chain inputs → `partial`; critical input (prices stale, or < 80 % price coverage of the session vs. the max of the last 5 sessions) → chain `failed`, features + context pack skipped, notes carry the repair hint; `row_count = -1` in `table_stats` is a bug sentinel. After a deploy hard-reload the browser (Ctrl+F5) before debugging the UI.
+- **Expected states:** weekend/holiday → `nightly_chain` `skipped` ("no new session"); IEX fallback or stale non-critical chain inputs → `partial`; critical input (prices stale, or < 80 % price coverage of the session vs. the max of the last 5 sessions) → chain `failed`, features + context pack skipped, notes carry the repair hint; earlier sessions with missing snapshots are rebuilt automatically by the next chain runs once their prices are complete (`catch-up: <date>=success|pending|failed`, runs on already processed targets are `catch-up only`); `row_count = -1` in `table_stats` is a bug sentinel. After a deploy hard-reload the browser (Ctrl+F5) before debugging the UI.
 - **Paper only:** startup aborts if `ALPACA_ENDPOINT` does not contain `paper` (`Settings.validate_alpaca_safety`); the system places no orders.
 
 ## Project Documents

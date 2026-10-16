@@ -284,6 +284,148 @@ class TestPriceCoverage:
         assert "GROUP BY signals.prices_daily.trade_date" in sql
 
 
+class TestCatchupWindow:
+    def test_ten_sessions_before_the_target_oldest_first(self):
+        window = jobs._catchup_window(date(2026, 10, 2))
+        assert jobs.CATCHUP_LOOKBACK_SESSIONS == 10
+        assert window == [
+            date(2026, 9, 18),
+            date(2026, 9, 21),
+            date(2026, 9, 22),
+            date(2026, 9, 23),
+            date(2026, 9, 24),
+            date(2026, 9, 25),
+            date(2026, 9, 28),
+            date(2026, 9, 29),
+            date(2026, 9, 30),
+            date(2026, 10, 1),
+        ]
+
+    def test_target_is_excluded_and_holidays_are_skipped(self):
+        target = date(2026, 1, 5)  # Monday after New Year; Dec 25 / Jan 1 closed
+        window = jobs._catchup_window(target)
+        assert len(window) == 10
+        assert window == sorted(window)
+        assert window[-1] == date(2026, 1, 2)
+        assert target not in window
+        assert date(2026, 1, 1) not in window
+        assert date(2025, 12, 25) not in window
+
+
+class TestSnapshotCounts:
+    SESSIONS = [date(2026, 9, 30), date(2026, 10, 1)]
+
+    def _run(self, rows, sessions=None):
+        session = MagicMock()
+        session.execute.return_value.all.return_value = rows
+        with patch(
+            "trading_signals.db.session.get_session",
+            lambda: _fake_session(session),
+        ):
+            if sessions is None:
+                sessions = self.SESSIONS
+            counts = jobs.snapshot_counts(sessions)
+        return counts, session
+
+    def test_counts_per_date_and_missing_dates_are_zero(self):
+        counts, _ = self._run([(date(2026, 10, 1), 740)])
+        assert counts == {date(2026, 9, 30): 0, date(2026, 10, 1): 740}
+
+    def test_no_rows_at_all(self):
+        counts, _ = self._run([])
+        assert counts == {d: 0 for d in self.SESSIONS}
+
+    def test_one_grouped_query_over_the_given_sessions(self):
+        _, session = self._run([])
+        session.execute.assert_called_once()
+        stmt = session.execute.call_args.args[0]
+        sql = _sql(stmt)
+        assert "signals.feature_snapshots" in sql
+        assert "GROUP BY signals.feature_snapshots.snapshot_date" in sql
+        in_values = [
+            v
+            for v in stmt.compile(dialect=postgresql.dialect()).params.values()
+            if isinstance(v, list)
+        ]
+        assert len(in_values) == 1
+        assert sorted(in_values[0]) == self.SESSIONS
+
+    def test_no_sessions_makes_no_query(self):
+        counts, session = self._run([], sessions=[])
+        assert counts == {}
+        session.execute.assert_not_called()
+
+
+class TestCatchupCandidates:
+    D = [date(2026, 9, 28) + timedelta(days=i) for i in range(5)]  # Mon-Fri
+
+    def _counts(self, *values):
+        return dict(zip(self.D, values, strict=True))
+
+    def test_nothing_computed_in_the_window_is_no_candidate(self):
+        # fresh system: the rebuild scripts are responsible, not the chain
+        assert jobs.catchup_candidates(self.D, {}) == []
+        assert jobs.catchup_candidates(self.D, self._counts(0, 0, 0, 0, 0)) == []
+
+    def test_empty_window(self):
+        assert jobs.catchup_candidates([], {}) == []
+
+    def test_complete_window_has_no_candidates(self):
+        assert jobs.catchup_candidates(self.D, self._counts(*[767] * 5)) == []
+
+    def test_missing_session_is_a_candidate(self):
+        counts = self._counts(767, 767, 0, 767, 767)
+        assert jobs.catchup_candidates(self.D, counts) == [self.D[2]]
+
+    def test_session_absent_from_counts_counts_zero(self):
+        counts = self._counts(767, 767, 767, 767, 767)
+        del counts[self.D[1]]
+        assert jobs.catchup_candidates(self.D, counts) == [self.D[1]]
+
+    def test_partial_day_below_threshold_is_a_candidate(self):
+        # 559/700 = 79.86 %
+        counts = self._counts(700, 559, 700, 700, 700)
+        assert jobs.catchup_candidates(self.D, counts) == [self.D[1]]
+
+    def test_exactly_at_threshold_is_not_a_candidate(self):
+        assert jobs.MIN_SNAPSHOT_COVERAGE == 0.8
+        for values in (
+            (700, 560, 700, 700, 700),
+            (100, 80, 100, 100, 100),
+            (5, 4, 5, 5, 5),
+        ):
+            assert jobs.catchup_candidates(self.D, self._counts(*values)) == []
+
+    def test_baseline_is_the_window_maximum(self):
+        # 600 is 78 % of the best day (767) although the neighbours are equal
+        counts = self._counts(600, 600, 767, 600, 600)
+        assert jobs.catchup_candidates(self.D, counts) == [
+            self.D[0],
+            self.D[1],
+            self.D[3],
+            self.D[4],
+        ]
+
+    def test_oldest_first(self):
+        counts = self._counts(0, 767, 0, 767, 100)
+        assert jobs.catchup_candidates(self.D, counts) == [
+            self.D[0],
+            self.D[2],
+            self.D[4],
+        ]
+        shuffled = [self.D[4], self.D[0], self.D[3], self.D[2], self.D[1]]
+        assert jobs.catchup_candidates(shuffled, counts) == [
+            self.D[0],
+            self.D[2],
+            self.D[4],
+        ]
+
+    def test_custom_ratio(self):
+        counts = self._counts(100, 50, 100, 100, 100)
+        assert jobs.catchup_candidates(self.D, counts, min_ratio=0.5) == []
+        assert jobs.catchup_candidates(self.D, counts, min_ratio=0.6) == [self.D[1]]
+
+
 # ── Nightly chain ───────────────────────────────────────────────────────
 
 
@@ -312,12 +454,20 @@ class TestNightlyChain:
         done=False,
         coverage=(700, 700),
         coverage_rows=None,
+        snapshots=None,
+        gap_coverage=None,
     ):
         """Run the chain with ``run_logged_job`` executing the (mocked) bodies.
 
         ``coverage`` is the ``price_coverage`` result (or an exception it
         raises); ``coverage_rows`` instead feeds the real ``price_coverage``
-        with fake grouped-query rows. After the call ``self.job_ids`` /
+        with fake grouped-query rows. ``statuses`` maps a collector name (or
+        ``(name, date)`` for one feature-pipeline date) to its body status
+        (or a full ``JobOutcome``).
+        ``snapshots`` are the ``snapshot_counts`` of the catch-up window: a
+        ``{date: count}`` override on top of a complete window (700 each) or an
+        exception it raises; ``gap_coverage`` overrides ``price_coverage`` per
+        date (tuple, or exception to raise). After the call ``self.job_ids`` /
         ``self.logged`` hold job id and outcome per collector name and
         ``self.bodies`` the body mocks (to check what really ran).
         """
@@ -332,15 +482,32 @@ class TestNightlyChain:
             return outcome
 
         def body(collector_name):
-            return lambda *a: JobOutcome(
-                status=statuses.get(collector_name, job_status.SUCCESS)
-            )
+            def run(*a):
+                default = statuses.get(collector_name, job_status.SUCCESS)
+                key = (collector_name, a[0] if a else None)
+                result = statuses.get(key, default)
+                if isinstance(result, JobOutcome):
+                    return result
+                return JobOutcome(status=result)
+
+            return run
+
+        def fake_snapshots(sessions):
+            return {d: (snapshots or {}).get(d, 700) for d in sessions}
+
+        def fake_coverage(d):
+            result = (gap_coverage or {}).get(d, coverage)
+            if isinstance(result, Exception):
+                raise result
+            return result
 
         with ExitStack() as stack:
             enter = stack.enter_context
             enter(patch.object(jobs, "_target_session", return_value=self.TARGET))
             enter(patch.object(jobs, "_chain_done_for", return_value=done))
-            enter(patch.object(jobs, "wait_for_upstream", return_value=list(stale)))
+            self.wait_mock = enter(
+                patch.object(jobs, "wait_for_upstream", return_value=list(stale))
+            )
             enter(patch.object(jobs, "run_logged_job", side_effect=fake_run))
             self.bodies = {
                 name: enter(patch.object(jobs, attr, side_effect=body(name)))
@@ -356,14 +523,21 @@ class TestNightlyChain:
                         lambda: _fake_session(session),
                     )
                 )
-            elif isinstance(coverage, Exception):
-                self.coverage_mock = enter(
-                    patch.object(jobs, "price_coverage", side_effect=coverage)
-                )
             else:
                 self.coverage_mock = enter(
-                    patch.object(jobs, "price_coverage", return_value=coverage)
+                    patch.object(jobs, "price_coverage", side_effect=fake_coverage)
                 )
+            self.snapshot_mock = enter(
+                patch.object(
+                    jobs,
+                    "snapshot_counts",
+                    side_effect=(
+                        snapshots
+                        if isinstance(snapshots, Exception)
+                        else fake_snapshots
+                    ),
+                )
+            )
             out = jobs._nightly_chain_body()
         return out, calls
 
@@ -533,4 +707,259 @@ class TestNightlyChain:
     def test_already_processed_session_is_skipped(self):
         out, calls = self._run({}, done=True)
         assert out.status == job_status.SKIPPED
+        assert out.notes == "session=2026-10-02; no new session"
         assert calls == []
+
+    # ── automatic catch-up of missed sessions ───────────────────────────
+
+    GAP = date(2026, 9, 30)
+    OLD_GAP = date(2026, 9, 28)
+    WINDOW = [
+        date(2026, 9, 18),
+        date(2026, 9, 21),
+        date(2026, 9, 22),
+        date(2026, 9, 23),
+        date(2026, 9, 24),
+        date(2026, 9, 25),
+        date(2026, 9, 28),
+        date(2026, 9, 29),
+        date(2026, 9, 30),
+        date(2026, 10, 1),
+    ]
+
+    def _fp_dates(self):
+        """Dates the feature-pipeline body was called with, in order."""
+        return [c.args[0] for c in self.bodies["feature_pipeline"].call_args_list]
+
+    def test_complete_window_has_no_catchup(self):
+        out, calls = self._run({})
+        self.snapshot_mock.assert_called_once_with(self.WINDOW)
+        assert [c[0] for c in calls] == self.ALL_STEPS
+        assert "catch-up" not in out.notes
+        # price coverage is only looked up for the target, not for the window
+        self.coverage_mock.assert_called_once_with(self.TARGET)
+
+    def test_gap_with_complete_prices_is_caught_up_before_target_backfill(self):
+        out, calls = self._run({}, snapshots={self.GAP: 0})
+        assert [c[0] for c in calls] == [
+            "technical_indicators",
+            "feature_pipeline",  # gap session
+            "feature_pipeline",  # target session
+            "target_backfill",
+            "stage2_review",
+            "context_pack_generator",
+        ]
+        assert all(alert is False for _, alert in calls)
+        assert self._fp_dates() == [self.GAP, self.TARGET]
+        self.coverage_mock.assert_any_call(self.GAP)
+        # no context pack for the past session
+        self.bodies["context_pack_generator"].assert_called_once_with(self.TARGET)
+        assert out.status == job_status.SUCCESS
+        # the existing note prefix is untouched, the catch-up part is appended
+        assert out.notes == (
+            "session=2026-10-02; technical_indicators=success, "
+            "feature_pipeline=success, target_backfill=success, "
+            "stage2_review=success, context_pack=success; "
+            "catch-up: 2026-09-30=success"
+        )
+
+    def test_partial_snapshot_day_is_caught_up(self):
+        out, _ = self._run({}, snapshots={self.GAP: 500})  # 500/700 = 71 %
+        assert self._fp_dates() == [self.GAP, self.TARGET]
+        assert out.notes.endswith("; catch-up: 2026-09-30=success")
+
+    def test_several_gaps_are_processed_oldest_first(self):
+        out, _ = self._run({}, snapshots={self.GAP: 0, self.OLD_GAP: 0})
+        assert self._fp_dates() == [self.OLD_GAP, self.GAP, self.TARGET]
+        assert out.notes.endswith("; catch-up: 2026-09-28=success, 2026-09-30=success")
+        assert out.status == job_status.SUCCESS
+
+    def test_gap_with_incomplete_prices_is_pending(self):
+        out, calls = self._run(
+            {}, snapshots={self.GAP: 0}, gap_coverage={self.GAP: (300, 700)}
+        )
+        assert self._fp_dates() == [self.TARGET]  # no feature run for the gap
+        assert [c[0] for c in calls] == self.ALL_STEPS
+        assert out.notes.endswith("; catch-up: 2026-09-30=pending (prices 42%)")
+        # the original night already alerted - pending alone does not change it
+        assert out.status == job_status.SUCCESS
+
+    def test_gap_without_any_prices_is_pending_with_zero_percent(self):
+        out, _ = self._run({}, snapshots={self.GAP: 0}, gap_coverage={self.GAP: (0, 0)})
+        assert self._fp_dates() == [self.TARGET]
+        assert "catch-up: 2026-09-30=pending (prices 0%)" in out.notes
+        assert out.status == job_status.SUCCESS
+
+    def test_pending_and_complete_gaps_are_judged_individually(self):
+        out, _ = self._run(
+            {},
+            snapshots={self.GAP: 0, self.OLD_GAP: 0},
+            gap_coverage={self.OLD_GAP: (350, 700)},
+        )
+        assert self._fp_dates() == [self.GAP, self.TARGET]
+        assert out.notes.endswith(
+            "; catch-up: 2026-09-28=pending (prices 50%), 2026-09-30=success"
+        )
+
+    def test_failed_catchup_makes_partial_and_other_steps_still_run(self):
+        out, calls = self._run(
+            {("feature_pipeline", self.GAP): job_status.FAILED},
+            snapshots={self.GAP: 0},
+        )
+        assert self._fp_dates() == [self.GAP, self.TARGET]
+        assert [c[0] for c in calls][-3:] == [
+            "target_backfill",
+            "stage2_review",
+            "context_pack_generator",
+        ]
+        assert out.status == job_status.PARTIAL
+        assert out.notes.endswith("; catch-up: 2026-09-30=failed")
+        assert "feature_pipeline=success" in out.notes  # the target itself is fine
+
+    def test_catchup_session_exception_is_recorded_and_next_session_runs(self):
+        out, calls = self._run(
+            {},
+            snapshots={self.GAP: 0, self.OLD_GAP: 0},
+            gap_coverage={self.OLD_GAP: RuntimeError("db down")},
+        )
+        assert self._fp_dates() == [self.GAP, self.TARGET]
+        assert [c[0] for c in calls][-3:] == [
+            "target_backfill",
+            "stage2_review",
+            "context_pack_generator",
+        ]
+        assert out.status == job_status.PARTIAL
+        assert out.notes.endswith("; catch-up: 2026-09-28=failed, 2026-09-30=success")
+        assert "db down" not in out.notes
+
+    def test_snapshot_counts_exception_does_not_abort_the_chain(self):
+        out, calls = self._run({}, snapshots=RuntimeError("db down"))
+        assert [c[0] for c in calls] == self.ALL_STEPS
+        assert out.status == job_status.PARTIAL
+        assert out.notes.startswith("session=2026-10-02; technical_indicators=success")
+        assert out.notes.endswith("; catch-up: detection failed (RuntimeError)")
+        assert "db down" not in out.notes  # only the type, not the message
+
+    def test_failed_catchup_does_not_soften_a_failed_chain(self):
+        out, _ = self._run(
+            {"feature_pipeline": job_status.FAILED}, snapshots=RuntimeError("x")
+        )
+        assert out.status == job_status.FAILED
+
+    def test_critical_target_still_catches_up_earlier_gaps(self):
+        out, calls = self._run(
+            {},
+            stale=["prices_alpaca", "fred_collector"],
+            snapshots={self.GAP: 0},
+        )
+        # the target's feature pipeline and context pack are skipped ...
+        assert self._fp_dates() == [self.GAP]
+        self.bodies["context_pack_generator"].assert_not_called()
+        assert out.status == job_status.FAILED
+        # ... but the earlier session with complete prices is filled
+        assert [c[0] for c in calls] == [
+            "technical_indicators",
+            "feature_pipeline",  # gap session (runs)
+            "feature_pipeline",  # target session (skipped row)
+            "target_backfill",
+            "stage2_review",
+            "context_pack_generator",
+        ]
+        # the target's SKIPPED row stays the last feature_pipeline log entry
+        assert self.logged["feature_pipeline"].status == job_status.SKIPPED
+        assert out.notes.startswith("session=2026-10-02; ")
+        assert f"feature_pipeline={job_status.SKIPPED}" in out.notes
+        # order of the appended parts: critical, catch-up, stale inputs
+        i_crit = out.notes.index("; critical inputs stale: ")
+        i_catchup = out.notes.index("; catch-up: 2026-09-30=success")
+        i_stale = out.notes.index("; stale inputs: fred_collector")
+        assert i_crit < i_catchup < i_stale
+        assert out.notes.endswith("; stale inputs: fred_collector")
+
+    def test_low_target_coverage_does_not_block_gap_with_complete_prices(self):
+        out, _ = self._run(
+            {},
+            coverage=(512, 741),
+            snapshots={self.GAP: 0, self.OLD_GAP: 0},
+            gap_coverage={self.GAP: (741, 741), self.OLD_GAP: (400, 741)},
+        )
+        assert self._fp_dates() == [self.GAP]
+        assert out.status == job_status.FAILED
+        assert (
+            "critical inputs stale: prices_alpaca "
+            "(coverage 512/741 = 69% of 5-session max)"
+        ) in out.notes
+        assert out.notes.endswith(
+            "; catch-up: 2026-09-28=pending (prices 53%), 2026-09-30=success"
+        )
+
+    def test_catchup_note_comes_before_failed_step_notes(self):
+        out, _ = self._run(
+            {"target_backfill": JobOutcome(status=job_status.FAILED, notes="boom")},
+            snapshots={self.GAP: 0},
+        )
+        assert out.status == job_status.PARTIAL
+        assert out.notes.endswith(
+            "; catch-up: 2026-09-30=success; target_backfill: boom"
+        )
+
+    # target session already processed (weekend, restart, manual trigger)
+
+    def test_done_target_with_gap_runs_catchup_only(self):
+        out, calls = self._run({}, done=True, snapshots={self.GAP: 0})
+        assert [c[0] for c in calls] == [
+            "technical_indicators",
+            "feature_pipeline",
+            "target_backfill",
+        ]
+        assert all(alert is False for _, alert in calls)
+        # nothing for the already processed target; upstream is irrelevant
+        assert self._fp_dates() == [self.GAP]
+        self.bodies["stage2_review"].assert_not_called()
+        self.bodies["context_pack_generator"].assert_not_called()
+        self.wait_mock.assert_not_called()
+        assert out.status == job_status.SUCCESS
+        assert out.notes == (
+            "session=2026-10-02; catch-up only; "
+            "technical_indicators=success, target_backfill=success; "
+            "catch-up: 2026-09-30=success"
+        )
+
+    def test_done_target_with_pending_gap_is_still_success(self):
+        out, calls = self._run(
+            {},
+            done=True,
+            snapshots={self.GAP: 0},
+            gap_coverage={self.GAP: (300, 700)},
+        )
+        assert self._fp_dates() == []
+        assert [c[0] for c in calls] == ["technical_indicators", "target_backfill"]
+        assert out.status == job_status.SUCCESS
+        assert out.notes.endswith("; catch-up: 2026-09-30=pending (prices 42%)")
+
+    def test_done_target_with_failed_catchup_is_partial(self):
+        out, calls = self._run(
+            {("feature_pipeline", self.GAP): job_status.FAILED},
+            done=True,
+            snapshots={self.GAP: 0},
+        )
+        assert [c[0] for c in calls][-1] == "target_backfill"  # still runs
+        assert out.status == job_status.PARTIAL
+        assert out.notes.startswith("session=2026-10-02; catch-up only; ")
+        assert out.notes.endswith("; catch-up: 2026-09-30=failed")
+
+    def test_done_target_with_failing_step_is_partial(self):
+        out, _ = self._run(
+            {"target_backfill": job_status.FAILED}, done=True, snapshots={self.GAP: 0}
+        )
+        assert out.status == job_status.PARTIAL
+        assert "target_backfill=failed" in out.notes
+
+    def test_done_target_with_failing_detection_is_visible_but_runs_nothing(self):
+        out, calls = self._run({}, done=True, snapshots=RuntimeError("db down"))
+        assert calls == []
+        assert out.status == job_status.PARTIAL
+        assert out.notes == (
+            "session=2026-10-02; no new session; "
+            "catch-up: detection failed (RuntimeError)"
+        )

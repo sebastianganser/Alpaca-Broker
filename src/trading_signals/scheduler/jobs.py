@@ -515,6 +515,15 @@ MIN_PRICE_COVERAGE = 0.8
 #: an equally broken night (467 vs 467 = 100 %).
 COVERAGE_BASELINE_SESSIONS = 5
 
+#: The nightly chain looks for missing feature snapshots in this many NYSE
+#: sessions before the target (automatic catch-up, see
+#: :func:`catchup_candidates`).
+CATCHUP_LOOKBACK_SESSIONS = 10
+
+#: A session in the catch-up window counts as a gap if its feature-snapshot
+#: row count is below this share of the window's maximum.
+MIN_SNAPSHOT_COVERAGE = 0.8
+
 
 def _session_close(session_date: date) -> datetime:
     """Regular NYSE close (16:00 ET) of ``session_date`` as aware datetime."""
@@ -620,6 +629,11 @@ def price_coverage(target: date) -> tuple[int, int]:
     return counts.get(target, 0), baseline
 
 
+def _coverage_pct(current: int, baseline: int) -> int:
+    """``current`` as whole percent of ``baseline`` (rounded down; 0 if no baseline)."""
+    return current * 100 // baseline if baseline else 0
+
+
 def _critical_stale(target: date, stale: list[str]) -> list[str]:
     """Critical upstream problems for ``target`` (empty = features may run).
 
@@ -642,7 +656,7 @@ def _critical_stale(target: date, stale: list[str]) -> list[str]:
             )
         else:
             if not coverage_ok(current, baseline):
-                pct = current * 100 // baseline if baseline else 0
+                pct = _coverage_pct(current, baseline)
                 critical.append(
                     f"prices_alpaca (coverage {current}/{baseline} = {pct}% "
                     f"of {COVERAGE_BASELINE_SESSIONS}-session max)"
@@ -682,9 +696,167 @@ def _chain_done_for(target: date) -> bool:
     return row is not None
 
 
+def _catchup_window(target: date) -> list[date]:
+    """The last ``CATCHUP_LOOKBACK_SESSIONS`` NYSE sessions before ``target``."""
+    from trading_signals.utils.market_calendar import trading_days
+
+    # 28 calendar days always hold >= 10 sessions, even around holidays
+    window = trading_days(target - timedelta(days=28), target - timedelta(days=1))
+    return window[-CATCHUP_LOOKBACK_SESSIONS:]
+
+
+def snapshot_counts(sessions: list[date]) -> dict[date, int]:
+    """Feature-snapshot row count per session date (one grouped query).
+
+    Every date in ``sessions`` is a key; dates without snapshots count 0.
+    """
+    from sqlalchemy import func, select
+
+    from trading_signals.db.models.features import FeatureSnapshot
+    from trading_signals.db.session import get_session
+
+    if not sessions:
+        return {}
+    with get_session() as session:
+        rows = session.execute(
+            select(FeatureSnapshot.snapshot_date, func.count())
+            .where(FeatureSnapshot.snapshot_date.in_(sessions))
+            .group_by(FeatureSnapshot.snapshot_date)
+        ).all()
+    counts = dict(rows)
+    return {d: counts.get(d, 0) for d in sessions}
+
+
+def catchup_candidates(
+    sessions: list[date],
+    counts: dict[date, int],
+    min_ratio: float = MIN_SNAPSHOT_COVERAGE,
+) -> list[date]:
+    """Sessions whose feature snapshots are missing, oldest first.
+
+    The baseline is the maximum snapshot count over ``sessions``; a session is
+    a candidate if its count (missing = 0) is below ``min_ratio`` of it. No
+    baseline (nothing computed in the whole window, e.g. a fresh system) means
+    no candidates: that is a job for the rebuild scripts, not the nightly chain.
+
+    Completeness is per-date coverage, not run status or logs.
+    """
+    baseline = max((counts.get(d, 0) for d in sessions), default=0)
+    if baseline <= 0:
+        return []
+    return [d for d in sorted(sessions) if counts.get(d, 0) / baseline < min_ratio]
+
+
+def _find_catchup(target: date) -> tuple[list[date], str | None]:
+    """Gap sessions before ``target`` as ``(candidates, error)``.
+
+    A failing detection (DB, calendar) must not abort the chain: it is logged
+    and returned as the exception type name (``candidates`` is empty then).
+    """
+    try:
+        sessions = _catchup_window(target)
+        return catchup_candidates(sessions, snapshot_counts(sessions)), None
+    except Exception as e:
+        logger.exception(f"[nightly_chain] catch-up detection failed for {target}")
+        return [], type(e).__name__
+
+
+def _run_catchup(
+    candidates: list[date], detect_error: str | None = None
+) -> tuple[str, bool]:
+    """Build the missing feature snapshots of ``candidates`` (oldest first).
+
+    A session is only processed once its own prices are complete
+    (:func:`price_coverage` / :func:`coverage_ok`, checked per session);
+    otherwise it is noted as ``pending (prices X%)`` and retried the next
+    night (the original night already alerted). No context packs for past
+    sessions. Nothing here raises: a failing session is logged, recorded as
+    ``failed`` and the next one still runs.
+
+    Returns ``(note, failed)``: ``note`` is ``catch-up: <date>=<result>, ...``
+    (empty without candidates), ``failed`` is True if a session or the
+    detection (``detect_error``) failed.
+    """
+    if detect_error:
+        return f"catch-up: detection failed ({detect_error})", True
+    if not candidates:
+        return "", False
+    results: list[str] = []
+    failed = False
+    for d in candidates:
+        try:
+            current, baseline = price_coverage(d)
+            if coverage_ok(current, baseline):
+                result = run_logged_job(
+                    "feature_pipeline",
+                    "feature_pipeline",
+                    lambda d=d: _feature_pipeline_body(d),
+                    alert=False,
+                ).status
+            else:
+                result = f"pending (prices {_coverage_pct(current, baseline)}%)"
+        except Exception:
+            logger.exception(f"[nightly_chain] catch-up of {d} failed")
+            result = job_status.FAILED
+        failed = failed or result == job_status.FAILED
+        results.append(f"{d.isoformat()}={result}")
+    return "catch-up: " + ", ".join(results), failed
+
+
+def _catchup_only_chain(
+    target: date, candidates: list[date], detect_error: str | None
+) -> JobOutcome:
+    """Chain run for a session that is already processed: gaps only.
+
+    TA catch-up, feature catch-up of earlier sessions and target backfill; no
+    feature pipeline, stage-2 review or context pack for the target.
+    """
+    d = target.isoformat()
+    if not candidates:
+        # detection failed: nothing can run, but the failure must be visible
+        note, _ = _run_catchup([], detect_error)
+        return JobOutcome(
+            status=job_status.PARTIAL, notes=f"session={d}; no new session; {note}"
+        )
+    logger.info(
+        f"[nightly_chain] session {target} already processed – catch-up only "
+        f"for {', '.join(c.isoformat() for c in candidates)}"
+    )
+    ta = run_logged_job(
+        "technical_indicators_computer",
+        "technical_indicators",
+        _technical_indicators_body,
+        alert=False,
+    )
+    catchup_note, catchup_failed = _run_catchup(candidates)
+    tb = run_logged_job(
+        "target_backfill", "target_backfill", _target_backfill_body, alert=False
+    )
+    steps = {"technical_indicators": ta, "target_backfill": tb}
+    if catchup_failed or any(o.status != job_status.SUCCESS for o in steps.values()):
+        overall = job_status.PARTIAL
+    else:
+        overall = job_status.SUCCESS
+    notes = f"session={d}; catch-up only; " + ", ".join(
+        f"{k}={o.status}" for k, o in steps.items()
+    )
+    notes += f"; {catchup_note}"
+    failed_notes = [
+        f"{k}: {o.notes}"
+        for k, o in steps.items()
+        if o.status == job_status.FAILED and o.notes
+    ]
+    if failed_notes:
+        notes += "; " + "; ".join(failed_notes)
+    return JobOutcome(status=overall, notes=notes)
+
+
 def _nightly_chain_body() -> JobOutcome:
     target = _target_session()
+    candidates, detect_error = _find_catchup(target)
     if _chain_done_for(target):
+        if candidates or detect_error:
+            return _catchup_only_chain(target, candidates, detect_error)
         logger.info(f"[nightly_chain] session {target} already processed – skipping")
         return JobOutcome(
             status=job_status.SKIPPED,
@@ -708,6 +880,10 @@ def _nightly_chain_body() -> JobOutcome:
         _technical_indicators_body,
         alert=False,
     )
+    # earlier gaps first, so the target's own row stays the last feature_pipeline
+    # log entry; each gap session checks its own prices, also if the target's
+    # prices are critical
+    catchup_note, catchup_failed = _run_catchup(candidates, detect_error)
     # a feature row built on missing prices would silently carry the previous
     # session's price features, and the next night targets the next session
     if critical:
@@ -751,7 +927,11 @@ def _nightly_chain_body() -> JobOutcome:
     }
     if critical or fp.status == job_status.FAILED:
         overall = job_status.FAILED
-    elif stale or any(o.status != job_status.SUCCESS for o in steps.values()):
+    elif (
+        stale
+        or catchup_failed
+        or any(o.status != job_status.SUCCESS for o in steps.values())
+    ):
         overall = job_status.PARTIAL
     else:
         overall = job_status.SUCCESS
@@ -763,10 +943,13 @@ def _nightly_chain_body() -> JobOutcome:
         d = target.isoformat()
         notes += (
             f"; critical inputs stale: {', '.join(critical)}; "
-            "features/context pack skipped – repair: re-run nightly_chain once "
-            "prices are complete (same day) or scripts/recompute_features.py "
+            "features/context pack skipped – repair: automatic catch-up on the "
+            f"next chain runs once prices are complete ({CATCHUP_LOOKBACK_SESSIONS} "
+            "sessions), manually scripts/recompute_features.py "
             f"--start {d} --end {d} --all-trading-days"
         )
+    if catchup_note:
+        notes += f"; {catchup_note}"
     non_critical = [n for n in stale if not NIGHTLY_UPSTREAM.get(n)]
     if non_critical:
         notes += f"; stale inputs: {', '.join(non_critical)}"
@@ -786,9 +969,9 @@ def run_nightly_chain() -> None:
     Scheduled for 04:30 Europe/Berlin (after FRED at 04:15; options IV,
     short interest, estimates etc. ran earlier in the night).
     Target = last completed NYSE session; skipped if that session was already
-    processed successfully (weekends/holidays). Waits up to
-    ``CHAIN_MAX_WAIT`` for upstream collectors that are still running, then
-    proceeds and records stale inputs (status PARTIAL → alert).
+    processed successfully (weekends/holidays) and there is nothing to catch
+    up. Waits up to ``CHAIN_MAX_WAIT`` for upstream collectors that are still
+    running, then proceeds and records stale inputs (status PARTIAL → alert).
 
     Critical inputs (``NIGHTLY_UPSTREAM`` ``True``, plus price coverage of the
     target session below ``MIN_PRICE_COVERAGE`` of the max of the last
@@ -797,6 +980,18 @@ def run_nightly_chain() -> None:
     SKIPPED ``collection_log`` rows), the other steps still run, and the
     chain ends FAILED (alert). A FAILED chain is not "done", so re-running it
     for the same session once prices are complete repairs the gap.
+
+    Automatic catch-up: the next night already targets the next session, so a
+    skipped session would stay a gap. Therefore every run also checks the
+    ``CATCHUP_LOOKBACK_SESSIONS`` sessions before the target for missing
+    feature snapshots (per-date row count below ``MIN_SNAPSHOT_COVERAGE`` of
+    the window maximum, see :func:`catchup_candidates`). Gap sessions whose own
+    prices are complete get their feature pipeline run (oldest first, after
+    TA, before the target backfill, no context packs); incomplete ones are
+    noted as ``pending`` and retried the next night. A failed catch-up makes
+    the chain at least PARTIAL; it never aborts the chain. If the target is
+    already processed but gaps exist, the run does only TA, catch-up and
+    target backfill (``catch-up only``) and ends SUCCESS or PARTIAL.
     """
     run_logged_job("nightly_chain", "nightly_chain", _nightly_chain_body)
 
