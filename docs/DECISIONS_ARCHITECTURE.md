@@ -202,6 +202,13 @@
 **Scope:** in the WebGUI only `alpaca-broker`, its appdata/Workfiles folders and its own User Script – never other containers (GynOrg, other projects on the host), array, shares, users, network or security settings (CLAUDE.md, "Unraid WebGUI scope").
 **Trade-off:** the wrapper runs repo code as root on the host, so anyone who can push to `main` can act on the host when the script is run – acceptable for a single-developer private repo; the previous 2026-10-15 note "deploy remains a manual step" is superseded.
 
+### [2026-10-16] Critical Upstream Inputs of the Nightly Chain
+
+**Context:** `registry.NIGHTLY_UPSTREAM` flagged `prices_alpaca` as critical, but the flag was never read – stale prices only made the chain `partial`. Without the session's prices `FeaturePipeline.compute_daily(d)` falls back to the latest session within 14 days, so snapshots labelled `d` silently carried the previous session's price features, the context pack was built on them, and because the next night targets the next session the row was never recomputed.
+**Decision:** A critical input that is stale after the bounded wait – or a target session whose real (non-extrapolated) price rows are below 80 % of the previous session's (`MIN_PRICE_COVERAGE`, never 0; completeness = per-date coverage, not run status) – makes the chain skip `feature_pipeline` and `context_pack_generator` and end `failed` (alert); TA, `target_backfill` and `stage2_review` still run because they only work on existing data. Non-critical inputs keep the old behaviour (`partial`).
+**Rationale:** a missing day is visible and repairable; a wrong day under the right label is neither. A `failed` chain is not "done", so a same-day re-run (startup catch-up or manual trigger) repairs it once prices are complete; later `scripts/recompute_features.py --start D --end D --all-trading-days`.
+**Known limits:** the baseline is only the previous session (two equally thin days in a row pass); manual feature-pipeline triggers and scripts have no coverage guard.
+
 ### [2026-10-16] Applied Migrations: Only Idempotency Fixes, Fresh-DB Replay Tested
 
 **Context:** Migration 024 had been extended after production applied it, so 025 re-added the same columns; production was fine, but a fresh `alembic upgrade head` failed at 025.

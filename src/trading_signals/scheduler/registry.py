@@ -48,7 +48,11 @@ CHAIN_STEP_JOB_IDS: tuple[str, ...] = (
 )
 
 #: Collector runs (collector_name) the nightly chain expects to have
-#: finished *after* the close of the target session. ``True`` = critical.
+#: finished *after* the close of the target session. ``True`` = critical:
+#: if that input is stale the chain still runs the steps that only work on
+#: existing data, but skips feature pipeline + context pack and ends FAILED
+#: (a feature row built without it would silently carry the previous
+#: session's values). ``False`` = stale only makes the chain PARTIAL.
 NIGHTLY_UPSTREAM: dict[str, bool] = {
     "prices_alpaca": True,
     "options_iv_collector": False,

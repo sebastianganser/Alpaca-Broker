@@ -505,6 +505,10 @@ def run_context_pack_generator() -> None:
 CHAIN_MAX_WAIT = timedelta(hours=2)
 CHAIN_POLL_SECONDS = 300
 
+#: Minimum share of the previous session's price rows the target session must
+#: reach before the chain builds features on it (see :func:`coverage_ok`).
+MIN_PRICE_COVERAGE = 0.8
+
 
 def _session_close(session_date: date) -> datetime:
     """Regular NYSE close (16:00 ET) of ``session_date`` as aware datetime."""
@@ -563,6 +567,64 @@ def wait_for_upstream(
         sleep(poll_seconds)
 
 
+def coverage_ok(
+    current: int, previous: int, min_ratio: float = MIN_PRICE_COVERAGE
+) -> bool:
+    """True if ``current`` reaches ``min_ratio`` of ``previous`` price rows.
+
+    No rows for the target session are never OK. ``previous == 0`` with rows
+    on the target (bootstrap, nothing to compare against) counts as OK.
+    """
+    if current <= 0:
+        return False
+    if previous <= 0:
+        return True
+    return current / previous >= min_ratio
+
+
+def price_coverage(target: date) -> tuple[int, int]:
+    """Return ``(target, previous session)`` counts of real price rows.
+
+    Completeness is per-date ticker coverage, not ``MAX(trade_date)``: a fresh
+    prices run can still cover only part of the universe (e.g. IEX fallback).
+    Gap-filled rows (``is_extrapolated``; NULL counts as real) are not counted.
+    """
+    from sqlalchemy import func, select
+
+    from trading_signals.db.models.prices import PriceDaily
+    from trading_signals.db.session import get_session
+    from trading_signals.utils.market_calendar import previous_trading_day
+
+    previous = previous_trading_day(target)
+    with get_session() as session:
+        rows = session.execute(
+            select(PriceDaily.trade_date, func.count())
+            .where(PriceDaily.trade_date.in_((target, previous)))
+            .where(PriceDaily.is_extrapolated.is_not(True))
+            .group_by(PriceDaily.trade_date)
+        ).all()
+    counts = dict(rows)
+    return counts.get(target, 0), counts.get(previous, 0)
+
+
+def _critical_stale(target: date, stale: list[str]) -> list[str]:
+    """Critical upstream problems for ``target`` (empty = features may run).
+
+    Stale collectors flagged critical in ``NIGHTLY_UPSTREAM`` plus a price
+    coverage check: the prices run may count as fresh (SUCCESS/PARTIAL) while
+    the target session is still mostly missing.
+    """
+    critical = [n for n in stale if NIGHTLY_UPSTREAM.get(n)]
+    if "prices_alpaca" not in critical:
+        current, previous = price_coverage(target)
+        if not coverage_ok(current, previous):
+            pct = current * 100 // previous if previous else 0
+            critical.append(
+                f"prices_alpaca (coverage {current}/{previous} = {pct}%)"
+            )
+    return critical
+
+
 def _chain_done_for(target: date) -> bool:
     """True if a nightly_chain run already completed successfully for ``target``."""
     from sqlalchemy import select
@@ -593,6 +655,13 @@ def _nightly_chain_body() -> JobOutcome:
     stale = wait_for_upstream(target)
     if stale:
         logger.warning(f"[nightly_chain] stale inputs for {target}: {', '.join(stale)}")
+    critical = _critical_stale(target, stale)
+    skip_note = f"critical input stale: {', '.join(critical)}"
+    if critical:
+        logger.warning(
+            f"[nightly_chain] {skip_note} for {target} – "
+            "skipping feature pipeline and context pack"
+        )
 
     ta = run_logged_job(
         "technical_indicators_computer",
@@ -600,12 +669,17 @@ def _nightly_chain_body() -> JobOutcome:
         _technical_indicators_body,
         alert=False,
     )
-    fp = run_logged_job(
-        "feature_pipeline",
-        "feature_pipeline",
-        lambda: _feature_pipeline_body(target),
-        alert=False,
-    )
+    # a feature row built on missing prices would silently carry the previous
+    # session's price features, and the next night targets the next session
+    if critical:
+        fp = JobOutcome(status=job_status.SKIPPED, notes=skip_note)
+    else:
+        fp = run_logged_job(
+            "feature_pipeline",
+            "feature_pipeline",
+            lambda: _feature_pipeline_body(target),
+            alert=False,
+        )
     tb = run_logged_job(
         "target_backfill", "target_backfill", _target_backfill_body, alert=False
     )
@@ -613,7 +687,9 @@ def _nightly_chain_body() -> JobOutcome:
     s2 = run_logged_job(
         "stage2_review", "stage2_review", _stage2_review_body, alert=False
     )
-    if fp.status in (job_status.SUCCESS, job_status.PARTIAL):
+    if critical:
+        cp = JobOutcome(status=job_status.SKIPPED, notes=skip_note)
+    elif fp.status in (job_status.SUCCESS, job_status.PARTIAL):
         cp = run_logged_job(
             "context_pack_generator",
             "context_pack_generator",
@@ -632,7 +708,7 @@ def _nightly_chain_body() -> JobOutcome:
         "stage2_review": s2,
         "context_pack": cp,
     }
-    if fp.status == job_status.FAILED:
+    if critical or fp.status == job_status.FAILED:
         overall = job_status.FAILED
     elif stale or any(o.status != job_status.SUCCESS for o in steps.values()):
         overall = job_status.PARTIAL
@@ -642,8 +718,17 @@ def _nightly_chain_body() -> JobOutcome:
     notes = f"session={target.isoformat()}; " + ", ".join(
         f"{k}={o.status}" for k, o in steps.items()
     )
-    if stale:
-        notes += f"; stale inputs: {', '.join(stale)}"
+    if critical:
+        d = target.isoformat()
+        notes += (
+            f"; critical inputs stale: {', '.join(critical)}; "
+            "features/context pack skipped – repair: re-run nightly_chain once "
+            "prices are complete (same day) or scripts/recompute_features.py "
+            f"--start {d} --end {d} --all-trading-days"
+        )
+    non_critical = [n for n in stale if not NIGHTLY_UPSTREAM.get(n)]
+    if non_critical:
+        notes += f"; stale inputs: {', '.join(non_critical)}"
     failed_notes = [
         f"{k}: {o.notes}"
         for k, o in steps.items()
@@ -655,7 +740,7 @@ def _nightly_chain_body() -> JobOutcome:
 
 
 def run_nightly_chain() -> None:
-    """Nightly orchestrator: TA catch-up → features → targets → stage-2 review → context pack.
+    """Nightly orchestrator: TA → features → targets → stage-2 review → context pack.
 
     Scheduled for 04:30 Europe/Berlin (after FRED at 04:15; options IV,
     short interest, estimates etc. ran earlier in the night).
@@ -663,6 +748,12 @@ def run_nightly_chain() -> None:
     processed successfully (weekends/holidays). Waits up to
     ``CHAIN_MAX_WAIT`` for upstream collectors that are still running, then
     proceeds and records stale inputs (status PARTIAL → alert).
+
+    Critical inputs (``NIGHTLY_UPSTREAM`` ``True``, plus price coverage of the
+    target session below ``MIN_PRICE_COVERAGE``) are different: feature
+    pipeline and context pack are skipped, the other steps still run, and the
+    chain ends FAILED (alert). A FAILED chain is not "done", so re-running it
+    for the same session once prices are complete repairs the gap.
     """
     run_logged_job("nightly_chain", "nightly_chain", _nightly_chain_body)
 

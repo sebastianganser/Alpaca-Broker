@@ -173,13 +173,69 @@ class TestUpstream:
         assert stale == ["a"]
 
 
+# ── Price coverage ──────────────────────────────────────────────────────
+
+
+class TestCoverageOk:
+    def test_no_previous_session_is_ok(self):
+        assert jobs.coverage_ok(5, 0) is True  # bootstrap: nothing to compare
+
+    def test_no_target_rows_is_never_ok(self):
+        assert jobs.coverage_ok(0, 0) is False
+        assert jobs.coverage_ok(0, 700) is False
+
+    def test_exactly_at_threshold_is_ok(self):
+        assert jobs.MIN_PRICE_COVERAGE == 0.8
+        assert jobs.coverage_ok(80, 100) is True
+        assert jobs.coverage_ok(4, 5) is True
+
+    def test_below_threshold_fails(self):
+        assert jobs.coverage_ok(79, 100) is False
+        assert jobs.coverage_ok(512, 741) is False
+        assert jobs.coverage_ok(0, 741) is False
+
+    def test_full_or_higher_coverage_is_ok(self):
+        assert jobs.coverage_ok(741, 741) is True
+        assert jobs.coverage_ok(760, 741) is True
+
+    def test_custom_ratio(self):
+        assert jobs.coverage_ok(50, 100, min_ratio=0.5) is True
+        assert jobs.coverage_ok(49, 100, min_ratio=0.5) is False
+
+
+class TestPriceCoverage:
+    def _run(self, rows):
+        session = MagicMock()
+        session.execute.return_value.all.return_value = rows
+        with patch(
+            "trading_signals.db.session.get_session",
+            lambda: _fake_session(session),
+        ):
+            counts = jobs.price_coverage(date(2026, 10, 2))
+        return counts, session.execute.call_args.args[0]
+
+    def test_counts_target_and_previous_session(self):
+        counts, _ = self._run([(date(2026, 10, 2), 700), (date(2026, 10, 1), 740)])
+        assert counts == (700, 740)
+
+    def test_missing_target_session_counts_zero(self):
+        counts, _ = self._run([(date(2026, 10, 1), 740)])
+        assert counts == (0, 740)
+
+    def test_filters_extrapolated_and_groups_by_date(self):
+        _, stmt = self._run([])
+        sql = _sql(stmt)
+        assert "is_extrapolated IS NOT true" in sql  # NULL counts as real
+        assert "GROUP BY signals.prices_daily.trade_date" in sql
+
+
 # ── Nightly chain ───────────────────────────────────────────────────────
 
 
 class TestNightlyChain:
     TARGET = date(2026, 10, 2)
 
-    def _run(self, statuses, stale=(), done=False):
+    def _run(self, statuses, stale=(), done=False, coverage=(700, 700)):
         calls = []
 
         def fake_run(job_id, collector_name, fn, *, alert=True):
@@ -190,9 +246,11 @@ class TestNightlyChain:
             patch.object(jobs, "_target_session", return_value=self.TARGET),
             patch.object(jobs, "_chain_done_for", return_value=done),
             patch.object(jobs, "wait_for_upstream", return_value=list(stale)),
+            patch.object(jobs, "price_coverage", return_value=coverage) as cov,
             patch.object(jobs, "run_logged_job", side_effect=fake_run),
         ):
             out = jobs._nightly_chain_body()
+        self.coverage_mock = cov
         return out, calls
 
     def test_order_and_success(self):
@@ -228,6 +286,74 @@ class TestNightlyChain:
         out, _ = self._run({}, stale=["short_interest_collector"])
         assert out.status == job_status.PARTIAL
         assert "short_interest_collector" in out.notes
+
+    def test_non_critical_stale_still_runs_everything(self):
+        out, calls = self._run(
+            {}, stale=["short_interest_collector", "fred_collector"]
+        )
+        names = [c[0] for c in calls]
+        assert "feature_pipeline" in names and "context_pack_generator" in names
+        assert out.status == job_status.PARTIAL
+        assert "stale inputs: short_interest_collector, fred_collector" in out.notes
+        assert "critical" not in out.notes
+        self.coverage_mock.assert_called_once_with(self.TARGET)
+
+    def test_critical_stale_skips_features_and_context_pack(self):
+        out, calls = self._run({}, stale=["prices_alpaca", "fred_collector"])
+        assert [c[0] for c in calls] == [
+            "technical_indicators",
+            "target_backfill",
+            "stage2_review",
+        ]
+        assert all(alert is False for _, alert in calls)
+        assert out.status == job_status.FAILED
+        assert out.records_written == 0
+        assert out.notes.startswith("session=2026-10-02; ")
+        assert f"feature_pipeline={job_status.SKIPPED}" in out.notes
+        assert f"context_pack={job_status.SKIPPED}" in out.notes
+        assert "; critical inputs stale: prices_alpaca; " in out.notes
+        assert "features/context pack skipped" in out.notes
+        assert (
+            "scripts/recompute_features.py --start 2026-10-02 --end 2026-10-02 "
+            "--all-trading-days"
+        ) in out.notes
+        # non-critical stale input keeps its own part, critical one is not repeated
+        assert out.notes.endswith("; stale inputs: fred_collector")
+        # run status already says the prices are missing - no coverage query needed
+        self.coverage_mock.assert_not_called()
+
+    def test_low_price_coverage_is_critical_although_prices_run_is_fresh(self):
+        out, calls = self._run({}, stale=[], coverage=(512, 741))
+        names = [c[0] for c in calls]
+        assert "feature_pipeline" not in names
+        assert "context_pack_generator" not in names
+        assert "target_backfill" in names and "stage2_review" in names
+        assert out.status == job_status.FAILED
+        assert (
+            "critical inputs stale: prices_alpaca (coverage 512/741 = 69%)"
+            in out.notes
+        )
+        assert "stale inputs" not in out.notes
+
+    def test_coverage_percentage_is_rounded_down(self):
+        out, _ = self._run({}, coverage=(797, 1000))
+        assert "coverage 797/1000 = 79%" in out.notes
+
+    def test_coverage_at_threshold_builds_features(self):
+        out, calls = self._run({}, coverage=(80, 100))
+        assert "feature_pipeline" in [c[0] for c in calls]
+        assert out.status == job_status.SUCCESS
+
+    def test_no_previous_prices_is_not_critical(self):
+        out, calls = self._run({}, coverage=(650, 0))
+        assert "feature_pipeline" in [c[0] for c in calls]
+        assert out.status == job_status.SUCCESS
+
+    def test_no_target_prices_at_all_is_critical(self):
+        out, calls = self._run({}, coverage=(0, 0))
+        assert "feature_pipeline" not in [c[0] for c in calls]
+        assert out.status == job_status.FAILED
+        assert "coverage 0/0 = 0%" in out.notes
 
     def test_already_processed_session_is_skipped(self):
         out, calls = self._run({}, done=True)
