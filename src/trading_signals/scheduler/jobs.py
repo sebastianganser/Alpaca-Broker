@@ -1019,7 +1019,7 @@ def run_nightly_chain() -> None:
 # ── Index Sync ───────────────────────────────────────────────────────────
 
 
-def _index_sync_body() -> int:
+def _index_sync_body() -> JobOutcome:
     from sqlalchemy import select
 
     from trading_signals.db.models.universe import Universe
@@ -1044,6 +1044,17 @@ def _index_sync_body() -> int:
             logger.info(
                 f"[{collector_name}] new tickers: {', '.join(result.new_tickers)}"
             )
+        notes = [
+            f"S&P 500={result.sp500_count}, Nasdaq 100={result.nasdaq100_count}, "
+            f"added={result.newly_added}, updated={result.membership_updated}"
+        ]
+        if result.renamed:
+            notes.append("renamed (interval re-keyed): " + ", ".join(result.renamed))
+        if result.date_fallbacks:
+            notes.append(
+                "sync date used (not in changes table): "
+                + ", ".join(result.date_fallbacks)
+            )
 
     # Step 2: Enrich tickers missing sector/industry data
     with get_session() as session:
@@ -1061,7 +1072,7 @@ def _index_sync_body() -> int:
         records_written += enrichment.enriched
     else:
         logger.info(f"[{collector_name}] all tickers have sector data")
-    return records_written
+    return JobOutcome(records_written=records_written, notes="; ".join(notes))
 
 
 def run_index_sync() -> None:
@@ -1073,6 +1084,40 @@ def run_index_sync() -> None:
     universe, and enriches any tickers missing sector data.
     """
     run_logged_job("index_sync", "index_sync", _index_sync_body)
+
+
+# ── Universe Validation ──────────────────────────────────────────────────
+
+
+def _universe_validation_body() -> JobOutcome:
+    from trading_signals.db.session import get_session
+    from trading_signals.universe.validation import validate_universe
+
+    with get_session() as session:
+        result = validate_universe(session)
+    return JobOutcome(
+        # warnings (open index interval on a delisted ticker, rename target
+        # missing from the universe) need a human or the monthly index sync
+        status=job_status.PARTIAL if result.warnings else job_status.SUCCESS,
+        records_written=len(result.deactivated),
+        records_fetched=result.checked,
+        notes=result.notes(),
+    )
+
+
+def run_universe_validation() -> None:
+    """Weekly validation of the active universe against Alpaca assets.
+
+    Scheduled for Sundays at 13:00 Europe/Berlin (after the weekly
+    collectors). Deactivates active tickers that Alpaca no longer lists as
+    tradable -- except tickers with an open ``index_membership`` interval,
+    which only produce a warning (PARTIAL) -- and notes renames/mergers from
+    Alpaca corporate actions in the run notes. Not an upstream of the nightly
+    chain.
+    """
+    run_logged_job(
+        "universe_validation", "universe_validation", _universe_validation_body
+    )
 
 
 # ── Log Retention ────────────────────────────────────────────────────────

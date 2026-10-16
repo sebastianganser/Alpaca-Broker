@@ -33,6 +33,13 @@ def main(dry_run: bool = False) -> None:
         print(f"Newly added:           {result.newly_added}")
         print(f"Not tradeable (skip):  {result.not_tradeable}")
         print(f"Memberships updated:   {result.membership_updated}")
+        if result.renamed:
+            print(f"Renamed (re-keyed):    {', '.join(result.renamed)}")
+        if result.date_fallbacks:
+            print(
+                "Sync date used (not in the changes table): "
+                + ", ".join(result.date_fallbacks)
+            )
 
         if result.new_tickers:
             print(f"\nNew tickers added ({len(result.new_tickers)}):")

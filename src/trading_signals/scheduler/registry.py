@@ -34,6 +34,7 @@ JOB_COLLECTOR_NAMES: dict[str, str] = {
     "fundamentals_collector": "fundamentals_yf",
     "earnings_calendar_collector": "earnings_calendar_collector",
     "index_sync": "index_sync",
+    "universe_validation": "universe_validation",
     "log_retention": "log_retention",
     "data_retention": "data_retention",
     "feature_analysis": "feature_analysis",

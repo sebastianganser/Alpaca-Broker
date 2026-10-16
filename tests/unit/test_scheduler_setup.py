@@ -28,6 +28,7 @@ class TestCreateScheduler:
             "log_retention",
             "short_interest_collector",
             "short_interest_positions_collector",
+            "universe_validation",
             "options_iv_collector",
             *CHAIN_STEP_JOB_IDS,
             *CATCHUP_JOBS,
@@ -50,8 +51,19 @@ class TestCreateScheduler:
         assert (fa["day"], fa["hour"], fa["minute"]) == ("1", "7", "0")
 
     def test_job_count(self):
-        assert len(JOB_DEFINITIONS) == 25
-        assert len(create_scheduler().get_jobs()) == 25
+        assert len(JOB_DEFINITIONS) == 26
+        assert len(create_scheduler().get_jobs()) == 26
+
+    def test_universe_validation_runs_weekly_sunday_13_berlin(self):
+        job = create_scheduler().get_job("universe_validation")
+        f = {x.name: str(x) for x in job.trigger.fields}
+        assert (f["day_of_week"], f["hour"], f["minute"]) == ("sun", "13", "0")
+        assert str(job.trigger.timezone) == "Europe/Berlin"
+        # after the other Sunday collectors (short interest positions at 12:00)
+        pos = create_scheduler().get_job("short_interest_positions_collector")
+        assert _hm(pos) == ("12", "0")
+        # a regular scheduled job, not a paused chain step
+        assert "universe_validation" not in CHAIN_STEP_JOB_IDS
 
     def test_short_interest_positions_runs_weekly_sunday_noon(self):
         job = create_scheduler().get_job("short_interest_positions_collector")
@@ -105,6 +117,22 @@ class TestRegistry:
         # features use a lagged availability rule -> not a nightly upstream
         assert "short_interest_positions" not in NIGHTLY_UPSTREAM
         assert job_id not in NIGHTLY_UPSTREAM
+
+    def test_universe_validation_registry(self):
+        job_id = "universe_validation"
+        assert JOB_COLLECTOR_NAMES[job_id] == "universe_validation"
+        assert get_collector_name(job_id) == "universe_validation"
+        assert get_collector_name(f"{job_id}{MANUAL_SUFFIX}") == "universe_validation"
+        # housekeeping: the nightly chain does not wait for it
+        assert "universe_validation" not in NIGHTLY_UPSTREAM
+        assert job_id not in NIGHTLY_UPSTREAM
+        assert job_id not in CATCHUP_JOBS
+
+    def test_universe_validation_job_function_is_wired(self):
+        definition = {d[0]: d for d in JOB_DEFINITIONS}["universe_validation"]
+        from trading_signals.scheduler import jobs
+
+        assert definition[1] is jobs.run_universe_validation
 
     def test_every_job_has_a_registry_entry(self):
         for job_id, *_ in JOB_DEFINITIONS:

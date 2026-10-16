@@ -6,6 +6,7 @@ Mutating endpoints (POST) are protected by ``require_write_access``
 (applied at router include in ``main.py``).
 """
 
+import threading
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -297,11 +298,20 @@ def seed_benchmark_etfs(db: Session = Depends(get_db)):
 
 @router.post("/seed/index-membership", response_model=TriggerResponse)
 def seed_index_membership(db: Session = Depends(get_db)):
-    """Seed historical index membership data from Wikipedia + GitHub backup.
+    """Seed historical index membership data from the Wikipedia change tables.
 
-    Parses S&P 500 and Nasdaq 100 historical changes from Wikipedia and
-    the fja05680/sp500 GitHub CSV, then generates membership intervals
-    in the index_membership table.
+    Parses the S&P 500 ("Historical components of the S&P 500") and Nasdaq 100
+    historical changes from Wikipedia and generates membership intervals in
+    the index_membership table. Ticker renames are normalized to the current
+    symbol (no exits).
+
+    Only a **complete** source (additions *and* removals) is accepted. If the
+    change table cannot be parsed (layout change, fetch error) the request is
+    refused with 502 and nothing is written: the additions-only fallback
+    (current members' "Date added") silently hides every index exit, which is
+    exactly the survivorship bias this table exists to prevent. The GitHub
+    CSV is no longer a seeding source (snapshot dates, stale by weeks); it is
+    a cross-check only (``GitHubSP500Backup``).
 
     This is a one-time operation that should be run after deploying
     the index_membership migration. Subsequent updates are handled
@@ -310,38 +320,45 @@ def seed_index_membership(db: Session = Depends(get_db)):
     Idempotent: Running multiple times will not create duplicates
     (uses ON CONFLICT DO NOTHING via unique constraint).
     """
-    import threading
+    from trading_signals.universe.wikipedia_index_history import (
+        WikipediaIndexHistoryParser,
+        seed_blockers,
+    )
+    from trading_signals.utils.logging import get_logger
+
+    logger = get_logger("index_membership_seed")
+
+    # 1. Parse the sources first (synchronously): an incomplete source must be
+    #    reported to the caller, not discovered later in a background thread.
+    parser = WikipediaIndexHistoryParser()
+    sp500_result = parser.parse_sp500_changes()
+    nasdaq_result = parser.parse_nasdaq100_changes()
+    for w in sp500_result.warnings + nasdaq_result.warnings:
+        logger.warning(w)
+
+    blockers = seed_blockers(sp500_result, nasdaq_result)
+    if blockers:
+        detail = (
+            "Index membership NOT seeded -- incomplete history source "
+            "(no removal data would silently reintroduce survivorship bias): "
+            + "; ".join(blockers)
+        )
+        logger.error(f"[seed] {detail}")
+        raise HTTPException(status_code=502, detail=detail)
 
     def _run_seed():
-        from trading_signals.db.session import get_session
-        from trading_signals.universe.wikipedia_index_history import (
-            GitHubSP500Backup,
-            WikipediaIndexHistoryParser,
-            generate_intervals_from_changes,
-        )
-        from trading_signals.db.models.index_membership import IndexMembership
-        from trading_signals.utils.retention import data_start_date as _start
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-        parser = WikipediaIndexHistoryParser()
+        from trading_signals.db.models.index_membership import IndexMembership
+        from trading_signals.db.session import get_session
+        from trading_signals.universe.wikipedia_index_history import (
+            generate_intervals_from_changes,
+        )
+        from trading_signals.utils.retention import data_start_date as _start
 
-        # 1. Parse Wikipedia S&P 500 changes
-        sp500_result = parser.parse_sp500_changes()
-
-        # 2. Parse Nasdaq 100 changes
-        nasdaq_result = parser.parse_nasdaq100_changes()
-
-        # 3. Try GitHub CSV as additional/backup source for S&P 500
-        github_result = GitHubSP500Backup().fetch_changes()
-
-        # Merge all changes (Wikipedia primary, GitHub as supplement)
         all_changes = sp500_result.changes + nasdaq_result.changes
 
-        # Use GitHub CSV changes if Wikipedia returned few results
-        if len(sp500_result.changes) < 20 and github_result.changes:
-            all_changes = github_result.changes + nasdaq_result.changes
-
-        # 4. Get current index members to fill gaps for long-standing members
+        # 2. Get current index members to fill gaps for long-standing members
         with get_session() as session:
             from trading_signals.universe.index_sync import IndexSyncer
             syncer = IndexSyncer(session)
@@ -353,12 +370,12 @@ def seed_index_membership(db: Session = Depends(get_db)):
             "nasdaq100": current_nasdaq100,
         }
 
-        # 5. Generate intervals
+        # 3. Generate intervals
         intervals = generate_intervals_from_changes(
             all_changes, current_members, _start()
         )
 
-        # 6. Insert into database (idempotent)
+        # 4. Insert into database (idempotent)
         with get_session() as session:
             inserted = 0
             for iv in intervals:
@@ -372,18 +389,6 @@ def seed_index_membership(db: Session = Depends(get_db)):
                 result = session.execute(stmt)
                 inserted += result.rowcount
 
-        # Log warnings from parsing
-        all_warnings = (
-            sp500_result.warnings
-            + nasdaq_result.warnings
-            + github_result.warnings
-        )
-        for w in all_warnings:
-            from trading_signals.utils.logging import get_logger
-            get_logger("index_membership_seed").warning(w)
-
-        from trading_signals.utils.logging import get_logger
-        logger = get_logger("index_membership_seed")
         logger.info(
             f"[seed] Index membership seeding complete: "
             f"{inserted}/{len(intervals)} intervals inserted "

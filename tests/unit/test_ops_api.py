@@ -25,6 +25,7 @@ from trading_signals.api.tasks import (
     resolve_start_date,
 )
 from trading_signals.db.base import TZDateTime
+from trading_signals.universe.wikipedia_index_history import ParseResult
 
 BERLIN = ZoneInfo("Europe/Berlin")
 WRITE_HEADERS = {"X-Requested-With": "XMLHttpRequest"}
@@ -201,6 +202,100 @@ class TestAnalysisTrigger:
         c = _app(analysis.router)
         assert c.get("/api/v1/analysis/list?limit=0").status_code == 422
         assert c.get("/api/v1/analysis/list?limit=1000").status_code == 422
+
+
+# ── Index membership seeding ────────────────────────────────────────────
+
+
+class TestSeedIndexMembership:
+    """Seeding is refused unless the history source has removals."""
+
+    URL = "/api/v1/ops/seed/index-membership"
+
+    @staticmethod
+    def _parser(sp500, nasdaq):
+        parser = MagicMock()
+        parser.parse_sp500_changes.return_value = sp500
+        parser.parse_nasdaq100_changes.return_value = nasdaq
+        return parser
+
+    @staticmethod
+    def _result(source, complete, reason=None, warnings=()):
+        return ParseResult(
+            source=source,
+            complete=complete,
+            incomplete_reason=reason,
+            warnings=list(warnings),
+        )
+
+    def _post(self, sp500, nasdaq):
+        parser = self._parser(sp500, nasdaq)
+        c = _app(operations.router)
+        with (
+            patch(
+                "trading_signals.universe.wikipedia_index_history."
+                "WikipediaIndexHistoryParser",
+                return_value=parser,
+            ),
+            patch.object(operations, "threading") as threading_mod,
+        ):
+            response = c.post(self.URL, headers=WRITE_HEADERS)
+        return response, threading_mod.Thread
+
+    def test_additions_only_history_is_refused(self):
+        sp500 = self._result(
+            "wikipedia_sp500",
+            False,
+            "no change table available; only 'Date added' of current members",
+            ["INCOMPLETE: no change table available"],
+        )
+        response, thread = self._post(sp500, self._result("wikipedia_nasdaq100", True))
+        assert response.status_code == 502
+        detail = response.json()["detail"]
+        assert "NOT seeded" in detail
+        assert "wikipedia_sp500" in detail and "Date added" in detail
+        assert "survivorship" in detail
+        thread.assert_not_called()  # nothing is written, no background work
+
+    def test_incomplete_nasdaq_history_is_refused_too(self):
+        response, thread = self._post(
+            self._result("wikipedia_sp500", True),
+            self._result("wikipedia_nasdaq100", False, "403 Too many requests"),
+        )
+        assert response.status_code == 502
+        assert "wikipedia_nasdaq100: 403 Too many requests" in response.json()["detail"]
+        thread.assert_not_called()
+
+    def test_both_sources_listed_when_both_are_incomplete(self):
+        response, _ = self._post(
+            self._result("wikipedia_sp500", False, "layout changed"),
+            self._result("wikipedia_nasdaq100", False, "layout changed"),
+        )
+        detail = response.json()["detail"]
+        assert "wikipedia_sp500: layout changed" in detail
+        assert "wikipedia_nasdaq100: layout changed" in detail
+
+    def test_complete_history_starts_the_background_seed(self):
+        response, thread = self._post(
+            self._result("wikipedia_sp500", True),
+            self._result("wikipedia_nasdaq100", True),
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True and "started in background" in body["message"]
+        thread.assert_called_once()
+        thread.return_value.start.assert_called_once()
+
+    def test_github_csv_is_not_consulted(self):
+        """The old '< 20 changes -> use GitHub' fallback is gone."""
+        with patch(
+            "trading_signals.universe.wikipedia_index_history.GitHubSP500Backup"
+        ) as github:
+            self._post(
+                self._result("wikipedia_sp500", True),
+                self._result("wikipedia_nasdaq100", True),
+            )
+        github.assert_not_called()
 
 
 # ── Job tracker ─────────────────────────────────────────────────────────

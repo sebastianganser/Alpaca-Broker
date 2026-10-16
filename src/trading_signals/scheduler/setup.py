@@ -144,6 +144,12 @@ JOB_DEFINITIONS: list[tuple[str, object, dict, str]] = [
         {"day_of_week": "sun", "hour": 12, "minute": 0},
         "Weekly FINRA Short Interest Positions (Massive API)",
     ),
+    (
+        "universe_validation",
+        jobs.run_universe_validation,
+        {"day_of_week": "sun", "hour": 13, "minute": 0},
+        "Weekly Universe Validation (Alpaca assets: delisted/renamed tickers)",
+    ),
     # ── Monthly (1st) ──
     (
         "index_sync",

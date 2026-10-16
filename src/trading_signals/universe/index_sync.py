@@ -7,25 +7,51 @@ against Alpaca before being added.
 Sources:
   - S&P 500: https://en.wikipedia.org/wiki/List_of_S%26P_500_companies
   - Nasdaq 100: https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies
+  - Effective dates of the changes: "Historical components of the S&P 500" /
+    "...of the Nasdaq-100" (``wikipedia_index_history``)
+  - Ticker renames: ``ticker_aliases`` and Alpaca ``name_change`` corporate
+    actions (a rename re-keys the open interval, it is not an exit)
+
+Interval maintenance (``_update_membership_intervals``): a member that
+disappears while its new symbol appears is a rename -> the open interval is
+re-keyed. Otherwise additions/removals open/close intervals at the effective
+date from the changes table; only if a change is not in the table the sync
+date is used (WARNING per ticker).
 """
 
 import io
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
-import requests
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from trading_signals.db.models.universe import Universe
 from trading_signals.universe.alpaca_validator import AlpacaAssetValidator
+from trading_signals.universe.corporate_actions import AlpacaCorporateActions
 from trading_signals.universe.manager import UniverseManager
+from trading_signals.universe.ticker_aliases import DEFAULT_ALIASES
+from trading_signals.universe.wikipedia_index_history import (
+    SP500_CURRENT_URL,
+    WikipediaIndexHistoryParser,
+    fetch_html,
+)
 from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-USER_AGENT = "Mozilla/5.0 (Trading-Signals IndexSyncer/1.0)"
+NASDAQ100_CURRENT_URL = "https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies"
+
+#: How far back Alpaca ``name_change`` actions are searched for a disappeared
+#: member (covers a monthly job that was down for a while).
+RENAME_LOOKBACK_DAYS = 400
+
+#: ``index_membership.reason`` column length.
+_REASON_MAX = 200
+
+#: (index_name, ticker, 'added' | 'removed') -> effective date from the changes table
+EffectiveDates = dict[tuple[str, str, str], date]
 
 #: Plausible constituent counts. A Wikipedia layout change that yields an
 #: empty/partial table must never close all membership intervals (H2).
@@ -51,6 +77,10 @@ class SyncResult:
     membership_updated: int = 0
     membership_cleared: int = 0
     new_tickers: list[str] = field(default_factory=list)
+    #: "OLD->NEW" renames whose open interval was re-keyed (no exit)
+    renamed: list[str] = field(default_factory=list)
+    #: "index TICKER added|removed" dated with the sync date (not in the table)
+    date_fallbacks: list[str] = field(default_factory=list)
 
 
 def check_index_sizes(lists: dict[str, set[str]]) -> None:
@@ -70,9 +100,17 @@ def check_index_sizes(lists: dict[str, set[str]]) -> None:
 class IndexSyncer:
     """Synchronize index constituent lists with the universe."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        history_parser: WikipediaIndexHistoryParser | None = None,
+        corporate_actions: AlpacaCorporateActions | None = None,
+    ) -> None:
         self.session = session
         self._manager = UniverseManager(session)
+        self._history_parser = history_parser
+        self._corporate_actions = corporate_actions
+        self._effective_dates_cache: EffectiveDates | None = None
 
     def sync(self, dry_run: bool = False, sanity_check: bool = True) -> SyncResult:
         """Fetch index lists and sync with universe.
@@ -207,24 +245,33 @@ class IndexSyncer:
         # ── Maintain index_membership intervals ──────────────────────
         # Compare current index composition against open intervals
         # to detect additions and removals for point-in-time tracking.
-        self._update_membership_intervals(membership)
+        self._update_membership_intervals(membership, result)
 
         return result
+
+    # ── Membership intervals ────────────────────────────────────────
 
     def _update_membership_intervals(
         self,
         current_membership: dict[str, set[str]],
+        result: SyncResult | None = None,
     ) -> None:
         """Maintain index_membership intervals based on detected changes.
 
         Compares current index composition (from Wikipedia) against
-        open intervals in the index_membership table. Creates new
-        intervals for additions and closes intervals for removals.
+        open intervals in the index_membership table.
+
+        * A disappeared member whose new symbol appeared (known alias or
+          Alpaca ``name_change``) is a rename: the open interval is re-keyed.
+        * Other additions open an interval, other removals close one, both at
+          the effective date of the changes table (sync date + WARNING if the
+          change is not in the table or the date is implausible).
         """
         from sqlalchemy import and_
 
         from trading_signals.db.models.index_membership import IndexMembership
 
+        result = result if result is not None else SyncResult()
         today = date.today()
 
         for index_name in ("sp500", "nasdaq100"):
@@ -236,30 +283,68 @@ class IndexSyncer:
 
             # Get all currently-open intervals for this index
             open_intervals = self.session.execute(
-                select(IndexMembership.ticker).where(
+                select(
+                    IndexMembership.ticker,
+                    IndexMembership.valid_from,
+                    IndexMembership.reason,
+                ).where(
                     and_(
                         IndexMembership.index_name == index_name,
                         IndexMembership.valid_to.is_(None),
                     )
                 )
             ).all()
-            previously_active = {r[0] for r in open_intervals}
+            open_info = {r[0]: (r[1], r[2]) for r in open_intervals}
+            previously_active = set(open_info)
+
+            additions = current_for_index - previously_active
+            removals = previously_active - current_for_index
+
+            # Renames first: re-key instead of close + open
+            renames = self._detect_renames(removals, additions, today)
+            for old, (new, effective) in sorted(renames.items()):
+                valid_from, old_reason = open_info[old]
+                self._rekey_interval(
+                    index_name, old, new, effective, valid_from, old_reason
+                )
+                result.renamed.append(f"{old}->{new}")
+                logger.info(
+                    f"[index_sync] {index_name}: {old} renamed to {new}"
+                    + (f" ({effective})" if effective else "")
+                    + " -- open interval re-keyed, no exit"
+                )
+            additions -= {new for new, _ in renames.values()}
+            removals -= set(renames)
+
+            effective_dates: EffectiveDates = (
+                self._effective_dates() if (additions or removals) else {}
+            )
 
             # Detect additions: in current but not in open intervals
-            additions = current_for_index - previously_active
-            for ticker in additions:
+            for ticker in sorted(additions):
+                valid_from = self._resolve_date(
+                    effective_dates, index_name, ticker, "added", today, None, result
+                )
                 self.session.add(IndexMembership(
                     ticker=ticker,
                     index_name=index_name,
-                    valid_from=today,
+                    valid_from=valid_from,
                     valid_to=None,
                     reason="Monthly index sync detected addition",
                     source="index_sync",
                 ))
 
             # Detect removals: in open intervals but not in current
-            removals = previously_active - current_for_index
-            for ticker in removals:
+            for ticker in sorted(removals):
+                valid_to = self._resolve_date(
+                    effective_dates,
+                    index_name,
+                    ticker,
+                    "removed",
+                    today,
+                    open_info[ticker][0],
+                    result,
+                )
                 # Close the open interval
                 self.session.execute(
                     update(IndexMembership)
@@ -271,28 +356,167 @@ class IndexSyncer:
                         )
                     )
                     .values(
-                        valid_to=today,
+                        valid_to=valid_to,
                         reason="Monthly index sync detected removal",
                     )
                 )
 
-            if additions or removals:
+            if additions or removals or renames:
                 self.session.flush()
                 logger.info(
                     f"[index_sync] {index_name}: "
                     f"{len(additions)} new intervals, "
-                    f"{len(removals)} intervals closed"
+                    f"{len(removals)} intervals closed, "
+                    f"{len(renames)} intervals re-keyed (rename)"
                 )
+
+    def _resolve_date(
+        self,
+        effective_dates: EffectiveDates,
+        index_name: str,
+        ticker: str,
+        action: str,
+        today: date,
+        not_after: date | None,
+        result: SyncResult,
+    ) -> date:
+        """Effective date of a change, or ``today`` (WARNING) if unusable.
+
+        Unusable: not in the changes table, in the future, or (for removals)
+        not after the interval's ``valid_from`` (``not_after``).
+        """
+        found = effective_dates.get((index_name, ticker, action))
+        if found is None:
+            problem = "not in the changes table"
+        elif found > today:
+            problem = f"effective date {found} is in the future"
+        elif not_after is not None and found <= not_after:
+            problem = f"effective date {found} is not after valid_from {not_after}"
+        else:
+            return found
+        logger.warning(
+            f"[index_sync] {index_name} {ticker} {action}: {problem} -- "
+            f"using sync date {today}"
+        )
+        result.date_fallbacks.append(f"{index_name} {ticker} {action}")
+        return today
+
+    def _rekey_interval(
+        self,
+        index_name: str,
+        old: str,
+        new: str,
+        effective: date | None,
+        valid_from: date,
+        old_reason: str | None,
+    ) -> None:
+        """Move the open interval of ``old`` to the ticker ``new``."""
+        from sqlalchemy import and_
+
+        from trading_signals.db.models.index_membership import IndexMembership
+
+        note = f"ticker renamed {old}->{new}" + (f" {effective}" if effective else "")
+        reason = f"{old_reason}; {note}" if old_reason else note
+        self.session.execute(
+            update(IndexMembership)
+            .where(
+                and_(
+                    IndexMembership.ticker == old,
+                    IndexMembership.index_name == index_name,
+                    IndexMembership.valid_to.is_(None),
+                    IndexMembership.valid_from == valid_from,
+                )
+            )
+            .values(ticker=new, reason=reason[:_REASON_MAX])
+        )
+
+    def _detect_renames(
+        self, removals: set[str], additions: set[str], today: date
+    ) -> dict[str, tuple[str, date | None]]:
+        """Pair disappeared members with their new symbol.
+
+        1. ``ticker_aliases``: ``current_symbol(old)`` is in ``additions``.
+        2. Alpaca ``name_change`` actions for the still unpaired removals.
+
+        Returns ``{old: (new, effective_date_or_None)}``.
+        """
+        renames: dict[str, tuple[str, date | None]] = {}
+        if not removals or not additions:
+            return renames
+
+        for old in sorted(removals):
+            new = DEFAULT_ALIASES.current_symbol(old)
+            if new != old and new in additions:
+                effective = next(
+                    (
+                        a.effective_date
+                        for a in DEFAULT_ALIASES.aliases
+                        if a.old == old and a.new == new
+                    ),
+                    None,
+                )
+                renames[old] = (new, effective)
+
+        unpaired = removals - set(renames)
+        open_new = additions - {new for new, _ in renames.values()}
+        if unpaired and open_new:
+            try:
+                client = self._corporate_actions or AlpacaCorporateActions()
+                events = client.fetch(
+                    unpaired,
+                    start=today - timedelta(days=RENAME_LOOKBACK_DAYS),
+                    end=today,
+                    include_mergers=False,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[index_sync] Alpaca name_change lookup failed: "
+                    f"{type(e).__name__}: {e} -- unpaired removals are closed"
+                )
+                return renames
+            for old in sorted(unpaired):
+                for change in events.renames_of(old):
+                    new = change.new_symbol.upper()
+                    if new in open_new:
+                        renames[old] = (new, change.process_date)
+                        open_new.discard(new)
+                        break
+        return renames
+
+    def _effective_dates(self) -> EffectiveDates:
+        """Newest ``added``/``removed`` date per (index, ticker) from Wikipedia.
+
+        Fetched once per sync and only when there is something to date. A
+        failing fetch is not fatal: callers fall back to the sync date.
+        """
+        if self._effective_dates_cache is not None:
+            return self._effective_dates_cache
+        dates: EffectiveDates = {}
+        parser = self._history_parser or WikipediaIndexHistoryParser()
+        for label, parse in (
+            ("sp500", parser.parse_sp500_changes),
+            ("nasdaq100", parser.parse_nasdaq100_changes),
+        ):
+            try:
+                changes = parse().changes
+            except Exception as e:
+                logger.warning(
+                    f"[index_sync] {label} changes table unavailable: "
+                    f"{type(e).__name__}: {e}"
+                )
+                continue
+            for c in changes:
+                key = (c.index_name, c.ticker, c.action)
+                if key not in dates or c.change_date > dates[key]:
+                    dates[key] = c.change_date
+        self._effective_dates_cache = dates
+        return dates
+
+    # ── Wikipedia fetchers ──────────────────────────────────────────
 
     def _fetch_sp500(self) -> set[str]:
         """Fetch S&P 500 tickers from Wikipedia."""
-        r = requests.get(
-            "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-            headers={"User-Agent": USER_AGENT},
-            timeout=15,
-        )
-        r.raise_for_status()
-        tables = pd.read_html(io.StringIO(r.text))
+        tables = pd.read_html(io.StringIO(fetch_html(SP500_CURRENT_URL)))
         df = tables[0]
         tickers = set(df["Symbol"].str.strip().tolist())
         return tickers
@@ -304,13 +528,7 @@ class IndexSyncer:
         Wikipedia moved the components table from the main Nasdaq-100
         article to this separate page around July/August 2026.
         """
-        r = requests.get(
-            "https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies",
-            headers={"User-Agent": USER_AGENT},
-            timeout=15,
-        )
-        r.raise_for_status()
-        tables = pd.read_html(io.StringIO(r.text))
+        tables = pd.read_html(io.StringIO(fetch_html(NASDAQ100_CURRENT_URL)))
         for t in tables:
             if "Ticker" in t.columns and len(t) > 90:
                 return set(t["Ticker"].dropna().str.strip().tolist())
