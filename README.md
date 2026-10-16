@@ -10,9 +10,9 @@ Build a data-driven research platform that aggregates signals from multiple sour
 
 - **📊 Data Sources:** Alpaca (prices SIP + news), ARK (smart money), SEC EDGAR (insiders + institutions), Senate eFD (politicians), yfinance (fundamentals, ratings, earnings, estimates, options IV), FRED (macro), Massive API (short volume + FINRA short interest), FinBERT (sentiment)
 - **🖥️ Dashboard:** FastAPI + React SPA with 7 pages (Dashboard, Universe, Signals, Features, Logs, Settings, Ticker Detail)
-- **📈 767 Active Tickers** (Oct 2026): S&P 500 + Nasdaq 100 + ARK holdings + benchmark/sector ETFs, point-in-time universe for features
+- **📈 757 Active Tickers** (16 Oct 2026, after deactivating 10 delisted/renamed): S&P 500 + Nasdaq 100 + ARK holdings + benchmark/sector ETFs, point-in-time universe for features
 - **🗄️ PostgreSQL 18:** raw data layer + recomputable derived features + feature store, rolling 20-quarter retention
-- **🤖 Automated:** APScheduler with 25 jobs (13 daily incl. the nightly chain, 6 weekly, 2 monthly, 4 chain steps)
+- **🤖 Automated:** APScheduler with 26 jobs (13 daily incl. the nightly chain, 7 weekly, 2 monthly, 4 chain steps)
 - **🧠 Feature Pipeline:** Daily feature vectors (~97 features in 17 groups) with forward-return and barrier-label backfill, daily Context Pack for the analysis skill
 - **📰 News Sentiment:** Alpaca News API + ProsusAI/finbert for headline-based sentiment scoring
 - **🔒 Paper Only:** Hardcoded safety check – **never** live trading

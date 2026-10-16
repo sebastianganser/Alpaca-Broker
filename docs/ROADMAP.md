@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** 16 October 2026 (FINRA short-interest source implemented, deploy pending – see [SESSION_LOG.md](SESSION_LOG.md), Session 33)
+**Last updated:** 16 October 2026 (S&P 500 survivorship repair: step 1 code committed, deploy and data repair pending – see [SESSION_LOG.md](SESSION_LOG.md), Session 33)
 
 ---
 
@@ -144,7 +144,7 @@
 - [x] **B1:** `EstimatesCollector` (yfinance) for EPS/Revenue consensus + revisions — *CRITICAL: rolling 90-day window*
 - [x] **A1 (Stufe 1):** Point-in-Time Index Membership (Survivorship Bias Prevention)
   - [x] `index_membership` table with `valid_from` / `valid_to` intervals (migration 023)
-  - [x] Wikipedia S&P 500 / Nasdaq 100 changes parser + GitHub CSV backup
+  - [x] Wikipedia S&P 500 / Nasdaq 100 changes parser + GitHub CSV backup *(S&P-500-Quelle am 16.10.2026 korrigiert: stiller Fallback ohne Austritte, siehe Offene Punkte)*
   - [x] Layout change detection with warning logs
   - [x] `UniverseManager.get_universe_as_of(target_date)` point-in-time query
   - [x] Feature Pipeline uses historical universe composition
@@ -255,15 +255,19 @@
 - [ ] „Recompute History“-Button in den Einstellungen (zurückgestellt, skriptbasiert)
 - [x] Auf Unraid prüfen, ob noch ein alter täglicher `pg_dump`-Cron existiert – geprüft 16.10. mit `alpaca-ops status`: kein Cron-Eintrag und kein User Script greift auf die Alpaca-DB zu (Session 33)
 - [x] **Universum-Pflege** (16.10., Session 33): 10 aktive Ticker ohne Daten per `scripts/validate_universe.py` deaktiviert (757 aktiv). Ursache laut Alpaca Corporate Actions: Fusionen AVB→EQR, CTRA→DVN, LBRDK→CHTR; Barübernahmen EA, WBD; Namenswechsel BK→BNY, EQR→VMRK, PSTG→P, SATS→ECHO, PSKY→SKYD. Die neuen Symbole stehen bereits im Universum (SKYD kommt mit dem Index-Abgleich am 01.11.)
-- [ ] **Universum automatisch prüfen:** `validate_universe.py` läuft nur von Hand – Delistings und Namenswechsel blieben monatelang unbemerkt. Als wöchentlichen Job einplanen (Abgleich mit Alpaca, optional Corporate Actions für neue Symbole)
-- [ ] **⚠ S&P-500-Austritte fehlen in `index_membership` (Survivorship):** 416 heutige Mitglieder ab 2021-01-01, 90 Aufnahmen korrekt datiert, aber nur 3 abgeschlossene Intervalle (alle 01.10.2026). Der Wikipedia-Parser nutzt für den S&P 500 offenbar nur die Spalte „Date added“ der heutigen Mitglieder (Code-Pfad „no removal data available“); Nasdaq-100 hat 56 Austritte. Folge: historisches Universum 458 (2022) statt ~503 Mitglieder – ausgeschiedene Firmen fehlen in Features und Analysen (R1, K1–K4). Reparatur: Austritte aus Wikipedia-Änderungstabelle bzw. GitHub-CSV einlesen, ausgeschiedene Ticker + Kurse nachladen, Features neu rechnen – Entscheidung Sebastian
+- [x] **Universum automatisch prüfen** (16.10., Session 33, Code in `c290f65`, **noch nicht deployt**): wöchentlicher Job `universe_validation` (So 13:00, `universe/validation.py`) gleicht die aktiven Ticker mit den Alpaca-Assets ab, deaktiviert nicht handelbare Ticker (Ausnahme: offenes `index_membership`-Intervall → Warnung, Lauf `partial`) und schreibt Namenswechsel/Fusionen aus Alpaca Corporate Actions in die Lauf-Notizen; 26 Jobs ([SCHEDULER.md](SCHEDULER.md)). Das manuelle Gegenstück `scripts/validate_universe.py` bleibt bestehen
+- [ ] **⚠ S&P-500-Austritte fehlen in `index_membership` (Survivorship) – Reparatur in drei Schritten.** Befund 16.10.: 416 heutige Mitglieder ab 2021-01-01 + 90 datierte Aufnahmen, nur 3 Austritte; das Punkt-in-Zeit-S&P-500-Universum hat 426 (2022) … 490 (2026) statt ~503 Mitglieder, 92 echte Austritte im Datenfenster fehlen. Ursache: die Änderungstabelle liegt auf einer anderen Wikipedia-Seite, der Parser fiel still auf „Date added“ (nur Aufnahmen) zurück. Betroffen: Features und alle Analysen auf dem S&P-500-Universum seit August 2026 (R1, K1–K4, Feature-Analyse, Walk-forward, Readiness). Details: [Inventur + Runbook](reports/2026-10-16_sp500_survivorship_inventory.md) (Abschnitt 8), [DECISIONS_DATA](DECISIONS_DATA.md) 2026-10-16, [LEARNINGS](LEARNINGS.md) 2026-10-16
+  - [x] **Schritt 1 – Code** (16.10., `c290f65`, `3d85fcf`, **noch nicht deployt**, 1337 Tests): Parser liest „Historical components of the S&P 500“; eine unvollständige Quelle (nur Aufnahmen) kann nicht mehr seeden (Seed-Endpunkt antwortet 502); `universe/ticker_aliases.py` (24 Umbenennungen, Konvention: ein durchgehendes Intervall unter dem aktuellen Symbol) und `universe/corporate_actions.py`; `IndexSyncer` mit Wirksamkeitsdatum und Umbenennungs-Erkennung; Job `universe_validation`; Reparaturskripte `scripts/repair/rebuild_sp500_membership.py` und `onboard_removed_members.py` (Probelauf als Standard, Sicherungs-CSV, `--restore`)
+  - [ ] **Schritt 2 – Daten** (nach dem Deploy): Probelauf `rebuild_sp500_membership.py` (erwartet +105 / ~9 geändert / −1 Zeilen, danach 503–506 Mitglieder an jeder Session seit 2021; manuelles Ereignis PARA-Austritt / SKYD-Aufnahme 2025-08-08), dann `onboard_removed_members.py --fix-para` (68 inaktive Universe-Zeilen, ca. 40.100 Kurszeilen, Indikatoren). Probelauf-Zahlen mit dem Runbook vergleichen; `--apply` erst nach Sebastians Freigabe (Sicherungs-CSV in `/mnt/user/Workfiles/AlpacaBroker/ops/`)
+  - [ ] **Schritt 3 – Features und Analysen:** vollständiger Feature-Neuaufbau (`scripts/repair/features_rebuild.py --apply --skip-ta --skip-clusters`, ca. 4–12 h, Start 05:15–09:00, nicht während der Nightly Chain), danach die Analysen neu laufen lassen, die `index_membership` / `feature_snapshots` lesen (`feature_analysis`, `scripts/analysis/event_study.py`, `walkforward_hit_model.py`, `backtest_barrier.py`, `scripts/sprint10_readiness.py`); Ergebnisse ändern sich, die Urteile zu K1–K4 gegenprüfen
 
 ### Nächste Schritte
 1. ✅ `b60038e` deployt (15.10.); Log-Check am 16.10. (erste Nightly Chain mit neuem Image)
 2. ✅ Politician-Tests isoliert (Session 32), Migrationskette 024/025 auf leerer DB behoben (Session 33); Migration ↔ ORM angeglichen (Session 33)
 3. ✅ Short Interest: deployt (`b873d4d`, Migration 036), Historie befüllt (94.370 Zeilen, 120 Stichtage 2021-10-15 bis 2026-09-30), Features nachgerechnet (610.887 Snapshots, Abdeckung im ML-Fenster 99 %) – Bewertung im Monatsbericht 01.11. / Readiness Anfang Dezember
-4. Daten weiter sammeln, Readiness Anfang Dezember erneut prüfen (16.10.: 29/31 „GO“, aber Ranking-Stabilität 0/10); K5 (Vorwärtstest) bewusst zurückgestellt bis nach den Sprints
-5. Sprint 10 frühestens ab Mitte Dezember 2026 – Inhalt hängt davon ab, ob bis dahin ein Ranking den Walk-forward besteht (K3 erneut frühestens Januar 2027)
+4. **S&P-500-Survivorship-Reparatur:** Code (Schritt 1) deployen, dann Probelauf der Reparaturskripte, `--apply` nach Sebastians Freigabe (Schritt 2), danach Feature-Neuaufbau und Analysen neu (Schritt 3) – siehe Offene Punkte
+5. Daten weiter sammeln, Readiness Anfang Dezember erneut prüfen (16.10.: 29/31 „GO“, aber Ranking-Stabilität 0/10); K5 (Vorwärtstest) bewusst zurückgestellt bis nach den Sprints
+6. Sprint 10 frühestens ab Mitte Dezember 2026 – Inhalt hängt davon ab, ob bis dahin ein Ranking den Walk-forward besteht (K3 erneut frühestens Januar 2027)
 
 ### Sprint 10 – Signal Scoring
 - Weighted scoring model, optional LASSO/gradient boosting
@@ -287,7 +291,7 @@
 - Docker Compose via Compose Manager
 - PostgreSQL 18 external (`postgresql18-alpaca`, port 5435)
 - Alembic migrations run automatically via `entrypoint.sh`
-- 25 scheduler jobs registered (`scheduler/setup.py`): 13 daily (incl. `nightly_chain`, `log_retention`), 6 weekly (incl. `data_retention`, `short_interest_positions_collector`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps (`feature_pipeline`, `target_backfill`, `stage2_review`, `context_pack_generator`) – see [SCHEDULER.md](SCHEDULER.md)
+- 26 scheduler jobs registered in the code (`scheduler/setup.py`; production runs 25 until the survivorship-repair code is deployed): 13 daily (incl. `nightly_chain`, `log_retention`), 7 weekly (incl. `data_retention`, `short_interest_positions_collector`, `universe_validation`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps (`feature_pipeline`, `target_backfill`, `stage2_review`, `context_pack_generator`) – see [SCHEDULER.md](SCHEDULER.md)
 - Volume mount: `/mnt/user/Workfiles/AlpacaBroker` for Context Pack output (must be owned by `99:100`)
 - **Deployed as of 2026-10-16 18:14:** `b873d4d`, Alembic revision `036` (FINRA short interest collector + features live; initial backfill of the history running)
 

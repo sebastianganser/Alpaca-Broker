@@ -111,7 +111,8 @@ Alpaca-Broker/
 ├── docs/                            # Documentation (INDEX.md = navigator)
 │   ├── STAGE2_DECISIONS.md          # decisions.yaml format (stage-2 forward test)
 │   ├── 2026-10-06_Konzept_Kurzfrist_Kandidaten.md  # short-term candidate concept
-│   └── reports/                     # Research reports (event studies, walk-forward, …)
+│   └── reports/                     # Research reports (event studies, walk-forward, S&P 500 survivorship
+│                                    #   inventory incl. repair runbook, …)
 ├── infra/
 │   ├── docker-compose.yml           # Service alpaca-broker only (DB runs separately)
 │   ├── Dockerfile.collector         # 3-stage build (Node → uv/Python → slim runtime, user 99:100)
@@ -124,7 +125,9 @@ Alpaca-Broker/
 ├── scripts/                         # Run manually (locally or via docker exec)
 │   ├── repair/                      # One-off repairs/backfills (features_rebuild, refetch prices,
 │   │                                #   backfill_short_term_features, form13f_resolve_tickers,
-│   │                                #   collect_short_interest, backfill_short_interest_features, …)
+│   │                                #   collect_short_interest, backfill_short_interest_features,
+│   │                                #   rebuild_sp500_membership + onboard_removed_members – S&P 500
+│   │                                #   survivorship repair, dry run by default, …)
 │   ├── analysis/                    # Research: backtest_barrier, walkforward_hit_model,
 │   │                                #   event_study, collect_buyback_events
 │   ├── archive/                     # Obsolete one-time scripts (kept for reference)
@@ -207,8 +210,12 @@ trading_signals/
 │   └── sector_enrichment.py# Sector/industry via yfinance (index_sync + UI backfill)
 ├── universe/
 │   ├── manager.py          # Universe CRUD + get_universe_as_of (point-in-time universe)
-│   ├── index_sync.py       # S&P 500 / Nasdaq 100 membership (Wikipedia)
-│   ├── wikipedia_index_history.py  # Historical membership intervals
+│   ├── index_sync.py       # Monthly S&P 500 / Nasdaq 100 sync: effective change dates, rename re-keying
+│   ├── wikipedia_index_history.py  # Change-table parser ("Historical components of …"), ParseResult.complete,
+│   │                       #   interval generation, GitHub CSV cross-check; incomplete source → no seeding
+│   ├── ticker_aliases.py   # 24 documented renames (current-symbol convention), AliasMap, symbol re-use list
+│   ├── corporate_actions.py# Alpaca corporate actions (name_change, mergers), read-only
+│   ├── validation.py       # Weekly universe validation against Alpaca assets (job universe_validation)
 │   ├── alpaca_validator.py / onboarder.py / blacklist.py  # Tradeability, auto-onboarding, ETF filter
 ├── data/congress_members.py# Static Congress member → party mapping
 ├── db/
@@ -220,6 +227,7 @@ trading_signals/
     ├── job_status.py       # Canonical collection_log statuses
     ├── alerting.py         # notify_run_status → ALERT_WEBHOOK_URL (ntfy)
     ├── retention.py        # DATA_RETENTION_QUARTERS = 20, data_start_date(), quarter_cutoff()
+    ├── repair_support.py   # Helpers of the repair scripts: DB target banner, read-only dry-run session, verified CSV backup
     ├── logging.py          # Logging setup, secret redaction, CollectorLogCapture
     └── retry.py            # Retry with exponential backoff (429/5xx, Retry-After)
 ```
@@ -243,9 +251,9 @@ flowchart TD
     TGT --> FA["feature_analysis (monthly, 1st 07:00) → analysis_reports"]
 ```
 
-Universe maintenance runs alongside: `index_sync` (monthly) maintains `universe` + `index_membership`; ARK/politician collectors onboard new tickers via `universe/onboarder.py`; 13F CUSIPs are resolved via `cusip_map`.
+Universe maintenance runs alongside: `index_sync` (monthly) maintains `universe` + `index_membership`; `universe_validation` (weekly, Sunday 13:00) deactivates delisted/renamed tickers; ARK/politician collectors onboard new tickers via `universe/onboarder.py`; 13F CUSIPs are resolved via `cusip_map`.
 
-**Point-in-time universe:** the feature pipeline computes snapshots for `UniverseManager.get_universe_as_of(d)` = tickers with an `index_membership` interval containing `d` (`valid_from <= d < valid_to`), **∪** universe tickers held by an ARK ETF in the 30 days before `d` (`ARK_UNIVERSE_WINDOW_DAYS`). Without any membership data it falls back to `is_active = TRUE`. The point-in-time rules per source are documented in the module docstring of [feature_pipeline.py](../src/trading_signals/derived/feature_pipeline.py).
+**Point-in-time universe:** the feature pipeline computes snapshots for `UniverseManager.get_universe_as_of(d)` = tickers with an `index_membership` interval containing `d` (`valid_from <= d < valid_to`), **∪** universe tickers held by an ARK ETF in the 30 days before `d` (`ARK_UNIVERSE_WINDOW_DAYS`). Without any membership data it falls back to `is_active = TRUE`. `index_membership` follows one convention: a ticker rename is a single interval under the **current** symbol (old symbols get none), a seed or rebuild needs a source that lists removals as well as additions ([DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-10-16, [DATABASE.md](DATABASE.md)). The point-in-time rules per source are documented in the module docstring of [feature_pipeline.py](../src/trading_signals/derived/feature_pipeline.py).
 
 ### Nightly Chain
 

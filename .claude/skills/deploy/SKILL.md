@@ -16,7 +16,7 @@ Access path: Unraid WebGUI (http://192.168.1.93) in Claude Code's built-in brows
 3. `uv run pytest` is green (note the count). If the diff since the deployed commit contains a migration or a change to collectors, features, targets or the scheduler and it has not been reviewed yet, run the `code-reviewer` agent first; with a migration also run the fresh-DB test from CLAUDE.md (`upgrade head` + `alembic check` clean) – a failing migration sends the new container into a restart loop.
 4. Timing, from the production API (`curl -s http://192.168.1.93:8090/api/v1/dashboard/summary`) and `date`:
    - local Berlin time is **outside 22:15–05:15** (collectors 22:30–~03:00, nightly chain 04:30);
-   - **no collector has `is_running: true`** (includes the Sunday daytime jobs `form13f_collector` 10:00 and `politician_trades_collector` 11:00);
+   - **no collector has `is_running: true`** (includes the Sunday daytime jobs `form13f_collector` 10:00, `politician_trades_collector` 11:00, `short_interest_positions_collector` 12:00 and `universe_validation` 13:00);
    - preferably no `next_run` within the next ~15 minutes (the container is recreated at the end of the build; a restart kills running jobs, they are marked stale on the next start).
    `alpaca-ops deploy` enforces the first two itself and refuses otherwise.
 5. Record the "before" state: `system_health.alembic_revision`, `job_count`, `uptime_seconds`, the local `git rev-parse --short HEAD` and the newest migration number in `src/alembic/versions/`.
@@ -34,7 +34,7 @@ Poll `curl -s -m 10 http://192.168.1.93:8090/api/v1/health` until HTTP 200 (star
 
 - `health`: `status: ok`, `scheduler_running` and `db_connected` true.
 - `system_health.alembic_revision` equals the newest migration number in `src/alembic/versions/`.
-- `system_health.job_count` equals the number of jobs in `docs/SCHEDULER.md` (25 at the time of writing).
+- `system_health.job_count` equals the number of jobs in `docs/SCHEDULER.md` (26 at the time of writing; the deploy that first ships `universe_validation` goes from 25 to 26).
 - `system_health.uptime_seconds` is small (new container).
 - `table_stats[]`: no `row_count < 0`.
 - `curl -s "http://192.168.1.93:8090/api/v1/logs?status=failed&limit=5"`: no new failed run started after the deploy.

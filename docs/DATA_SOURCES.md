@@ -13,7 +13,7 @@
 
 | Source | Category | Cost | Frequency | Delay | Sprint | Status |
 |---|---|---|---|---|---|---|
-| **Alpaca Market Data** | Prices (OHLCV) | Free (IEX) | Daily | ~minutes after close | 1b | ✅ Primary |
+| **Alpaca Market Data** | Prices (OHLCV) | Free (SIP, IEX fallback) | Daily | ~minutes after close | 1b | ✅ Primary |
 | **Alpaca News API** | News Headlines | Free | Daily | Near real-time | 8c | ✅ Active |
 | **yfinance** | Prices (fallback), Fundamentals | Free | Daily | ~20 min EOD | 1 | ⏸ Fallback |
 | **arkfunds.io** | Smart Money (ARK ETFs) | Free | Daily EOD | ~1 hour | 2 | ✅ Active |
@@ -27,6 +27,8 @@
 | **FRED (St. Louis Fed)** | Macro Indicators | Free | Daily | ~6h after US close | 9.5b | ✅ Active |
 | **yfinance – Options** | Implied Volatility | Free | Daily | ~20 min EOD | 9.5b | ✅ Active |
 | **Massive (ex Polygon)** | Short Volume (daily) + FINRA Short Interest (twice a month) | Free | Daily (volume) / weekly run (interest) | T+1 (volume) / ~7 business days after settlement date (interest) | 9.5c | ✅ Active |
+| **Wikipedia – index change tables** | Index membership history (S&P 500, Nasdaq 100) | Free | Monthly (`index_sync`) | Effective date of the change (editor lag not measured) | 9.5a | ✅ Active (source page changed, parser fixed 2026-10-16) |
+| **Alpaca Corporate Actions** | Renames, mergers (explains disappeared tickers) | Free | Weekly (`universe_validation`) + monthly (`index_sync`) | Process date of the action | 9.5c | 🟡 Code committed 2026-10-16, deploy pending |
 
 ---
 
@@ -44,7 +46,7 @@ Multi-symbol batch endpoint with daily OHLCV data:
 - **adj_close = close** (Alpaca with `adjustment=all` already provides split- and dividend-adjusted values)
 
 ### Configuration
-- **Feed:** `iex` (free tier)
+- **Feed:** `sip` (`ALPACA_DATA_FEED`, default; free tier allows SIP when the request ends ≥ 15 min ago), automatic IEX fallback marks the run `partial`
 - **Batch size:** 100 tickers per request
 - **644 tickers in 7 requests (<10s total runtime)**
 - **Rate limit:** 200 req/min (free tier) → no problem
@@ -321,7 +323,40 @@ Outstanding short positions per settlement date, published twice a month. A **di
 
 ---
 
-## 11. Not Yet Implemented – Ideas for Later
+## 11. Wikipedia – Index Membership History (Sprint 9.5a, source fixed 2026-10-16)
+
+**Category:** Reference data (index constituents and their changes)
+**Pages:** S&P 500 changes: https://en.wikipedia.org/wiki/Historical_components_of_the_S%26P_500 (table with `Added` / `Removed` column groups, effective dates, ~410 rows since 1957) · Nasdaq-100 changes: https://en.wikipedia.org/wiki/Historical_components_of_the_Nasdaq-100 · current constituents: https://en.wikipedia.org/wiki/List_of_S%26P_500_companies and https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies
+**Status:** ✅ Implemented (`universe/wikipedia_index_history.py`, `universe/index_sync.py`); S&P 500 source corrected 2026-10-16
+
+> **Source change (verified 2026-10-16):** the S&P 500 change table is **no longer** on "List of S&P 500 companies" (that page now holds only the current constituents and a navbox). The parser used to read it there, found nothing and silently fell back to the "Date added" column of the current members – additions only, no exits ([LEARNINGS.md](LEARNINGS.md) 2026-10-16, [DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-10-16). It now reads "Historical components of the S&P 500" (MultiIndex headers) and reports `complete=False` if a source delivers no removals; such a result never seeds `index_membership` (`POST /ops/seed/index-membership` answers 502).
+
+### What It Delivers
+Per change: effective date, added ticker/security, removed ticker/security, reason text. A ticker rename appears as "NEW added / OLD removed" and is **not** an exit – events are normalized to the current symbol (`universe/ticker_aliases.py`, [DATABASE.md](DATABASE.md) `index_membership`).
+
+### Cross-check: GitHub `fja05680/sp500`
+The maintained file is `S&P 500 Historical Components & Changes (Updated).csv` (last row 2026-08-18 on 2026-10-16). Snapshot dates differ by 1–2 days from the effective dates, renames show up as exits, and it lags the index by weeks → **cross-check only, never a seeding source**. The original file (`…Changes.csv`) ends on 2019-01-11 and yields no change since 2021.
+
+### Limitations
+- Third-party, community-edited page: a layout change can break the parser (it then returns an incomplete result and logs an ERROR instead of falling back silently).
+- Two events are in neither the table nor the GitHub snapshots: the Paramount Global exit / Paramount Skydance entry of 2025-08-08 (added as a manual event by the repair script) and the rename PSKY→SKYD of 2026-10-06 (known from Alpaca and `ticker_aliases.py`).
+- The most recent changes (after the last GitHub snapshot) rest on Wikipedia alone.
+
+---
+
+## 12. Alpaca Corporate Actions (since 2026-10-16, code only)
+
+**Category:** Corporate events (renames, mergers) – read-only, explains why a ticker disappeared
+**API Endpoint:** `GET https://data.alpaca.markets/v1/corporate-actions` (same key headers as the other Alpaca clients; `universe/corporate_actions.py`)
+**Status:** 🟡 Code committed 2026-10-16, deploy pending
+
+- **Requested types:** `name_change` (old → new symbol) and `cash_merger` / `stock_merger` / `stock_and_cash_merger` (acquiree → acquirer or cash). Symbols are sent in batches of 25 with pagination.
+- **Used by:** the weekly `universe_validation` job (renames/mergers of the last 365 days for deactivated tickers go into the run notes; a rename whose new symbol is missing from `universe` is a warning) and by `IndexSyncer` (rename detection: alias list first, then Alpaca `name_change` of the last 400 days → the open `index_membership` interval is re-keyed instead of closed).
+- **Caveats:** Alpaca serves history of renamed or delisted symbols inconsistently – e.g. `CDAY` bars only under the old symbol, a re-used symbol (`INFO`, `PARA`) returns the new holder's bars unless the `asof` date of a bars request is set to a day when the original company traded (use the first member day); `GET /v2/assets` answers 404 for some delisted symbols although bars exist (details: [inventory](reports/2026-10-16_sp500_survivorship_inventory.md), section 4).
+
+---
+
+## 13. Not Yet Implemented – Ideas for Later
 
 - **OpenInsider** – Aggregated Form 4 data with pre-filtered cluster buys
 - **Finviz** – Insider screener, news aggregation (scraping gray area)

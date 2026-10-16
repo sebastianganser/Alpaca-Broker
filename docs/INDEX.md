@@ -3,7 +3,7 @@
 > Central navigator for all project documentation.
 > Start here to find the right document for your question.
 
-**Last updated:** 16 October 2026 (legacy AI-workflow documents removed)
+**Last updated:** 16 October 2026 (S&P 500 survivorship inventory and repair runbook added to the reports)
 
 ---
 
@@ -23,6 +23,7 @@
 | What hypotheses do we want to test? | [LEARNINGS_HYPOTHESES.md](LEARNINGS_HYPOTHESES.md) |
 | Short-term candidate concept (barrier trades, K1–K5) | [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) |
 | Format of the stage-2 feedback file `decisions.yaml` | [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) |
+| S&P 500 survivorship gap: root cause, removal list, **repair runbook** (dry runs, `--apply`, rollback) | [reports/2026-10-16_sp500_survivorship_inventory.md](reports/2026-10-16_sp500_survivorship_inventory.md) |
 | GitHub overview / external audience | [README.md](../README.md) |
 
 ---
@@ -44,7 +45,7 @@
 |---|---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Deployment topology (Unraid, container, volumes), project structure, data flow, nightly chain, context-pack output | On structural changes |
 | [DATABASE.md](DATABASE.md) | Database schema – all tables, migration history 001–036, retention per table | On schema changes / migrations |
-| [SCHEDULER.md](SCHEDULER.md) | Execution schedule – all 25 jobs, nightly chain, manual operations | When jobs change |
+| [SCHEDULER.md](SCHEDULER.md) | Execution schedule – all 26 jobs, nightly chain, manual operations | When jobs change |
 
 ### Data Sources
 
@@ -79,10 +80,10 @@
 | Document | Purpose | Status |
 |---|---|---|
 | [2026-08-18_Konzept_Datenerweiterung.md](2026-08-18_Konzept_Datenerweiterung.md) | Concept for data extension and candidate pipeline (basis of Sprint 9.5a–c); answers and decisions are in DECISIONS_*, ideas not yet implemented in the ROADMAP backlog | Status per item in ROADMAP (9.5a–c) |
-| [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) | Short-term candidates: barrier evaluation, pre-registered steps A–D, stage-1 risk pre-filter, stage-2 forward test (§7.7) | Active (K5 running) |
+| [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) | Short-term candidates: barrier evaluation, pre-registered steps A–D, stage-1 risk pre-filter, stage-2 forward test (§7.7) | Active (K5 deferred until after the sprints) |
 | [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) | File format `decisions.yaml` written by the analysis skill, read by `stage2_review` | Active |
 
-### Reports (`docs/reports/`, generated 2026-10-06)
+### Reports (`docs/reports/`, generated 2026-10-06 and 2026-10-16)
 
 | Document | Content |
 |---|---|
@@ -91,6 +92,8 @@
 | [reports/2026-10-06_event_study_index_add.md](reports/2026-10-06_event_study_index_add.md) | Step D2: index additions (exploratory hint) |
 | [reports/2026-10-06_buyback_audit.md](reports/2026-10-06_buyback_audit.md) | Audit sample of the buyback sentence classifier |
 | [reports/2026-10-06_buyback_events.csv](reports/2026-10-06_buyback_events.csv) | Raw event list of the buyback study (data file) |
+| [reports/2026-10-16_sp500_survivorship_inventory.md](reports/2026-10-16_sp500_survivorship_inventory.md) | S&P 500 survivorship inventory (read-only): root cause, reconciliation of Wikipedia vs GitHub, state per category, effort estimate, open questions; section 8 = repair runbook with expected numbers, verification SQL and rollback |
+| [reports/2026-10-16_sp500_removals.csv](reports/2026-10-16_sp500_removals.csv) | One row per S&P 500 removal/rename 2021-01-01 … 2026-10-16 (data file of the inventory) |
 
 ### Other READMEs
 

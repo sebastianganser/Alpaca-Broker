@@ -47,10 +47,10 @@ Critical paths (data fetching, computations, later order execution) are pure Pyt
 
 ## Current Status
 
-**Phase:** 🟡 Sprint 9.5c (Candidate Pipeline MVP), Phase 2 – review fixes deployed, short-term research K1–K4 finished without a usable edge, K5 (stage-2 forward test) running
-**Current sprint:** 9.5c Phase 2 – collect stage-2 decisions (K5), keep data quality stable; F1 composite score open
-**Next step:** decide how to repair the S&P 500 removal history in `index_membership` (survivorship gap found 16.10. – see ROADMAP "Offene Punkte"); schedule universe validation weekly. Keep collecting data; evaluate FINRA short interest in the monthly analysis (01.11.) and the Sprint 10 readiness re-run in early December. Forward testing (K5) waits until after the sprints – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 33
-**Last updated:** 16 October 2026 (FINRA short-interest source implemented, deploy pending)
+**Phase:** 🟡 Sprint 9.5c (Candidate Pipeline MVP), Phase 2 – review fixes deployed, short-term research K1–K4 finished without a usable edge, K5 (stage-2 forward test) deployed but deliberately deferred until after the sprints
+**Current sprint:** 9.5c Phase 2 – S&P 500 survivorship repair (step 1 code committed, steps 2–3 pending), keep data quality stable; K5 collection deferred, F1 composite score open
+**Next step:** S&P 500 survivorship repair ([runbook](docs/reports/2026-10-16_sp500_survivorship_inventory.md), section 8): step 1 (parser/`IndexSyncer` fixes, weekly `universe_validation`, repair scripts; commits `c290f65`, `3d85fcf`) is committed but **not deployed** → deploy it (`/deploy`); step 2 = dry runs of `scripts/repair/rebuild_sp500_membership.py` and `onboard_removed_members.py --fix-para` via `alpaca-ops run`, compare with the runbook numbers, `--apply` only with Sebastian's OK; step 3 = full feature rebuild (`features_rebuild.py`, ~4–12 h, start 05:15–09:00 so it ends inside the day window before 22:15) and re-run of the analyses that read `index_membership` / `feature_snapshots`. Meanwhile keep collecting data; evaluate FINRA short interest in the monthly analysis (01.11.) and the Sprint 10 readiness re-run in early December. Forward testing (K5) waits until after the sprints – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 33
+**Last updated:** 16 October 2026 (S&P 500 survivorship repair: step 1 code committed, deploy and data repair pending)
 **Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `b873d4d` (deployed 16 October 2026 18:14 via `alpaca-ops deploy`), Alembic revision `036`
 
 See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
@@ -68,11 +68,11 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 | **Migrations** | Alembic (001–036) |
 | **Database** | PostgreSQL 18 (`postgresql18-alpaca`, 192.168.1.93:5435, DB: `broker_data`, schema: `signals`) |
 | **Package managers** | uv (Python), npm (frontend) |
-| **Scheduler** | APScheduler, 25 jobs (`scheduler/setup.py`): 13 daily (collectors, `log_retention`, `nightly_chain` 04:30), 6 weekly (incl. `data_retention`, FINRA `short_interest_positions_collector`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps run by `nightly_chain` |
+| **Scheduler** | APScheduler, 26 jobs (`scheduler/setup.py`): 13 daily (collectors, `log_retention`, `nightly_chain` 04:30), 7 weekly (incl. `data_retention`, FINRA `short_interest_positions_collector`, `universe_validation`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps run by `nightly_chain` |
 | **Price data** | Alpaca Market Data API, **SIP feed** (`ALPACA_DATA_FEED`, default `sip`; production logs show `feed=sip`), automatic IEX fallback marks the run `partial` |
 | **News sentiment** | Alpaca News API + ProsusAI/finbert (local CPU inference) |
 | **Universe** | 757 active tickers (2026-10-16, after deactivating 10 delisted/renamed; S&P 500 + Nasdaq 100 + ARK + benchmark/sector ETFs, other ETFs filtered via blacklist); features use the point-in-time universe |
-| **Tests** | 1022 tests, none needs a database (2026-10-16); run with `uv run pytest` |
+| **Tests** | 1337 tests, none needs a database (2026-10-16); run with `uv run pytest` |
 | **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090, runs as `99:100`) |
 | **Broker (later)** | Alpaca Paper Trading (NEVER live!) |
 | **Version control** | Git, [GitHub](https://github.com/sebastianganser/Alpaca-Broker) |
@@ -138,6 +138,7 @@ Each item is backed by `docs/DECISIONS_*.md`, `docs/LEARNINGS.md` or the code.
 **Data correctness**
 - **Market-session date labels:** use `utils/market_calendar.last_completed_session()`, never `date.today()` (the container runs in Berlin time). Snapshots and targets exist only for NYSE trading days.
 - **Point-in-time / no lookahead** (DECISIONS_FEATURES, "Information Cut-offs"): a feature for day `d` may only use what was public by `d` – politicians `disclosure_date <= d`, 13F `filing_date <= d` (`put_call = 'SH'`), Form 4 public if `acceptance_datetime` < 16:00 ET on `d` else `filing_date <= d`, news `published_at` < 16:00 ET, earnings `first_seen <= d`, FINRA short interest `settlement_date` <= the 9th NYSE session before `d` (publication lag, `derived/short_interest_features.py`). Targets enter at `open(d+1)`. Universe via `get_universe_as_of(d)` (survivorship). `universe.sector` is not point-in-time (known limit).
+- **Index membership / point-in-time universe:** a ticker **rename is one continuous `index_membership` interval under the CURRENT symbol** (old symbols get none – several were re-used: FB, LB, PARA, INFO; `universe/ticker_aliases.py`); real exits end the interval at the effective removal date (`valid_to` = first non-member day). **Seed or rebuild history only from a complete source** (additions *and* removals, `ParseResult.complete` / `seed_blockers`) – the additions-only fallback hid every S&P 500 exit for two months (DECISIONS_DATA 2026-10-16). For delisted or re-used symbols fetch Alpaca bars with `asof` = **first member day**, not the last. Until the repair of 2026-10-16 is applied, analyses and features on the S&P 500 universe are survivor-biased and must be re-run afterwards.
 - **Retention:** `data_start_date()` (analysis: `ml_start_date()`), never fixed start dates, never cached at import time (docstring of `utils/retention.py`); backfills must not collect before the window.
 - **NULL vs 0:** `0` = source covers the ticker but nothing happened, `NULL` = no coverage. Extrapolated (gap-filled) prices are never used for TA, targets, liquidity or breadth.
 - **Code hygiene:** `date(…) == pd.Timestamp(…)` is `False` – convert with `pd.Timestamp(d)` for DataFrame index lookups (LEARNINGS 2026-04-16). Every job writes a `collection_log` row (`BaseCollector` / `run_logged_job`); completeness checks use per-date ticker coverage, not `MAX(date)`; a catch-all `except` returning a sentinel (e.g. `row_count = -1`) needs a log line. Feature groups come from `analysis/feature_groups.group_features(FEATURE_COLUMNS)`; endpoints serving the same model share `api/serializers.py`.

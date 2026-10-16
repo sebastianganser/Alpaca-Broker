@@ -43,7 +43,8 @@ CREATE TABLE signals.universe (
   sector          VARCHAR(100),
   industry        VARCHAR(100),
   added_date      DATE NOT NULL,
-  added_by        VARCHAR(50),        -- 'sp500', 'nasdaq100', 'ark_etf', 'manual'
+  added_by        VARCHAR(50),        -- 'sp500', 'nasdaq100', 'ark_etf', 'manual'; 'sp500_history' = inactive row of a
+                                      --   former S&P 500 member (repair step 2b, planned)
   is_active       BOOLEAN DEFAULT TRUE,
   last_seen       DATE,
   index_membership VARCHAR(20)[],     -- {sp500, nasdaq100} (migration 005)
@@ -79,7 +80,8 @@ CREATE TABLE signals.prices_daily (
   close           NUMERIC(16,4),
   adj_close       NUMERIC(16,4),      -- = close for Alpaca (adjustment=all)
   volume          BIGINT,
-  source          VARCHAR(50) DEFAULT 'yfinance',  -- 'alpaca', 'yfinance'
+  source          VARCHAR(50) DEFAULT 'yfinance',  -- 'alpaca', 'yfinance'; 'alpaca_backfill' = SIP backfill of former
+                                                   --   S&P 500 members (repair step 2b, planned)
   is_extrapolated BOOLEAN DEFAULT FALSE,           -- gap-filled row (not a real bar)
   fetched_at      TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (ticker, trade_date)
@@ -359,12 +361,17 @@ CREATE INDEX idx_estimates_as_of ON signals.estimates_snapshot(as_of);
 ### `signals.index_membership`
 Historical index constituent membership with time intervals. Tracks when
 each ticker joined and left an index (S&P 500, Nasdaq 100). Enables
-point-in-time universe queries to prevent survivorship bias.
+point-in-time universe queries to prevent survivorship bias
+(`UniverseManager.get_universe_as_of(d)`: `valid_from <= d < valid_to`).
 
-- **Primary source:** Wikipedia "Selected changes" tables
-- **Backup source:** GitHub fja05680/sp500 CSV
-- **Ongoing updates:** Monthly IndexSyncer job detects additions/removals
-- **valid_to = NULL** means ticker is currently an active member
+- **Primary source:** Wikipedia change tables "Historical components of the S&P 500" and "Historical components of the Nasdaq-100" (effective dates). The former "Selected changes" table on "List of S&P 500 companies" no longer exists; the parser marks a result without removals as incomplete and seeding refuses it.
+- **Cross-check only:** GitHub `fja05680/sp500` "(Updated)" CSV (snapshot dates, lags the index by weeks); not a seeding source.
+- **Ongoing updates:** monthly `IndexSyncer` (`index_sync`) opens/closes intervals at the effective change date and re-keys the open interval when a member is renamed ([SCHEDULER.md](SCHEDULER.md)).
+- **valid_to = NULL** means ticker is currently an active member; `valid_to` is the first day that is **not** a member (interval `[valid_from, valid_to)`).
+- **Rename convention:** a ticker rename is one continuous interval under the **current** symbol (e.g. `META` from 2021-01-01, `DAY` including the CDAY years); old symbols get no interval. A real exit ends the interval at the effective removal date; the company's prices are stored under the same current symbol. Intervals of long-standing members start at 2021-01-01 (not at `data_start_date()`).
+- **`source` values:** `wikipedia`, `github_csv`, `index_sync`, `initial_seed`, `manual` (events that no change table lists, e.g. the Paramount Global exit / Paramount Skydance entry of 2025-08-08).
+- **State before the S&P 500 repair (2026-10-16):** 506 `sp500` rows = 416 `initial_seed` members (from 2021-01-01) + 87 `wikipedia` + 3 `index_sync` additions, only 3 closed intervals (TAP, TTD, BLDR, dated 10 days late). Point-in-time S&P 500 members: 426 (2022-01-03), 441 (2023), 456 (2024), 472 (2025), 490 (2026) instead of 503–505; 92 real exits inside the data window were missing. The Nasdaq-100 rows are not affected.
+- **State after the repair (planned, step 2a not applied yet):** 610 `sp500` intervals = 503 open + 107 closed (92 exits in the window incl. 3 merger successors, 15 exits before 2021-10-01), 503–506 members on every session since 2021-10-01. `scripts/repair/rebuild_sp500_membership.py` replaces only the `sp500` rows (backup CSV first); runbook and expected numbers: [reports/2026-10-16_sp500_survivorship_inventory.md](reports/2026-10-16_sp500_survivorship_inventory.md), decision: [DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-10-16.
 
 ```sql
 CREATE TABLE signals.index_membership (
@@ -375,7 +382,7 @@ CREATE TABLE signals.index_membership (
   valid_to        DATE,                  -- NULL = currently active
   reason          VARCHAR(200),          -- 'Delisted', 'Merger', etc.
   replaced_by     VARCHAR(20),           -- Successor ticker
-  source          VARCHAR(50) NOT NULL,  -- 'wikipedia', 'github_csv', 'index_sync', 'initial_seed'
+  source          VARCHAR(50) NOT NULL,  -- 'wikipedia', 'github_csv', 'index_sync', 'initial_seed', 'manual'
   CONSTRAINT uq_membership_ticker_index_from UNIQUE (ticker, index_name, valid_from)
 );
 

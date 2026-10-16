@@ -33,7 +33,7 @@ What a run prints
   ``DELETE`` rows that do not exist in the truth, e.g. PSKY from 2021-01-01),
 * the point-in-time member count at the first session of every year and the
   min/max over all NYSE sessions since ``data_start_date()`` -- DB today vs.
-  after the repair (expected 500-505 after; sessions outside 495-510 are listed
+  after the repair (expected 503-506 after; sessions outside 495-510 are listed
   and block ``--apply``).
 
 Usage (inside the container; ``alpaca-ops run`` refuses 22:15-05:15; also keep

@@ -7,7 +7,7 @@
 
 **Last updated:** 16 October 2026 (verified against `scheduler/setup.py` + `scheduler/registry.py`)
 
-**25 registered jobs:** 13 daily (11 upstream jobs, `log_retention`, `nightly_chain`), 6 weekly (Sunday, incl. `data_retention`), 2 monthly, 4 paused chain steps. All times Europe/Berlin.
+**26 registered jobs:** 13 daily (11 upstream jobs, `log_retention`, `nightly_chain`), 7 weekly (Sunday, incl. `data_retention`, `universe_validation`), 2 monthly, 4 paused chain steps. All times Europe/Berlin. (`universe_validation` is in the code since 2026-10-16 but not deployed yet – production reports 25 until the next deploy; remove this note afterwards.)
 
 **Log names:** `collection_log.collector_name` differs from the job id for some jobs (`scheduler/registry.JOB_COLLECTOR_NAMES`), e.g. `price_collector` → `prices_alpaca`, `news_collector` → `news_alpaca`, `fundamentals_collector` → `fundamentals_yf`, `short_interest_positions_collector` → `short_interest_positions`. The jobs `ark_holdings` and `form4_collector` additionally write the follow-up runs `ark_deltas` and `insider_clusters`.
 
@@ -64,12 +64,13 @@ Before starting, the chain waits up to 2 h for upstream collectors (`registry.NI
 | 10:00 | `form13f_collector` | 13F filings (all filings in window, amendments, PUT/CALL separated) |
 | 11:00 | `politician_trades_collector` | Senate eFD PTRs (skips known source URLs) + auto-onboarding |
 | 12:00 | `short_interest_positions_collector` (`short_interest_positions`) | FINRA short interest (settlement-date positions, twice a month) via Massive `GET /stocks/v1/short-interest`: 1 reference request (AAPL) for the settlement-date list + 1 bulk request per date to fetch (dates not stored yet, the 2 most recent for revisions, dates with < 50 % of the median row count; never before `data_start_date()`), 12 s pause, ~3 requests per run. Not part of `NIGHTLY_UPSTREAM` (features apply a 9-session publication lag). Initial history: `scripts/repair/collect_short_interest.py` (~120 requests, ~25 min) |
+| 13:00 | `universe_validation` | Checks the active universe against Alpaca assets (`universe/validation.py`): tickers not found / not tradable are deactivated (`is_active = FALSE`, never deleted) – **except** tickers with an open `index_membership` interval, which stay active and produce a warning (run status `partial`; the monthly `index_sync` closes or re-keys the interval). For every such ticker Alpaca corporate actions of the last 365 days are written to the run notes (`OLD->NEW (rename)`, `OLD->ACQ (merger)`); a rename whose new symbol is not in `universe` is a warning. `partial` with warnings is expected while renames or index intervals are pending. Safety nets: fewer than 1,000 Alpaca assets or more than 10 % of the active universe to deactivate → the run fails without changing anything. Not part of `NIGHTLY_UPSTREAM`. Manual counterpart: `scripts/validate_universe.py` (before the job existed, 10 delisted/renamed tickers stayed active for months) |
 
 ## Monthly (1st of month)
 
 | Time | Job | Description |
 |---|---|---|
-| 03:00 | `index_sync` | S&P 500 / Nasdaq 100 membership (sanity guard aborts on implausible scrapes) + sector enrichment |
+| 03:00 | `index_sync` | S&P 500 / Nasdaq 100 membership (sanity guard aborts on implausible scrapes) + sector enrichment. Intervals are dated with the **effective change date** from the Wikipedia change tables ("Historical components of the …"); the sync date is used only as a logged fallback (run notes `sync date used (not in changes table): …`). A member that disappears while its new symbol appears is a **rename**: the open interval is re-keyed to the new symbol (alias list `universe/ticker_aliases.py`, then Alpaca `name_change` corporate actions; run notes `renamed (interval re-keyed): OLD->NEW`), no exit is recorded. Notes also carry the S&P 500 / Nasdaq 100 counts |
 | 07:00 | `feature_analysis` | Rank-IC / purged walk-forward feature analysis |
 
 ## Manual (via UI)
