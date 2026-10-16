@@ -248,7 +248,8 @@
 - [ ] `registry.NIGHTLY_UPSTREAM`: das Flag „kritisch“ (`True` bei `prices_alpaca`) wird von `check_upstream()` nicht ausgewertet – alle Eingänge werden gleich behandelt. Klären, ob gewollt
 - [ ] `short_interest`-Tabelle (Migration 027) wird von keinem Collector befüllt – FINRA-Short-Interest (zweiwöchentlich) sammeln oder Tabelle bewusst leer lassen
 - [ ] Prüfen, ob historische 13F-Feature-Spalten nach dem Ticker-Backfill neu berechnet wurden (SQL in SESSION_LOG, Session 31)
-- [ ] Sprint-10-Readiness erneut laufen lassen (`docker exec -it alpaca-broker uv run python scripts/sprint10_readiness.py`); Ranking-Stabilität der Monatsreports war am 01.10. bei 40 %
+- [x] Sprint-10-Readiness erneut laufen lassen – 16.10. (`alpaca-ops run scripts/sprint10_readiness.py`): **29/31, „GO“** (01.10.: 26/30). Offen: Ranking-Stabilität **0/10** Top-10-Überschneidung erster vs. letzter Monatsbericht (01.10.: 40 %), Options IV 33 Handelstage (min. 60, ≈ 20.11.), Estimates 52 (min. 60 ≈ 27.10., 90 für Revisions-Momentum ≈ 10.12.); IV-Rank 252 Tage ≈ September 2027 (nicht blockierend)
+- [ ] Readiness Anfang Dezember erneut prüfen (nach den Monatsberichten 01.11./01.12.): Ranking-Stabilität, Options-IV-/Estimates-Historie. Hinweis: Abschnitt 3 des Skripts misst die Feature-Abdeckung nur am letzten Tag – IV, Estimates und Short Volume haben erst 1–2 Monate Historie und fehlen im ML-Fenster ab 2022 fast überall
 - [ ] `sector_relative_momentum` erneut prüfen (Nov 2026), IV-Rank ab ~252 Sessions IV-Historie (IV-Daten seit 31.08.2026 → ~September 2027)
 - [ ] „Recompute History“-Button in den Einstellungen (zurückgestellt, skriptbasiert)
 - [x] Auf Unraid prüfen, ob noch ein alter täglicher `pg_dump`-Cron existiert – geprüft 16.10. mit `alpaca-ops status`: kein Cron-Eintrag und kein User Script greift auf die Alpaca-DB zu (Session 33)
@@ -256,7 +257,7 @@
 ### Nächste Schritte
 1. ✅ `b60038e` deployt (15.10.); Log-Check am 16.10. (erste Nightly Chain mit neuem Image)
 2. Politician-Tests sind isoliert (Session 32); optional 024/025 auf leerer DB absichern
-3. K5 laufen lassen (Stage-2-Entscheidungen sammeln), Readiness Mitte November/Dezember erneut prüfen
+3. Daten weiter sammeln, Readiness Anfang Dezember erneut prüfen (16.10.: 29/31 „GO“, aber Ranking-Stabilität 0/10); K5 (Vorwärtstest) bewusst zurückgestellt bis nach den Sprints
 4. Sprint 10 frühestens ab Mitte Dezember 2026 – Inhalt hängt davon ab, ob bis dahin ein Ranking den Walk-forward besteht (K3 erneut frühestens Januar 2027)
 
 ### Sprint 10 – Signal Scoring
