@@ -1,24 +1,23 @@
 #!/bin/bash
 # =============================================================================
-# Alpaca-Broker – restricted SSH gateway for Claude Code (Unraid host)
+# Alpaca-Broker – operations script for the Unraid host
 # =============================================================================
-# Installed as a *forced command* for exactly one SSH key in root's
-# authorized_keys (Unraid WebGUI → Users → root → SSH authorized keys):
+# Run through ONE Unraid User Script named "alpaca-ops" (Settings → User
+# Scripts). That wrapper fetches this file from origin/main – without touching
+# the working tree – and passes its argument string on:
 #
-#   command="bash /boot/config/alpaca-ops.sh",restrict ssh-ed25519 AAAA… claude-code@alpaca-broker
+#   APP=/mnt/user/appdata/alpaca-broker
+#   git -C "$APP" fetch -q origin main
+#   git -C "$APP" show origin/main:infra/unraid/alpaca-ops.sh > /tmp/alpaca-ops.sh
+#   read -r -a ARGS <<< "$*"; bash /tmp/alpaca-ops.sh "${ARGS[@]}"
 #
-# Every SSH call with that key runs this script instead of the requested
-# command. The requested command arrives in $SSH_ORIGINAL_COMMAND and only
-# the subcommands below are accepted. Other containers, the GynOrg database,
-# the array and Unraid settings are not reachable with this key.
+# So a pushed change takes effect on the next run; the deployed app only
+# changes with "deploy". Every command also writes its output to
+# /mnt/user/Workfiles/AlpacaBroker/ops/<command>.log, which Claude Code reads
+# via \\HOMENAS\Workfiles (text instead of terminal screenshots).
 #
-# The live copy lives OUTSIDE the repo on purpose (a git pull must never
-# widen these permissions). Changes take effect only after Sebastian copies
-# the file again:
-#   cp /mnt/user/appdata/alpaca-broker/infra/unraid/alpaca-ops.sh /boot/config/alpaca-ops.sh
-#
-# Usage from Windows (see ~/.ssh/config, host alias "alpaca-unraid"):
-#   ssh alpaca-unraid help
+# Scope: only the alpaca-broker container, its appdata folder and its
+# Workfiles folder. Never other containers, the array or Unraid settings.
 # =============================================================================
 
 set -uo pipefail
@@ -27,8 +26,7 @@ APP_DIR=/mnt/user/appdata/alpaca-broker
 COMPOSE_FILE=/boot/config/plugins/compose.manager/projects/Alpaca-Broker/docker-compose.yml
 CONTAINER=alpaca-broker
 API=http://localhost:8090/api/v1
-SELF=/boot/config/alpaca-ops.sh
-DEPLOY_LOG=/tmp/alpaca-deploy.log
+OPS_DIR=/mnt/user/Workfiles/AlpacaBroker/ops
 LOCK=/tmp/alpaca-deploy.lock
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -53,7 +51,7 @@ guard_no_running_jobs() {
         return 0
     fi
     if echo "$summary" | grep -Eq '"is_running": ?true'; then
-        die "a job is running right now – try again later (ssh alpaca-unraid status)"
+        die "a job is running right now – try again later (alpaca-ops status)"
     fi
 }
 
@@ -62,35 +60,45 @@ deploy_worker() {
     flock -n 9 || die "another deploy is running"
     echo "==> $(date -Is) deploy started"
     git -C "$APP_DIR" pull --ff-only || die "git pull failed"
-    echo "==> commit: $(git -C "$APP_DIR" log -1 --format='%h %s')"
+    local commit
+    commit=$(git -C "$APP_DIR" log -1 --format='%h %s')
+    echo "==> commit: $commit"
     # Build first, then recreate: the old container keeps running during the
     # ~7 min build. Migrations run in the entrypoint of the new container.
     compose build || die "build failed – old container still running"
     compose up -d || die "compose up failed"
-    echo "==> $(date -Is) deploy finished – check: ssh alpaca-unraid status"
+    echo "$commit (deployed $(date -Is))" > "$OPS_DIR/deployed.txt"
+    echo "==> $(date -Is) deploy finished – check: alpaca-ops status"
 }
 
-# Internal re-invocation for the detached deploy (positional arg, never
-# reachable via SSH because the forced command passes no arguments).
+# Detached deploy worker (started by "deploy" below from a private copy, so
+# a concurrent run of the wrapper cannot rewrite the file while bash reads it).
 if [ "${1:-}" = "_deploy_worker" ]; then
     deploy_worker
     exit $?
 fi
 
-read -r -a ARGS <<< "${SSH_ORIGINAL_COMMAND:-help}"
-CMD="${ARGS[0]:-help}"
+mkdir -p "$OPS_DIR"
+CMD="${1:-help}"
+shift || true
+ARGS=("$@")
+
+# Mirror all output of this run into ops/<command>.log (latest run only).
+LOG="$OPS_DIR/${CMD//[^a-z-]/}.log"
+exec > >(tee "$LOG") 2>&1
+echo "## alpaca-ops $CMD ${ARGS[*]:-} – $(date -Is)"
 
 case "$CMD" in
     help)
         cat <<'EOF'
-alpaca-ops – allowed commands:
-  status                  container state, health, deployed commit, disk
-  logs [N] [SINCE]        last N container log lines (max 5000), optional --since (e.g. 2026-10-16T04:00)
-  deploy                  git pull + build + recreate (detached; blocked 22:15–05:15 and while a job runs)
-  deploy-log [N]          progress/result of the last deploy
-  restart                 restart the container (same guards as deploy)
-  run <scripts/…py> [args]  run a project script inside the container (as app user 99:100)
-  cron                    read-only: cron entries/user scripts that touch the alpaca DB (backup check)
+alpaca-ops – commands (argument of the "alpaca-ops" user script):
+  status                     container, health, API system health, deployed/fetched commit, disk, alpaca cron entries
+  logs [N] [SINCE]           last N container log lines (default 500, max 5000), optional SINCE (e.g. 2026-10-16T04:00 or 12h)
+  deploy                     git pull + build + recreate (detached; blocked 22:15–05:15 and while a job runs)
+  deploy-log [N]             progress/result of the last deploy
+  restart                    restart the container (same guards as deploy)
+  run <scripts/…py> [args]   run a project script inside the container (as app user 99:100)
+Output of every run: /mnt/user/Workfiles/AlpacaBroker/ops/<command>.log
 EOF
         ;;
     status)
@@ -98,34 +106,41 @@ EOF
         docker inspect -f '{{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}} started={{.State.StartedAt}}' "$CONTAINER" 2>&1
         echo "## image"
         docker image inspect -f 'created={{.Created}}' "$CONTAINER:latest" 2>&1
-        echo "## repo"
-        git -C "$APP_DIR" log -1 --format='%h %ad %s' --date=iso
+        echo "## commits"
+        echo "deployed:     $(cat "$OPS_DIR/deployed.txt" 2>/dev/null || echo 'unknown (no deploy via alpaca-ops yet)')"
+        echo "working tree: $(git -C "$APP_DIR" log -1 --format='%h %ad %s' --date=iso)"
+        echo "origin/main:  $(git -C "$APP_DIR" log -1 --format='%h %ad %s' --date=iso origin/main)"
         echo "## health"
         curl -sS -m 10 "$API/health"; echo
         echo "## disk"
         df -h /mnt/user/appdata /mnt/user/Workfiles 2>/dev/null
+        echo "## cron entries / user scripts that touch the alpaca DB (backup check)"
+        { crontab -l 2>/dev/null | grep -nE 'broker_data|postgresql18-alpaca|5435'; \
+          grep -rlE 'broker_data|postgresql18-alpaca|5435' /etc/cron.d /etc/cron.daily /etc/cron.hourly \
+            /boot/config/plugins/user.scripts/scripts 2>/dev/null; } || echo "(none)"
         ;;
     logs)
-        n="${ARGS[1]:-200}"
+        n="${ARGS[0]:-500}"
         [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -le 5000 ] || die "logs: N must be a number ≤ 5000"
         since=()
-        if [ -n "${ARGS[2]:-}" ]; then
-            [[ "${ARGS[2]}" =~ ^[0-9T:.+-]+[smhZ]?$ ]] || die "logs: invalid SINCE"
-            since=(--since "${ARGS[2]}")
+        if [ -n "${ARGS[1]:-}" ]; then
+            [[ "${ARGS[1]}" =~ ^[0-9T:.+-]+[smhZ]?$ ]] || die "logs: invalid SINCE"
+            since=(--since "${ARGS[1]}")
         fi
         docker logs --timestamps --tail "$n" "${since[@]}" "$CONTAINER" 2>&1
         ;;
     deploy)
         guard_window
         guard_no_running_jobs
-        setsid nohup bash "$SELF" _deploy_worker >"$DEPLOY_LOG" 2>&1 </dev/null &
-        echo "deploy started in background – follow with: ssh alpaca-unraid deploy-log"
+        cp "$0" /tmp/alpaca-deploy-worker.sh
+        setsid nohup bash /tmp/alpaca-deploy-worker.sh _deploy_worker >"$OPS_DIR/deploy-worker.log" 2>&1 </dev/null &
+        echo "deploy started in background – progress: alpaca-ops deploy-log (or ops/deploy-worker.log)"
         ;;
     deploy-log)
-        n="${ARGS[1]:-60}"
+        n="${ARGS[0]:-60}"
         [[ "$n" =~ ^[0-9]+$ ]] || die "deploy-log: N must be a number"
-        if flock -n "$LOCK" true 2>/dev/null; then echo "## state: finished"; else echo "## state: running"; fi
-        tail -n "$n" "$DEPLOY_LOG" 2>/dev/null || echo "(no deploy log yet)"
+        if flock -n "$LOCK" true 2>/dev/null; then echo "## state: not running"; else echo "## state: running"; fi
+        tail -n "$n" "$OPS_DIR/deploy-worker.log" 2>/dev/null || echo "(no deploy log yet)"
         ;;
     restart)
         guard_window
@@ -133,21 +148,14 @@ EOF
         docker restart "$CONTAINER"
         ;;
     run)
-        script="${ARGS[1]:-}"
+        script="${ARGS[0]:-}"
         [[ "$script" =~ ^scripts/[A-Za-z0-9_/]+\.py$ ]] || die "run: script must match scripts/…/*.py"
-        for a in "${ARGS[@]:2}"; do
+        for a in "${ARGS[@]:1}"; do
             [[ "$a" =~ ^[A-Za-z0-9_.,:=/@+-]+$ ]] || die "run: invalid argument: $a"
         done
-        exec docker exec "$CONTAINER" .venv/bin/python "$script" "${ARGS[@]:2}"
-        ;;
-    cron)
-        echo "## root crontab (lines mentioning the alpaca DB)"
-        crontab -l 2>/dev/null | grep -nE 'broker_data|alpaca|5435' || echo "(none)"
-        echo "## cron files / user scripts mentioning the alpaca DB"
-        grep -rlE 'broker_data|postgresql18-alpaca|5435' /etc/cron.d /etc/cron.daily /etc/cron.hourly \
-            /boot/config/plugins/user.scripts/scripts 2>/dev/null || echo "(none)"
+        docker exec "$CONTAINER" .venv/bin/python -u "$script" "${ARGS[@]:1}"
         ;;
     *)
-        die "command not allowed: $CMD (try: help)"
+        die "unknown command: $CMD (try: help)"
         ;;
 esac
