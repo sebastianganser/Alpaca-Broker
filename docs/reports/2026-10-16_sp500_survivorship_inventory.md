@@ -279,3 +279,119 @@ full history under the new symbol), so old symbols (FB, BK, ...) must **not** be
 6. **Adjusted prices of renamed symbols.** For FB/META the same date returned different adjusted closes depending on the symbol and `asof` (339.76 / 335.33 / 332.15 on 2021-10-01); I did not investigate whether `prices_daily` has such cross-symbol drift.
 7. **Non-price source tables** (Form 4, 13F, news, earnings, ARK) were not examined for the 70 tickers; only prices and derived feature columns were assessed.
 8. **Retention.** The 4 exits of Q4 2021 (KSU, HBI, WU, LEG) drop out of the window on 2027-01-01, so a repair after that date is smaller.
+
+## 8. Repair runbook
+
+Code written 2026-10-16, **not yet run against production**. Tested with unit tests (mocked HTTP, no DB) and end to end on a
+throwaway Postgres 18 (all 36 migrations, synthetic pre-repair state that reproduces the inventory numbers: 416/426/441/456/472/490 members
+at the year starts, live read-only Wikipedia and Alpaca calls). The numbers below are derived from this inventory and that
+test; **the dry run on production is authoritative** - compare it with this table before every `--apply`.
+
+| Step | Script | What it does |
+|---|---|---|
+| 2a | `scripts/repair/rebuild_sp500_membership.py` | `sp500` rows of `index_membership` = ground truth (current constituents + change table since 2021-01-01 + manual PARA/SKYD events); renames = one interval under the current symbol |
+| 2b | `scripts/repair/onboard_removed_members.py` | inactive `universe` rows, price backfill from Alpaca (`source='alpaca_backfill'`), technical indicators; `--fix-para` repairs the PARA/Banzai collision |
+| 3 | `scripts/repair/features_rebuild.py` (existing) | full feature rebuild on the corrected point-in-time universe |
+
+Shared helpers: `src/trading_signals/utils/repair_support.py` (resolved DB target, read-only dry-run session, verified CSV backup).
+Every script prints `database target: host:port/db` first, is a dry run by default (`SET TRANSACTION READ ONLY`), writes one transaction
+per logical step with `--apply`, and is idempotent (a second `--apply` changes nothing).
+
+### Preconditions
+
+1. Commit, push and `alpaca-ops deploy` (new package module + scripts must be in the image). Run the scripts with
+   `alpaca-ops run scripts/repair/<script>.py [args]` (refused 22:15-05:15; arguments may only contain `A-Za-z0-9_.,:=/@+-`).
+2. Not on the 1st of a month around 03:00 (`index_sync`; the rebuild also locks the table), not on a Sunday 03:00 (`data_retention`),
+   not while a feature rebuild or the nightly chain (04:30-05:15) writes.
+3. The container needs the Alpaca keys (market-data GETs) and internet access (Wikipedia) even for the dry runs.
+
+### Order of runs
+
+| # | Command | Window | Expected |
+|---|---|---|---|
+| 1 | `rebuild_sp500_membership.py` (dry run) | any time before 22:15 | numbers in 2a below, `database target` = `192.168.1.93:5435/broker_data` |
+| 2 | `rebuild_sp500_membership.py --apply` | 05:15-22:15 | seconds; prints the backup path (`/mnt/user/Workfiles/AlpacaBroker/ops/sp500_membership_backup_<ts>.csv`) |
+| 3 | `rebuild_sp500_membership.py` (dry run) | | `unchanged 610, INSERT 0, UPDATE 0, DELETE 0` |
+| 4 | `onboard_removed_members.py --fix-para` (dry run; add `--add-current-members` if section [1] lists missing current members) | | numbers in 2b below; about 1-3 min (about 65 Alpaca requests) |
+| 5 | same command with `--apply` | 05:15-22:15 | minutes; four `STEP` lines; CSV backups of the deleted PARA rows |
+| 6 | same command as dry run | | every `write` is 0, PARA `already fixed`, 0 tickers for indicators |
+| 7 | `features_rebuild.py --apply --skip-ta --skip-clusters` (indicators of the new tickers were computed in step 5; insider clusters do not read the membership) | start 05:15-09:00 (4-12 h) | resumable: `--start <last committed date>`; do not start it while the chain runs |
+| 8 | re-run the analyses that read `index_membership` / `feature_snapshots`: `feature_analysis` (`POST /analysis/trigger`), `scripts/analysis/event_study.py` (index additions: BE/P/ILMN dates move by 10 days, SW is no addition any more), `walkforward_hit_model.py`, `backtest_barrier.py`, `sprint10_readiness.py` | after 7 | results change, see section 1 |
+
+### Expected numbers
+
+**2a - `rebuild_sp500_membership.py`**
+
+| Item | Expected |
+|---|---|
+| Ground truth | 610 intervals = 503 open + 107 closed (92 exits inside the window incl. 3 merger successors, 15 before 2021-10-01); 210 change-table events since 2021-01-01 (104 added, 106 removed), 2 manual events (PARA exit and SKYD entry 2025-08-08) |
+| Diff vs the 506 `sp500` rows | INSERT 105 (102 closed + TWLO, VYLR, SKYD), UPDATE 9 (valid_to: TAP, TTD, BLDR -> 2026-09-21, CTVA, WBD -> 2026-10-06; valid_from: BE, P, ILMN -> 2026-09-21, SW -> 2021-01-01), DELETE 1 (PSKY), unchanged 496 |
+| Members per first session of the year (DB now -> after) | 2021-01-04 416 -> 505; 2022-01-03 426 -> 505; 2023-01-03 441 -> 503; 2024-01-02 456 -> 503; 2025-01-02 472 -> 503; 2026-01-02 490 -> 503 |
+| All 1,265 sessions 2021-10-01..2026-10-15 | before min 425 / max 503, 1,121 sessions outside 495-510; after min 503 (2022-06-21) / max 506 (2022-02-02), 0 outside |
+| Nasdaq-100 rows | untouched (every statement is restricted to `index_name = 'sp500'`) |
+
+The 15 exits before the window (TIF, CXO, FTI, FLS, SLG, VNT, XRX, VAR, FLIR, HFC, ALXN, MXIM, NOV, PRGO, UNM) are inserted as well so that the
+2021-01-04 count is right; they have no universe row and no price backfill (the onboarding ignores intervals that end before `data_start_date()`).
+If the DB already holds the pending monthly-sync rows (TWLO, VYLR, SKYD) the INSERT count is smaller by that number. A different number of DELETEs
+than 1 must be understood before `--apply` (the run refuses more than `--max-deletes 10`).
+
+**2b - `onboard_removed_members.py --fix-para`**
+
+| Item | Expected |
+|---|---|
+| Universe | INSERT 68 inactive rows (`added_by='sp500_history'`, names from the change table or the Alpaca asset); current members missing in the universe (SKYD, possibly TWLO, VYLR) are only listed unless `--add-current-members` (then inserted ACTIVE and priced) |
+| Price plan | about 72 tickers: the 68 absent ones plus ANSS, ATVI, AVB, XLNX (1-2 tail sessions missing; `write 0` unless their rows come from the old IEX backfill) |
+| Bars | about 39,130 for the 68 (inventory 38,916 plus 214 warm-up bars before the membership start of MOH 104, SBNY 55, SEDG 55) plus 965 for PARA = about 40,100 rows (+4.2 % of 954,558) |
+| Gaps | no head and no internal gaps; tail gaps (delisted before the index removal, sessions with no bar to fetch): CTLT 3, CTXS 1, DAY 3, FRC 3, HES 3, HOLX 2, INFO 2, JNPR 4, MRO 2, PXD 3, SIVB 3, TWTR 2 (and 1-2 for ANSS, ATVI, AVB, XLNX) |
+| PARA | 300 price rows deleted (299 dated >= 2025-08-08 plus the foreign 2025-08-07), about 299 indicator rows deleted, 965 Paramount rows written (close 9.44-36.23), universe row "Paramount Global (Class B)" inactive; other tables only counted |
+| Indicators | recomputed for every ticker that received rows plus PARA (about 70 tickers, roughly 39,000 rows) |
+
+**3 - feature rebuild**: +50,532 ticker-day rows (about 677,300 snapshots in total), 1,242 of 1,265 dates change (`breadth_*` and the new rows); the new
+delisted tickers have 12 of 108 feature columns empty (13F, earnings, sector-relative, `st_earnings_reaction`), like ATVI today.
+
+### Verification
+
+```sql
+-- after 2a
+select count(*) filter (where valid_to is null) as open_n, count(*) as total
+from signals.index_membership where index_name = 'sp500';                       -- 503 / 610
+select ticker, valid_from, valid_to from signals.index_membership
+where index_name = 'sp500' and ticker in ('PSKY','SKYD','PARA','SW','TAP','ILMN','DAY','CDAY') order by 1, 2;
+-- no PSKY, no CDAY; PARA 2021-01-01..2025-08-08; SKYD 2025-08-08..open; DAY 2021-09-20..2026-02-09
+-- after 2b
+select count(*), count(*) filter (where is_active) from signals.universe where added_by = 'sp500_history';   -- 68 / 0 (+ current members with the flag)
+select count(*), count(distinct ticker) from signals.prices_daily where source = 'alpaca_backfill';          -- about 40,100 / about 69
+select ticker, company_name, is_active, sector, cusip from signals.universe where ticker = 'PARA';          -- Paramount Global (Class B), false, null, null
+select count(*), min(trade_date), max(trade_date), max(close) from signals.prices_daily where ticker = 'PARA'; -- 965, 2021-10-01, 2025-08-06, ~36
+select count(*) from signals.technical_indicators where ticker = 'PARA' and trade_date >= '2025-08-08';       -- 0
+-- after 3 (point-in-time members that have a snapshot, e.g. 2022-01-03)
+select count(distinct f.ticker) from signals.feature_snapshots f join signals.index_membership m
+  on m.ticker = f.ticker and m.index_name = 'sp500' and m.valid_from <= f.snapshot_date
+ and (m.valid_to is null or m.valid_to > f.snapshot_date)
+where f.snapshot_date = '2022-01-03';                                                                       -- 505
+```
+
+The next monthly `index_sync` (2026-11-01) must find nothing to change for the S&P 500 (open intervals = current list): a result with renames,
+additions or removals there means the Wikipedia list changed in between.
+
+### Rollback
+
+* **2a**: `rebuild_sp500_membership.py --restore <backup.csv> --apply` (the CSV holds all old `sp500` rows incl. ids; the current state is backed up again
+  first). Check with the dry run: `unchanged 506`. The Nasdaq-100 rows are never touched.
+* **2b**: delete by marker, in this order: `delete from signals.technical_indicators where ticker in (select ticker from signals.universe where added_by = 'sp500_history')`,
+  `delete from signals.prices_daily where source = 'alpaca_backfill'` (note: this also removes the repaired Paramount series), `delete from signals.universe where added_by = 'sp500_history'`.
+  The deleted PARA rows and the old PARA universe row are in `para_prices_daily_<ts>.csv`, `para_technical_indicators_<ts>.csv`, `para_universe_<ts>.csv` in the backup directory
+  (Banzai's series; only needed to undo the fix, the data are wrong for PARA anyway).
+* **3**: the feature rebuild replaces rows day by day; there is no backup (no database backups by decision 2026-10-05). Re-running it is the recovery.
+
+### Deviations from the brief and findings during the test
+
+1. **`asof` = last membership day fails for INFO.** Alpaca: `INFO` with `asof=2022-03-01` returns 104 bars (2 of them the Harbor ETF that re-used the symbol on
+   2022-02-28), `asof=2021-10-01` or `asof=2022-02-25` return the 102 IHS Markit bars. The index removal (2022-03-02) came after the delisting (last bar
+   2022-02-25). The default is therefore `--asof first` (the first member day of each request, clamped to the symbol's period); `--asof last` is the literal rule.
+   For all other tickers of the removal list both give the same bars (checked: CDAY, TWTR, PARA, VIAC, SIVB, GPS, FBHS, MBC; SOLS returns 8 extra when-issued bars
+   with `asof=2025-10-30`). A full dry run on a throwaway DB reproduced the inventory's bar count of every absent ticker (differences = warm-up bars only).
+2. Current members that are missing in `universe` (SKYD, maybe TWLO/VYLR) are not inserted as inactive rows (nobody would collect them): listed, or inserted ACTIVE with `--add-current-members`.
+3. A rename is one interval under the current symbol also for DAY (the inventory proposed CDAY + DAY) and for FBHS (keyed FBIN); `universe` gets no CDAY/VIAC rows.
+4. Intervals of the 15 exits before the window are inserted (they only matter for the 2021 year-start count).
+5. The price backfill requests `[data_start_date(), last member day]` for every ticker, i.e. also the warm-up before a late membership start (needed for SMA200/RSI).
