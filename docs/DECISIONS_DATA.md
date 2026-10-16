@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) · [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md)
 
-**Last updated:** October 2026
+**Last updated:** 16 October 2026
 
 ---
 
@@ -347,6 +347,21 @@
 - **Coverage:** What percentage of active universe tickers have data in each table?
 
 **Rationale:** Row counts alone hide distribution problems. A single ticker with 500 trades looks healthy in aggregate but masks 640 tickers with zero trades. Coverage + depth catches both volume and distribution gaps.
+
+---
+
+### [2026-08-18] Survivorship Bias and Lookahead: Rebuild the History Instead of Accepting It
+
+**Context:** The data-extension concept ([2026-08-18_Konzept_Datenerweiterung.md](2026-08-18_Konzept_Datenerweiterung.md), §2) found that `universe` only held the current state (`is_active`, `index_membership` as a plain array, no `valid_from`/`valid_to`), so a model trained on today's index members sees only survivors. Checked against the code at the time: prices were already fetched with `adjustment=all` (no split/dividend distortion); `analyst_ratings` held ratings and price targets only, no EPS consensus (the estimates collector was a real gap, not a duplicate).
+**Decision (Sebastian):** Clean up the history instead of living with the bias: reconstruct index membership from the publicly documented index changes, backfill delisted tickers, and base every point-in-time feature on filing/disclosure dates. The rebuilt history was to be loaded into temporary staging tables first, checked for completeness, and only then migrated into the live tables.
+**Outcome:** Implemented in Sprint 9.5a (A1/A2) as the `index_membership` interval table (migration 023), `get_universe_as_of()`, a delisted-ticker backfill and a feature recompute – see ROADMAP. No staging tables exist in the schema. Lookahead rules: see "Information Cut-offs" in DECISIONS_FEATURES.
+
+---
+
+### [2026-08-18] Free Sources for Estimates and Short Interest, Strictly Throttled
+
+**Decision (Sebastian):** Use the free interfaces – `yfinance` for EPS/revenue estimates, revisions and earnings surprise (SUE), Massive (formerly Polygon) / FINRA for short interest. The blocking risk of these unofficial or rate-limited sources is handled by strict throttling (delays between calls, shared `YFinanceClient`) and error handling with exponential backoff, not by buying a licensed feed. The estimates collector went first because Yahoo's EPS-trend window rolls over 90 days – every missed day loses history for good.
+**Alternative noted, not adopted:** licensed EODHD `calendar/trends` (same data model, ~50 USD/month, concept §3.1).
 
 ---
 

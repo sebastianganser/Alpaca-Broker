@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) · [DECISIONS_DATA.md](DECISIONS_DATA.md)
 
-**Last updated:** October 2026
+**Last updated:** 16 October 2026
 
 ---
 
@@ -222,6 +222,18 @@
 **Decision:** Collection logs older than 90 days are automatically deleted daily at 03:30 CET.
 
 **Rationale:** Without retention, the `collection_log` table grows unboundedly (~15 entries/day × 365 = 5,475/year). 90 days provides sufficient operational history for debugging while keeping the database lean.
+
+---
+
+### [2026-08-18] Candidate Pipeline: Guardrails, Output Format and Pack Location
+
+**Context:** Answers (Sebastian) to the open design questions of the data-extension concept ([§5.1, §6.3](2026-08-18_Konzept_Datenerweiterung.md)).
+**Decision:**
+- **Guardrails:** adopt the proposed hard filters (minimum liquidity, max. 2 candidates per sector, pairwise-correlation limit, churn lock, minimum score; "no candidates today" is a valid result) – but **do not hard-code the thresholds**; they must be configurable through the settings in the UI.
+- **Output format:** one folder per day with an overview and up to 5 candidate Markdown files (`00_uebersicht.md`, `01_<TICKER>.md`, …).
+- **Pack location:** `/mnt/user/Workfiles/AlpacaBroker` on Unraid; the path is an environment setting (`CONTEXT_PACK_PATH`) to stay portable.
+
+**Status:** Output format and path are implemented (F2 MVP, Sprint 9.5c). The guardrails and their UI-configurable thresholds are still open under F1 (ROADMAP); the stage-1 risk pre-filter currently uses fixed constants in `derived/context_pack_generator.py` (ATR 1–3 %, earnings window, dollar volume > 0).
 
 ---
 

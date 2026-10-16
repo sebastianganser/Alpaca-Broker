@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** October 2026
+**Last updated:** 16 October 2026
 
 ---
 
@@ -194,6 +194,14 @@ Without depth + coverage, a single high-activity ticker can mask the absence of 
 **Lesson:** When the same data type is served by multiple endpoints (global list vs. ticker-specific), **all computed/derived fields must be replicated**. Silent defaults (`None`) in Pydantic schemas make such omissions invisible. Consider extracting shared serialization helpers to prevent divergence.
 
 **Status:** 🟢 Fixed (commit `0a9be3b`)
+
+---
+
+### [2026-08-18] 📊 Politician Trades: Disclosure Lags Far Beyond the 45-Day STOCK Act Deadline
+
+**Observation:** In the Signals view of 2026-08-18 some senators disclose trades extremely late: Tuberville reported 2024 trades with a lag of **824 days**, Wyden with **465 days** (see also the Hickenlooper case above). Such a trade has no information value but dilutes every aggregate that counts trades. The same review found an empty party column and a parser artefact (`--AMCR`).
+**Lesson:** The `delay_days` column was already there but not used as a weight or filter. Politician features must restrict themselves to trades with a short lag (H7: politician trades may be too delayed for alpha).
+**Status:** 🟢 Acted on in Sprint 9.5c: hard filter at 45 days (C1), ticker parser fix (C2), party mapping (C3). A softer variant (exponential decay by lag instead of a cut-off) was not implemented.
 
 ---
 

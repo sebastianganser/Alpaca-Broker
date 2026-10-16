@@ -4,7 +4,7 @@
 **Gegenstand:** Erweiterung der bestehenden Signal-Warehouse-App um fehlende Datendimensionen,
 Aufbau einer täglichen Kandidatenauswahl und Definition der Schnittstelle zum Analyse-Skill
 **Grundlage:** Dashboard- und Signals-Ansicht unter `192.168.1.93:8090`, Stand 18.08.2026
-**Begleitdokument:** `2026-08-18_Anmerkungen_Datenerweiterung.md` (Prüfliste zum Abarbeiten)
+**Begleitdokument:** entfällt – die frühere Prüfliste zum Abarbeiten ist in [ROADMAP.md](ROADMAP.md) (Sprint 9.5a–c) aufgegangen, die Antworten auf die offenen Fragen stehen in `DECISIONS_*.md`
 
 > **Hinweis:** Dieses Dokument beschreibt technische Architektur und Datenquellen. Es ist keine
 > Anlageberatung und keine Handelsempfehlung. Alle Aussagen über die Wirksamkeit von Faktoren
@@ -907,4 +907,4 @@ heute. Genau das ist die Grundlage, auf der eine überprüfbare These steht stat
 
 *Erstellt am 18.08.2026 · Keine Anlageberatung · Aufwandsschätzungen sind grob und setzen
 Vertrautheit mit der eigenen Codebasis voraus · Annahmen zu Technologie-Stack und Datenmodell
-sind in Kapitel 8 und in der begleitenden Prüfliste gekennzeichnet*
+sind in Kapitel 8 gekennzeichnet und inzwischen am Code bestätigt (siehe DECISIONS_DATA.md, 2026-08-18)*
