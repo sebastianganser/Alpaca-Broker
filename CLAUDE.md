@@ -49,7 +49,7 @@ Critical paths (data fetching, computations, later order execution) are pure Pyt
 
 **Phase:** 🟡 Sprint 9.5c (Candidate Pipeline MVP), Phase 2 – review fixes deployed, short-term research K1–K4 finished without a usable edge, K5 (stage-2 forward test) running
 **Current sprint:** 9.5c Phase 2 – collect stage-2 decisions (K5), keep data quality stable; F1 composite score open
-**Next step:** keep collecting data; Sprint 10 readiness on 16.10.: 29/31 "GO" by volume, but ranking stability 0/10 and Options IV (33 d) / Estimates (52 d) history still short → re-run `alpaca-ops run scripts/sprint10_readiness.py` in early December, Sprint 10 from mid-December. Forward testing (K5) deliberately waits until after the sprints. Open points in ROADMAP (13F feature check, `short_interest` table) – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 33
+**Next step:** keep collecting data; Sprint 10 readiness on 16.10.: 29/31 "GO" by volume, but ranking stability 0/10 and Options IV (33 d) / Estimates (52 d) history still short → re-run `alpaca-ops run scripts/sprint10_readiness.py` in early December, Sprint 10 from mid-December. Forward testing (K5) deliberately waits until after the sprints. Open point in ROADMAP: empty `short_interest` table – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 33
 **Last updated:** 16 October 2026 (Claude Code setup, Unraid ops via User Script)
 **Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `d88febf` (deployed 16 October 2026 via `alpaca-ops deploy`), Alembic revision `035`
 
