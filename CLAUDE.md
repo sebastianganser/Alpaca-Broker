@@ -51,7 +51,7 @@ Critical paths (data fetching, computations, later order execution) are pure Pyt
 **Current sprint:** 9.5c Phase 2 – collect stage-2 decisions (K5), keep data quality stable; F1 composite score open
 **Next step:** keep collecting data; Sprint 10 readiness on 16.10.: 29/31 "GO" by volume, but ranking stability 0/10 and Options IV (33 d) / Estimates (52 d) history still short → re-run `alpaca-ops run scripts/sprint10_readiness.py` in early December, Sprint 10 from mid-December. Forward testing (K5) deliberately waits until after the sprints. Open points in ROADMAP (13F feature check, `short_interest` table) – see [SESSION_LOG.md](docs/SESSION_LOG.md), Session 33
 **Last updated:** 16 October 2026 (Claude Code setup, Unraid ops via User Script)
-**Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `b60038e` (deployed 15 October 2026), Alembic revision `035`
+**Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `2945b79` (deployed 16 October 2026 via `alpaca-ops deploy`), Alembic revision `035`
 
 See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 
