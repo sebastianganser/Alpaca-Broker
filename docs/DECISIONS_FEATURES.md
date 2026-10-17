@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) · [DECISIONS_DATA.md](DECISIONS_DATA.md)
 
-**Last updated:** 16 October 2026
+**Last updated:** 17 October 2026
 
 ---
 
@@ -278,6 +278,12 @@ Daily cross-sectional rank IC (mean, ICIR, Newey-West t with lag ≥ h−1), per
 ### [2026-10-16] Forward Testing Waits for the Sprints (Data First)
 **Context:** The stage-2 forward test (K5) is deployed since 2026-10-07 (`stage2_review` runs nightly), but no `decisions.yaml` has been written.
 **Decision (Sebastian):** Forward testing and the related tests wait until the sprints are through and the data supports them – first enough data for Sprint 10 (ML scoring), measured with `scripts/sprint10_readiness.py`. Until then no `decisions.yaml` is expected; "0 decisions read" in `stage2_auswertung.md` is the intended state, not an issue. The nightly `stage2_review` step stays deployed (harmless without input).
+
+### [2026-10-17] Pre-registration of H14 (Days-to-Cover)
+**Context:** The first FINRA short-interest evaluation (monthly analysis of 2026-10-17, in-sample window 2022-07-28 … 2026-10-16) showed a consistently negative daily rank IC of `short_interest_days_to_cover` (`return_20d` rho −0.029, t_NW −3.20, 1,040 dates; `return_60d` t_NW −3.40; `return_barrier_14d` t_NW −1.85), but not Bonferroni-significant (~435 tests). All data up to 2026-10-16 has been looked at, so any further test on it is exploratory.
+**Decision (Sebastian):** Register **H14** ("higher days-to-cover predicts lower returns") as a confirmatory test on data that did not exist at the time of the look, tracked automatically by the monthly `feature_analysis` (`hypothesis_results['H14']`). Design: feature frozen at `FEATURE_VERSION` 2026.10-3; decision target `return_20d` (barrier label reported for information only); snapshot dates ≥ 2026-10-19; mean daily rank IC with Newey-West t (lag 19), **one-sided** p = Φ(t_NW); **fixed n = the first 250 valid out-of-sample dates, evaluated once** – before that `insufficient_data` (progress n/250), afterwards always the same 250 dates; `confirmed` at mean IC < 0 and p < 0.05, `rejected` at a significantly positive IC, otherwise `inconclusive`. Full design: [LEARNINGS_HYPOTHESES.md](LEARNINGS_HYPOTHESES.md) H14.
+**Why this shape:** A fixed sample size and a single look rule out optional stopping and peeking (the verdict cannot be tuned by waiting for a good-looking interim value); the one-sided test is justified because the direction was fixed before the out-of-sample data exists (and matches the literature) and keeps the power as high as the sample allows. The expected t on 250 dates is only ≈ −1.57 if the in-sample effect is real and stable, i.e. ≈ 45–50 % power – an `inconclusive` result is likely and is **not** evidence against the effect; waiting for more dates or relaxing the criterion afterwards is explicitly not allowed (a new test would have to be pre-registered again).
+**Consequence for F1:** only a `confirmed` verdict lets days-to-cover enter the F1 composite score (negative sign); otherwise it is not used as a standalone signal (it can remain a model input feature). The first report with 250 dates (expected 2027-12-01) is the official verdict. Changing the feature definition, the target, the sample start or the statistic invalidates the registration (tripwire test `test_h14_constants_are_the_pre_registered_design`).
 
 ### Known Limits
 - `universe.sector` is not point-in-time.

@@ -248,6 +248,187 @@ def test_h10_uses_zero_beats_not_negative(engine):
     assert res["H10"]["effect_size"] > 0.03
 
 
+# ── H14 (pre-registered days-to-cover test) ──────────────────────────
+
+H14_FEAT = "short_interest_days_to_cover"
+
+
+def _h14_frame(n_dates, beta, *, start="2026-10-19", n_tickers=40, seed=0,
+               barrier_beta=None):
+    """Panel with ``return_20d = beta * days_to_cover + noise`` per date.
+
+    ``beta < 0`` plants the hypothesised negative IC, ``beta == 0`` is noise.
+    The barrier target uses ``barrier_beta`` (default: same as ``beta``).
+    """
+    barrier_beta = beta if barrier_beta is None else barrier_beta
+    rng = np.random.default_rng(seed)
+    frames = []
+    for d in pd.bdate_range(start, periods=n_dates):
+        dtc = rng.normal(size=n_tickers)
+        frames.append(pd.DataFrame({
+            "snapshot_date": d.date(),
+            "ticker": [f"T{i:02d}" for i in range(n_tickers)],
+            H14_FEAT: dtc,
+            "return_20d": beta * dtc + rng.normal(size=n_tickers),
+            "return_barrier_14d": barrier_beta * dtc + rng.normal(size=n_tickers),
+        }))
+    return pd.concat(frames, ignore_index=True)
+
+
+def _h14(engine, df):
+    return engine._test_hypotheses(fr.prepare_frame(df))["H14"]
+
+
+def test_h14_constants_are_the_pre_registered_design():
+    """Tripwire: changing the pre-registered design requires re-registering H14."""
+    from trading_signals.analysis.stats import nw_lag_for_horizon
+    from trading_signals.derived.feature_pipeline import FEATURE_VERSION
+
+    assert fr.H14_FEATURE == H14_FEAT and H14_FEAT in FEATURE_COLUMNS
+    assert fr.H14_TARGET == "return_20d" and fr.H14_TARGET in TARGET_COLUMNS
+    assert fr.H14_SECONDARY_TARGET == "return_barrier_14d"
+    assert fr.H14_HORIZON == 20 and nw_lag_for_horizon(fr.H14_HORIZON) == 19
+    assert fr.H14_OOS_START == date(2026, 10, 19)
+    assert fr.H14_N_DATES == 250
+    assert fr.H14_ALPHA == 0.05
+    assert fr.H14_FEATURE_VERSION == FEATURE_VERSION, (
+        "FEATURE_VERSION changed: if the days-to-cover definition changed, "
+        "H14 must be re-registered (docs/LEARNINGS_HYPOTHESES.md); if it did "
+        "not, update H14_FEATURE_VERSION."
+    )
+
+
+def test_h14_verdict_rule():
+    v = fr.h14_verdict
+    assert v(249, -0.05, -9.0) == "insufficient_data"  # fixed n, no early look
+    assert v(250, -0.01, -1.70) == "confirmed"  # t_NW <= -1.645, mean IC < 0
+    assert v(250, -0.01, -1.60) == "inconclusive"
+    assert v(250, 0.01, 1.70) == "rejected"  # significantly positive
+    assert v(250, 0.01, 1.60) == "inconclusive"
+    assert v(250, 0.01, -2.0) == "inconclusive"  # inconsistent signs never confirm
+    assert v(250, None, None) == "inconclusive"
+    assert v(250, -0.01, float("nan")) == "inconclusive"
+
+
+def test_h14_negative_ic_is_confirmed(engine):
+    res = _h14(engine, _h14_frame(250, beta=-0.5))
+    assert set(res) == {"verdict", "pvalue", "effect_size", "n_dates", "detail"}
+    assert res["verdict"] == "confirmed"
+    assert res["n_dates"] == 250
+    assert res["effect_size"] < -0.2  # negative = hypothesised direction
+    assert res["pvalue"] < 0.05  # one-sided p = Phi(t_NW)
+    assert "250/250" in res["detail"] and "2026-10-19" in res["detail"]
+    assert "secondary return_barrier_14d" in res["detail"]
+
+
+def test_h14_positive_ic_is_rejected(engine):
+    res = _h14(engine, _h14_frame(250, beta=0.5))
+    assert res["verdict"] == "rejected"
+    assert res["effect_size"] > 0.2
+    assert res["pvalue"] > 0.95  # one-sided p near 1 = positive IC
+
+
+def test_h14_noise_is_inconclusive(engine):
+    res = _h14(engine, _h14_frame(250, beta=0.0, seed=2))
+    assert res["verdict"] == "inconclusive"
+    assert abs(res["effect_size"]) < 0.05
+    assert 0.05 <= res["pvalue"] <= 0.95
+
+
+def test_h14_below_250_dates_reports_progress_only(engine):
+    res = _h14(engine, _h14_frame(100, beta=-0.5))
+    assert res["verdict"] == "insufficient_data"  # even with a huge interim IC
+    assert res["n_dates"] == 100
+    assert "100/250" in res["detail"] and "interim" in res["detail"]
+    assert res["effect_size"] < -0.2  # interim values are shown, labelled
+
+    res = _h14(engine, _h14_frame(249, beta=-0.5))
+    assert res["verdict"] == "insufficient_data" and res["n_dates"] == 249
+
+
+def test_h14_without_enough_dates_for_any_statistic(engine):
+    res = _h14(engine, _h14_frame(5, beta=-0.5))
+    assert res["verdict"] == "insufficient_data" and res["n_dates"] == 5
+    assert res["pvalue"] is None and res["effect_size"] is None
+    assert "5/250" in res["detail"]
+
+
+def test_h14_only_dates_from_oos_start_count(engine):
+    pre = _h14_frame(30, beta=0.5, start="2026-09-07", seed=11)  # opposite sign
+    assert pre["snapshot_date"].max() < fr.H14_OOS_START
+    oos = _h14_frame(250, beta=-0.5, seed=12)
+    res = _h14(engine, pd.concat([pre, oos], ignore_index=True))
+    assert res["verdict"] == "confirmed" and res["n_dates"] == 250
+    assert res["effect_size"] == pytest.approx(_h14(engine, oos)["effect_size"])
+    only_pre = _h14(engine, pre)
+    assert only_pre["verdict"] == "insufficient_data" and only_pre["n_dates"] == 0
+    assert "0/250" in only_pre["detail"]
+
+
+def test_h14_uses_exactly_the_first_250_dates(engine):
+    base = _h14_frame(250, beta=-0.5, seed=21)
+    last = pd.Timestamp(base["snapshot_date"].max())
+    # 50 later dates with the opposite sign: must not change the verdict
+    later = _h14_frame(
+        50, beta=0.9, seed=22, start=(last + pd.offsets.BDay(1)).date().isoformat()
+    )
+    res_250 = _h14(engine, base)
+    res_300 = _h14(engine, pd.concat([base, later], ignore_index=True))
+    assert res_300["verdict"] == res_250["verdict"] == "confirmed"
+    assert res_300["n_dates"] == 250
+    assert res_300["effect_size"] == pytest.approx(res_250["effect_size"])
+    assert res_300["pvalue"] == pytest.approx(res_250["pvalue"])
+    assert "all 300 valid OOS dates" in res_300["detail"]  # information only
+    assert "all 300" not in res_250["detail"]
+
+
+def test_h14_ignores_the_model_target(engine):
+    """The barrier label is the model target of H1-H13; H14 must use return_20d."""
+    df = _h14_frame(250, beta=-0.5, barrier_beta=0.5, seed=3)
+    prepared = fr.prepare_frame(df)
+    assert fr.resolve_model_target(prepared)[0] == "return_barrier_14d"
+    res = engine._test_hypotheses(prepared)["H14"]
+    assert res["verdict"] == "confirmed" and res["effect_size"] < -0.2
+    # secondary (information only) shows the opposite, positive barrier IC
+    sec = res["detail"].split("secondary return_barrier_14d")[1]
+    assert "mean IC 0." in sec and "mean IC -" not in sec
+
+
+def test_h14_without_barrier_column_has_no_secondary(engine):
+    df = _h14_frame(250, beta=-0.5).drop(columns=["return_barrier_14d"])
+    res = _h14(engine, df)
+    assert res["verdict"] == "confirmed"
+    assert "secondary" not in res["detail"]
+
+
+def test_h14_missing_feature_column_is_insufficient_data_not_silent(engine, prepared):
+    """The pre-registered test must stay visible in the report."""
+    assert H14_FEAT not in prepared.columns
+    res = engine._test_hypotheses(prepared)
+    assert res["H1"]["verdict"] == "confirmed"  # exploratory block unaffected
+    h14 = res["H14"]
+    assert h14["verdict"] == "insufficient_data" and h14["n_dates"] == 0
+    assert h14["pvalue"] is None and h14["effect_size"] is None
+    assert "missing column" in h14["detail"] and H14_FEAT in h14["detail"]
+
+
+def test_h14_and_exploratory_fail_independently(engine, prepared, monkeypatch):
+    full = fr.prepare_frame(_h14_frame(250, beta=-0.5))
+
+    def boom(self, df):
+        raise RuntimeError("boom")
+
+    with monkeypatch.context() as m:
+        m.setattr(fr.FeatureAnalysisEngine, "_test_exploratory_hypotheses", boom)
+        res = engine._test_hypotheses(full)
+    assert set(res) == {"H14"} and res["H14"]["verdict"] == "confirmed"
+
+    with monkeypatch.context() as m:
+        m.setattr(fr.FeatureAnalysisEngine, "_test_h14", boom)
+        res = engine._test_hypotheses(prepared)
+    assert "H14" not in res and res["H1"]["verdict"] == "confirmed"
+
+
 # ── end-to-end ───────────────────────────────────────────────────────
 
 
@@ -269,6 +450,10 @@ def test_run_end_to_end_returns_transient_report(monkeypatch, engine):
     assert set(res["consensus_features"][0]) == {
         "feature", "spearman_rank", "rf_rank", "lasso_rank", "avg_rank"}
     assert "Mean daily rank IC" in captured["html"]
+    # pre-registered H14 is always reported (here: no OOS dates yet) and rendered
+    h14 = res["hypothesis_results"]["H14"]
+    assert h14["verdict"] == "insufficient_data"
+    assert "H14" in captured["html"] and "0/250 dates" in captured["html"]
     # JSON-safe: no NaN anywhere in correlation payload
     for tgts in res["feature_correlations"].values():
         for v in tgts.values():

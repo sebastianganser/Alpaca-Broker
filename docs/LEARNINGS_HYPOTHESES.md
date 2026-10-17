@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [LEARNINGS.md](LEARNINGS.md)
 
-**Last updated:** May 2026
+**Last updated:** October 2026 (H14 pre-registered)
 
 ---
 
@@ -75,6 +75,25 @@ ARK increasing a position across multiple consecutive snapshots (not just one da
 
 ### H13: Converging Multi-Source Signals Over a Time Window Beat Point-in-Time Overlaps
 When insider buying, ARK accumulation, and analyst upgrades all occur for the same ticker within a 30-day window (but not necessarily on the same day), the convergence is a very strong signal. This is different from checking "do they overlap today?" — the temporal window matters.
+
+### H14: High Days-to-Cover Predicts Lower Returns (pre-registered 2026-10-17)
+**Status:** 🟡 Pre-registered, collecting out-of-sample data. Expected verdict: report of 2027-12-01 (≈ December 2027).
+
+**Hypothesis:** Stocks with higher FINRA days-to-cover (short interest / average daily volume) have **lower** subsequent returns, i.e. the cross-sectional rank IC of `short_interest_days_to_cover` is negative.
+
+**Motivation:** The first evaluation of the FINRA short interest (monthly `feature_analysis` of 2026-10-17, in-sample window 2022-07-28 … 2026-10-16) showed a consistently negative daily rank IC at every horizon: `return_5d` rho −0.016 (t_NW −3.32), `return_20d` rho −0.029 (ICIR −0.35, t_NW −3.20, 1,040 dates), `return_60d` rho −0.044 (t_NW −3.40), `return_barrier_14d` t_NW −1.85. The direction matches the literature, but the result does **not** survive the Bonferroni correction (~435 tests) and was selected from many tested features. Because all data up to 2026-10-16 has been looked at, a confirmatory test may only use data that did not exist at the time of the look.
+
+**Pre-registered design (frozen – any change means H14 must be re-registered):**
+- **Feature:** `short_interest_days_to_cover` exactly as defined by `FEATURE_VERSION` 2026.10-3 (`derived/short_interest_features.py`: settlement date ≤ the 9th NYSE session before `d`, newest usable settlement at most 40 days old, 999.99 or zero volume → NULL). If the feature definition changes, H14 must be re-registered (`H14_FEATURE_VERSION` in `analysis/feature_report.py`, guarded by a unit test).
+- **Decision target:** `return_20d` = close(d+20) / open(d+1) − 1 as excess return per `prepare_frame` (rank IC is unaffected by the cross-sectional demeaning). **Secondary, information only, never decision-relevant:** `return_barrier_14d` (same dates).
+- **Sample:** snapshot dates ≥ **2026-10-19** (first NYSE session after the in-sample look), point-in-time universe of `feature_snapshots`, only dates with ≥ 10 non-null (feature, target) pairs (`MIN_OBS_PER_DATE`).
+- **Statistic:** daily Spearman rank IC (`stats.daily_rank_ic`), mean over the dates, Newey-West t with lag `nw_lag_for_horizon(20)` = 19 (`stats.mean_test`), **one-sided**: p = Φ(t_NW) (normal CDF) against H1: mean IC < 0.
+- **Fixed sample size, single look:** the decisive test uses exactly the **first 250 out-of-sample dates with a valid daily IC for `return_20d`** (≈ one trading year, 2026-10-19 … ≈ mid-October 2027; the 20d targets of the last dates mature ~4 weeks later, so the first report with a verdict is expected on 2027-12-01). Before 250 dates the verdict is `insufficient_data` and the report shows the progress `n/250` (interim values are printed for information only and carry no decision). From 250 dates on, every report recomputes the verdict on the **same first 250 dates** (deterministic, no peeking, no optional stopping); later dates are ignored for the verdict (the report may show them as information). The first report with 250 dates is the official verdict and is recorded in LEARNINGS / DECISIONS_FEATURES.
+- **Success criterion:** mean IC < 0 and one-sided p < 0.05 (t_NW ≤ −1.645) → `confirmed`. Significantly **positive** (Φ(−t_NW) < 0.05, i.e. t_NW ≥ +1.645) → `rejected`. Otherwise `inconclusive`.
+- **Honest power note:** if the in-sample effect is real and stable, the expected t on 250 dates is about −3.2 · √(250/1040) ≈ −1.57, i.e. roughly 45–50 % power. An `inconclusive` result is therefore likely even with a real effect and does **not** disprove it (and if the in-sample estimate is inflated by selection from ~435 tests, power is lower).
+- **Consequence (pre-specified):** `confirmed` → days-to-cover may be used as a component of the F1 composite score (negative sign). Otherwise it is not used as a standalone signal in F1 (it can stay a model input feature).
+
+**Where it is computed:** monthly `feature_analysis` (`FeatureAnalysisEngine._test_h14`), stored in `analysis_reports.hypothesis_results['H14']` and shown in the HTML report. Unlike H1–H13 it uses its own fixed target (not the model target) and is reported with `effect_size` = mean IC (**negative** = hypothesised direction) and `pvalue` = **one-sided** Φ(t_NW) (close to 1 = positive IC); `n_dates` = dates used (≤ 250). The entry exists from the first report on (`0/250` until the first out-of-sample targets mature); a missing feature/target column yields `insufficient_data` with an explanatory detail instead of dropping the test silently.
 
 ---
 

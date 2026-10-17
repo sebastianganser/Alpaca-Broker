@@ -18,6 +18,10 @@ Methodology (rebuilt for review finding H4):
   SL −2 % / 14 sessions) once back-filled, otherwise ``return_20d``.
 * Hypothesis tests use per-date group differences / daily IC differences
   with Newey-West t-stats instead of row-iid Welch t-tests.
+* H14 (days-to-cover) is the exception: a *pre-registered* confirmatory test
+  on out-of-sample dates only, with a fixed sample size and a single
+  one-sided look (see the ``H14_*`` constants and
+  ``docs/LEARNINGS_HYPOTHESES.md``).
 """
 import base64
 import re
@@ -34,6 +38,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import seaborn as sns  # noqa: E402
+from scipy.stats import norm  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 from sqlalchemy.dialects.postgresql import insert  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
@@ -112,6 +117,29 @@ MAX_MODEL_ROWS = 300_000
 #: Number of purged walk-forward test folds.
 N_SPLITS = 4
 
+# ── H14: pre-registered days-to-cover test ───────────────────────────
+# Pre-registered 2026-10-17, full design in docs/LEARNINGS_HYPOTHESES.md (H14).
+# H14: higher FINRA days-to-cover predicts LOWER subsequent returns
+# (negative cross-sectional rank IC). Confirmatory test on data that did not
+# exist when the in-sample window (up to 2026-10-16) was looked at: fixed
+# sample of the first H14_N_DATES out-of-sample dates, ONE look, one-sided.
+# Changing ANY of these constants, the feature definition (FEATURE_VERSION)
+# or the statistic invalidates the pre-registration -> re-register H14.
+H14_FEATURE = 'short_interest_days_to_cover'
+#: FEATURE_VERSION whose days-to-cover definition H14 was registered with.
+H14_FEATURE_VERSION = '2026.10-3'
+#: Decision target (excess return_20d; rank IC is unaffected by the demeaning).
+H14_TARGET = 'return_20d'
+H14_HORIZON = 20
+#: Secondary target: reported for information only, never decision-relevant.
+H14_SECONDARY_TARGET = 'return_barrier_14d'
+#: First NYSE session after the in-sample look of 2026-10-17.
+H14_OOS_START = date(2026, 10, 19)
+#: Fixed sample size: the first N out-of-sample dates with a valid daily IC.
+H14_N_DATES = 250
+#: One-sided significance level of the success criterion.
+H14_ALPHA = 0.05
+
 _IDENT_RE = re.compile(r'^[a-z_][a-z0-9_]*$')
 
 _REPORT_CSS = """
@@ -170,6 +198,26 @@ def _verdict(
     if pval < alpha and effect > 0:
         return "confirmed"
     if pval < alpha and effect < 0:
+        return "rejected"
+    return "inconclusive"
+
+
+def h14_verdict(n_dates: int, mean_ic: float | None, t_nw: float | None) -> str:
+    """Pre-registered H14 decision rule (one-sided, H1: mean IC < 0).
+
+    * fewer than ``H14_N_DATES`` dates -> ``insufficient_data`` (no look yet)
+    * ``confirmed``: mean IC < 0 and one-sided p = Phi(t_NW) < ``H14_ALPHA``
+    * ``rejected``: significantly POSITIVE, mean IC > 0 and
+      one-sided p = Phi(-t_NW) < ``H14_ALPHA``
+    * otherwise ``inconclusive``
+    """
+    if n_dates < H14_N_DATES:
+        return "insufficient_data"
+    if mean_ic is None or t_nw is None or not np.isfinite(t_nw):
+        return "inconclusive"
+    if mean_ic < 0 and norm.cdf(t_nw) < H14_ALPHA:
+        return "confirmed"
+    if mean_ic > 0 and norm.sf(t_nw) < H14_ALPHA:
         return "rejected"
     return "inconclusive"
 
@@ -482,8 +530,138 @@ class FeatureAnalysisEngine:
     # ── Hypotheses ───────────────────────────────────────────────────
 
     def _test_hypotheses(self, df: pd.DataFrame) -> dict:
+        """Exploratory H1–H13 (model target) plus the pre-registered H14.
+
+        H14 uses its own fixed target (``H14_TARGET``), never the model
+        target, and is computed independently of H1–H13: a failure in one
+        block must not remove the other from the report.
+        """
         logger.info("Testing hypotheses (per-date differences, Newey-West)...")
         df = self._ensure_prepared(df)
+        results: dict[str, dict] = {}
+        try:
+            results.update(self._test_exploratory_hypotheses(df))
+        except Exception as e:
+            logger.error(f"Error testing exploratory hypotheses H1-H13: {e}")
+            logger.debug(traceback.format_exc())
+        try:
+            results['H14'] = self._test_h14(df)
+        except Exception as e:
+            logger.error(f"Error testing pre-registered hypothesis H14: {e}")
+            logger.debug(traceback.format_exc())
+        return results
+
+    def _test_h14(self, df: pd.DataFrame) -> dict:
+        """H14 (pre-registered 2026-10-17): days-to-cover predicts LOWER returns.
+
+        Daily rank IC of ``H14_FEATURE`` vs ``H14_TARGET`` on snapshot dates
+        >= ``H14_OOS_START`` (only data that did not exist at the in-sample
+        look), mean over the FIRST ``H14_N_DATES`` dates with a valid IC,
+        Newey-West t (lag ``nw_lag_for_horizon(H14_HORIZON)``), ONE-sided
+        p = Phi(t_NW) for H1: mean IC < 0. Later dates never enter the verdict
+        (fixed n, single look); they are only reported as information.
+
+        Result fields differ from the exploratory hypotheses in two ways:
+        ``effect_size`` is the mean IC and is NEGATIVE in the hypothesised
+        direction (H1–H13 use positive effects), and ``pvalue`` is the
+        one-sided Phi(t_NW) (close to 1 = positive IC), not two-sided.
+        ``n_dates`` is the number of dates used (at most ``H14_N_DATES``).
+        The entry always exists (progress ``n/250`` from the first report on);
+        a missing feature/target column yields ``insufficient_data`` with an
+        explanatory detail instead of silently dropping the pre-registered test.
+        """
+        head = (
+            f"H14 pre-registered (higher {H14_FEATURE} -> lower {H14_TARGET}, "
+            f"one-sided, OOS from {H14_OOS_START.isoformat()})"
+        )
+        missing = [c for c in (H14_FEATURE, H14_TARGET) if c not in df.columns]
+        if missing:
+            logger.warning(f"H14 cannot be tested, columns missing: {missing}")
+            return {
+                'verdict': 'insufficient_data',
+                'pvalue': None,
+                'effect_size': None,
+                'n_dates': 0,
+                'detail': f"{head}: 0/{H14_N_DATES} dates (missing column(s): "
+                          f"{', '.join(missing)})",
+            }
+
+        lag = nw_lag_for_horizon(H14_HORIZON)
+        oos = df.loc[df[DATE_COL] >= pd.Timestamp(H14_OOS_START)]
+        ic_all = daily_rank_ic(
+            oos, H14_FEATURE, H14_TARGET, min_obs=MIN_OBS_PER_DATE
+        )
+        ic = ic_all.iloc[:H14_N_DATES]  # fixed sample: the first N valid dates
+        n = int(len(ic))
+        progress = f"{n}/{H14_N_DATES} dates"
+
+        mean_ic: float | None = None
+        t_nw: float | None = None
+        p_one: float | None = None
+        if n >= MIN_TEST_DATES:
+            test = mean_test(ic, lag)
+            mean_ic = _finite_or_none(test['mean'])
+            t_nw = _finite_or_none(test['t_nw'])
+            if t_nw is not None:
+                p_one = float(norm.cdf(t_nw))
+
+        verdict = h14_verdict(n, mean_ic, t_nw)
+        if mean_ic is None or t_nw is None or p_one is None:
+            stats_txt = "mean IC n/a, t_NW n/a, one-sided p n/a"
+        else:
+            stats_txt = (
+                f"mean IC {mean_ic:.4f}, t_NW {t_nw:.2f} (lag {lag}), "
+                f"one-sided p = Phi(t_NW) = {p_one:.4f}"
+            )
+        if verdict == 'insufficient_data':
+            body = (
+                f"{progress} - verdict pending; interim (not decision-relevant): "
+                f"{stats_txt}"
+            )
+        else:
+            body = (
+                f"{progress} ({ic.index[0].date()} .. {ic.index[-1].date()}): "
+                f"{stats_txt}; confirmed if mean IC is negative and "
+                f"p is below {H14_ALPHA}"
+            )
+
+        extras = []
+        if len(ic_all) > H14_N_DATES:  # information only, never in the verdict
+            later = mean_test(ic_all, lag)
+            extras.append(
+                f"all {len(ic_all)} valid OOS dates (information only, later dates "
+                f"are ignored by the verdict): mean IC {later['mean']:.4f}, "
+                f"t_NW {later['t_nw']:.2f}"
+            )
+        if H14_SECONDARY_TARGET in df.columns:
+            ic_b = daily_rank_ic(
+                oos, H14_FEATURE, H14_SECONDARY_TARGET, min_obs=MIN_OBS_PER_DATE
+            )
+            ic_b = ic_b.loc[ic_b.index.intersection(ic.index)]  # same dates
+            if len(ic_b) >= MIN_TEST_DATES:
+                sec = mean_test(ic_b, nw_lag_for_horizon(horizon_from_target(
+                    H14_SECONDARY_TARGET)))
+                extras.append(
+                    f"secondary {H14_SECONDARY_TARGET} (information only): "
+                    f"mean IC {sec['mean']:.4f}, t_NW {sec['t_nw']:.2f}, "
+                    f"{len(ic_b)} dates"
+                )
+            else:
+                extras.append(
+                    f"secondary {H14_SECONDARY_TARGET} (information only): "
+                    f"n/a ({len(ic_b)} dates)"
+                )
+        detail = "; ".join([f"{head}: {body}", *extras])
+        return {
+            'verdict': verdict,
+            'pvalue': p_one,
+            'effect_size': mean_ic,
+            'n_dates': n,
+            'detail': detail,
+        }
+
+    def _test_exploratory_hypotheses(self, df: pd.DataFrame) -> dict:
+        """Exploratory hypotheses H1–H13 on the model target (see class docs)."""
         results: dict[str, dict] = {}
         target, horizon = self._target(df)
         if target not in df.columns:
@@ -844,8 +1022,15 @@ class FeatureAnalysisEngine:
             "RF / LASSO: per-date ranked features, imputer+scaler fit inside purged "
             f"walk-forward folds (purge {self.model_horizon} dates), "
             f"target excess {self.model_target}.",
-            "Hypotheses: per-date group differences / daily IC differences, "
+            "Hypotheses H1-H13: per-date group differences / daily IC differences, "
             "Newey-West t.",
+            f"H14 (pre-registered 2026-10-17, docs/LEARNINGS_HYPOTHESES.md): daily "
+            f"rank IC of {H14_FEATURE} vs {H14_TARGET} on snapshot dates &ge; "
+            f"{H14_OOS_START.isoformat()} only, fixed sample = first {H14_N_DATES} "
+            "dates with a valid IC (single look, no later dates in the verdict), "
+            "Newey-West t, ONE-sided p = Phi(t) for H1: mean IC &lt; 0. Effect = mean "
+            "IC (negative = hypothesised direction), p-value is one-sided (near 1 "
+            "= positive IC).",
             "Market-wide features (macro_*, breadth_*) have no cross-sectional "
             "variation and are not evaluated here.",
         ]

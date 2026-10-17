@@ -1324,7 +1324,8 @@ def run_feature_analysis() -> None:
     Scheduled for 1st of each month at 07:00 Europe/Berlin (after the
     nightly chain). Also triggered via ``POST /analysis/trigger``.
     Runs Spearman correlations, Random Forest + LASSO feature importance,
-    and hypothesis tests (H1–H13). Stores structured results in
+    and hypothesis tests (H1–H13 exploratory, H14 pre-registered and tracked
+    automatically, see LEARNINGS_HYPOTHESES.md). Stores structured results in
     analysis_reports table and generates an HTML report.
 
     CPU-intensive (~2–5 min depending on data volume).

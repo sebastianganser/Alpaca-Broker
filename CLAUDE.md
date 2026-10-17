@@ -72,7 +72,7 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 | **Price data** | Alpaca Market Data API, **SIP feed** (`ALPACA_DATA_FEED`, default `sip`; production logs show `feed=sip`), automatic IEX fallback marks the run `partial` |
 | **News sentiment** | Alpaca News API + ProsusAI/finbert (local CPU inference) |
 | **Universe** | 760 active tickers (2026-10-17, incl. reactivated BF.B and the onboarded current members SKYD/TWLO/VYLR; S&P 500 + Nasdaq 100 + ARK + benchmark/sector ETFs, other ETFs filtered via blacklist, never a current index member); features use the point-in-time universe |
-| **Tests** | 1384 tests, none needs a database (2026-10-17); run with `uv run pytest` |
+| **Tests** | 1397 tests, none needs a database (2026-10-17); run with `uv run pytest` |
 | **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090, runs as `99:100`) |
 | **Broker (later)** | Alpaca Paper Trading (NEVER live!) |
 | **Version control** | Git, [GitHub](https://github.com/sebastianganser/Alpaca-Broker) |
