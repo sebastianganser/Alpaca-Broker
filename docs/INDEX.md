@@ -14,7 +14,7 @@
 | Project overview, mission, principles, current status | [CLAUDE.md](../CLAUDE.md) |
 | **Where did the last session stop? What is deployed? What is open?** | [SESSION_LOG.md](SESSION_LOG.md) – last entry (Session 34) · [ROADMAP.md](ROADMAP.md) – "Offene Punkte" |
 | How is the system deployed and structured? | [ARCHITECTURE.md](ARCHITECTURE.md) |
-| What database tables exist? (DDL, migrations 001–037, retention) | [DATABASE.md](DATABASE.md) |
+| What database tables exist? (DDL, migrations 001–038, retention) | [DATABASE.md](DATABASE.md) |
 | When do jobs run? (schedule, nightly chain) | [SCHEDULER.md](SCHEDULER.md) |
 | How does data source X work? | [DATA_SOURCES.md](DATA_SOURCES.md) |
 | Why was decision Y made? | `DECISIONS_*.md` (see below) |
@@ -22,7 +22,8 @@
 | What did we learn from the data / from bugs? | [LEARNINGS.md](LEARNINGS.md) |
 | What hypotheses do we want to test? | [LEARNINGS_HYPOTHESES.md](LEARNINGS_HYPOTHESES.md) |
 | Short-term candidate concept (barrier trades, K1–K5) | [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) |
-| Format of the stage-2 feedback file `decisions.yaml` | [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) |
+| Format of the stage-2 feedback file `decisions.yaml` | [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md) | Plan to make Alpaca-Broker strategy-neutral after Sebastian's scope clarification: context pack v2 for Claude's Wall-Street-style forecasts, `forecasts.yaml`, neutral screen, removal of the barrier label and stage-2 tables | Draft – awaiting Sebastian's approvals |
+| [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) |
 | S&P 500 survivorship gap: root cause, removal list, **repair runbook** (dry runs, `--apply`, rollback) | [reports/2026-10-16_sp500_survivorship_inventory.md](reports/2026-10-16_sp500_survivorship_inventory.md) |
 | GitHub overview / external audience | [README.md](../README.md) |
 
@@ -44,7 +45,7 @@
 | Document | Purpose | Update Frequency |
 |---|---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Deployment topology (Unraid, container, volumes), project structure, data flow, nightly chain, context-pack output | On structural changes |
-| [DATABASE.md](DATABASE.md) | Database schema – all tables, migration history 001–037, retention per table | On schema changes / migrations |
+| [DATABASE.md](DATABASE.md) | Database schema – all tables, migration history 001–038, retention per table | On schema changes / migrations |
 | [SCHEDULER.md](SCHEDULER.md) | Execution schedule – all 26 jobs, nightly chain, manual operations | When jobs change |
 
 ### Data Sources

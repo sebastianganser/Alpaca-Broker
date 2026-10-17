@@ -19,6 +19,7 @@ from trading_signals.analysis.modeling import (
     purged_lasso,
     walk_forward_rf,
 )
+from trading_signals.analysis.stats import horizon_from_target
 from trading_signals.db.models.analysis import AnalysisReport
 from trading_signals.db.models.features import (
     FEATURE_COLUMNS,
@@ -59,7 +60,8 @@ def _synthetic(n_dates=120, n_tickers=40, seed=0):
             "return_1d": market / 5 + rng.normal(0, 0.01, n_tickers),
             "return_5d": market / 2 + rng.normal(0, 0.02, n_tickers),
             "return_20d": ret20 + 0.02 * multi,
-            "return_60d": rng.normal(0, 0.1, n_tickers),
+            # model target (60d): same planted signals as the 20d return
+            "return_60d": ret20 + 0.02 * multi + rng.normal(0, 0.03, n_tickers),
         }))
     return pd.concat(frames, ignore_index=True)
 
@@ -197,7 +199,8 @@ def test_hypotheses_structure_and_h1_effect(engine, prepared):
     res = engine._test_hypotheses(prepared)
     for hid in ("H1", "H2", "H3", "H4", "H9", "H10", "H11", "H12", "H13"):
         assert hid in res, hid
-        assert set(res[hid]) == {"verdict", "pvalue", "effect_size", "n_dates", "detail"}
+        assert set(res[hid]) == {
+            "verdict", "pvalue", "effect_size", "n_dates", "detail"}
         assert res[hid]["verdict"] in {"confirmed", "rejected", "inconclusive"}
     assert res["H1"]["verdict"] == "confirmed"
     assert res["H1"]["effect_size"] == pytest.approx(0.02, abs=0.01)
@@ -217,7 +220,8 @@ def test_short_history_is_never_significant(monkeypatch, prepared):
 
 def test_min_dates_and_verdict():
     assert fr.min_dates_for_horizon(20) == 20 * fr.MIN_INDEPENDENT_PERIODS
-    assert fr.min_dates_for_horizon(1) == max(fr.MIN_TEST_DATES, fr.MIN_INDEPENDENT_PERIODS)
+    assert fr.min_dates_for_horizon(1) == max(
+        fr.MIN_TEST_DATES, fr.MIN_INDEPENDENT_PERIODS)
     assert fr._verdict(0.001, 0.1, n_dates=44, horizon=20) == "insufficient_data"
     assert fr._verdict(0.001, 0.1, n_dates=400, horizon=20) == "confirmed"
     assert fr._verdict(0.001, -0.1) == "rejected"
@@ -243,9 +247,92 @@ def test_h10_uses_zero_beats_not_negative(engine):
     df["insider_cluster_active"] = rng.random(len(df)) < 0.5
     boost = (df["consecutive_beats"] == 0) & df["insider_cluster_active"]
     df["return_20d"] = df["return_20d"] + 0.05 * boost
+    df["return_60d"] = df["return_60d"] + 0.05 * boost  # model target
     res = engine._test_hypotheses(fr.prepare_frame(df))
     assert res["H10"]["verdict"] == "confirmed"
     assert res["H10"]["effect_size"] > 0.03
+
+
+# ── model target: strategy-neutral forward return ────────────────────
+# Decision 2026-10-17 "Scope: Alpaca-Broker forecasts, a separate bot trades":
+# return_60d (primary, months), fallback return_20d. No trade label
+# (barrier / trailing stop) is a model target.
+
+
+def _target_frame(n60, n20=None):
+    n = len(n60)
+    df = pd.DataFrame({fr.FALLBACK_TARGET: n20 if n20 is not None else [0.1] * n})
+    df[fr.MODEL_TARGET] = n60
+    return df
+
+
+def test_model_target_constants():
+    assert fr.MODEL_TARGET == "return_60d" and fr.MODEL_HORIZON == 60
+    assert fr.FALLBACK_TARGET == "return_20d" and fr.FALLBACK_HORIZON == 20
+    assert fr.MODEL_TARGET_CHAIN == (("return_60d", 60), ("return_20d", 20))
+    for target, horizon in fr.MODEL_TARGET_CHAIN:
+        assert target in TARGET_COLUMNS
+        assert horizon == horizon_from_target(target)  # NW lag / purge consistent
+    assert fr.MODEL_TARGET_CHAIN[-1][0] == fr.FALLBACK_TARGET
+
+
+def test_60d_return_wins_when_covered():
+    nan = float("nan")
+    df = _target_frame([0.1, 0.2, nan, 0.1])  # 75 % of the return_20d rows
+    assert fr.resolve_model_target(df) == ("return_60d", 60)
+
+
+def test_falls_back_to_return_20d_when_60d_coverage_is_low():
+    nan = float("nan")
+    assert fr.resolve_model_target(_target_frame([nan, nan, nan, 0.1])) == (
+        "return_20d", 20)  # 25 % coverage
+    assert fr.resolve_model_target(_target_frame([nan] * 4)) == ("return_20d", 20)
+    no_60d = pd.DataFrame({"return_20d": [0.1] * 4})
+    assert fr.resolve_model_target(no_60d) == ("return_20d", 20)
+    assert fr.resolve_model_target(pd.DataFrame({"x": [1]})) == ("return_20d", 20)
+
+
+def test_trade_labels_are_never_the_model_target():
+    df = _target_frame([float("nan")] * 4)
+    df["return_barrier_14d"] = [0.1, 0.2, 0.3, 0.4]  # fully covered label
+    assert fr.resolve_model_target(df) == ("return_20d", 20)
+
+
+def _target_panel(n_dates=70, n_tickers=40, seed=1, beta=0.5):
+    """Panel where ``return_60d`` (not return_20d) depends on the flag."""
+    rng = np.random.default_rng(seed)
+    frames = []
+    for d in pd.bdate_range("2026-01-05", periods=n_dates):
+        flag = (rng.random(n_tickers) < 0.5).astype(float)
+        frames.append(pd.DataFrame({
+            "snapshot_date": d.date(),
+            "ticker": [f"T{i:02d}" for i in range(n_tickers)],
+            "ark_multi_etf_signal": flag,
+            "return_20d": rng.normal(size=n_tickers),
+            "return_60d": beta * flag + rng.normal(size=n_tickers),
+        }))
+    return pd.concat(frames, ignore_index=True)
+
+
+def test_engine_runs_exploratory_hypotheses_on_the_60d_target(engine):
+    res = engine._test_exploratory_hypotheses(fr.prepare_frame(_target_panel()))
+    assert engine.model_target == "return_60d" and engine.model_horizon == 60
+    assert res["H1"]["verdict"] == "confirmed"
+    assert res["H1"]["effect_size"] > 0.3  # planted +0.5 on return_60d only
+
+
+def test_engine_horizon_follows_the_resolved_target(engine):
+    panel = _target_panel()
+    panel["return_60d"] = float("nan")  # not back-filled yet
+    engine._test_exploratory_hypotheses(fr.prepare_frame(panel))
+    assert (engine.model_target, engine.model_horizon) == ("return_20d", 20)
+
+
+def test_engine_correlations_include_the_60d_target(engine):
+    corr = engine._compute_correlations(fr.prepare_frame(_target_panel()))
+    entry = corr["ark_multi_etf_signal"]["return_60d"]
+    assert entry["rho"] > 0.1 and entry["n_dates"] == 70
+    assert entry["t_nw"] is not None
 
 
 # ── H14 (pre-registered days-to-cover test) ──────────────────────────
@@ -383,10 +470,13 @@ def test_h14_uses_exactly_the_first_250_dates(engine):
 
 
 def test_h14_ignores_the_model_target(engine):
-    """The barrier label is the model target of H1-H13; H14 must use return_20d."""
+    """return_60d is the model target of H1-H13; H14 must use return_20d."""
     df = _h14_frame(250, beta=-0.5, barrier_beta=0.5, seed=3)
+    # the model target carries the opposite (positive) sign: H14 must not see it
+    noise = np.random.default_rng(4).normal(size=len(df))
+    df["return_60d"] = 0.5 * df[H14_FEAT] + noise
     prepared = fr.prepare_frame(df)
-    assert fr.resolve_model_target(prepared)[0] == "return_barrier_14d"
+    assert fr.resolve_model_target(prepared) == ("return_60d", 60)
     res = engine._test_hypotheses(prepared)["H14"]
     assert res["verdict"] == "confirmed" and res["effect_size"] < -0.2
     # secondary (information only) shows the opposite, positive barrier IC

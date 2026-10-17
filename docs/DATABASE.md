@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** October 2026 (migrations 001–037)
+**Last updated:** October 2026 (migrations 001–038)
 
 ---
 
@@ -602,7 +602,7 @@ CREATE INDEX idx_technical_indicators_date ON signals.technical_indicators(trade
 ## Layer 3: Analysis (Feature Store + Backtests)
 
 ### `signals.feature_snapshots` ⭐
-**The heart of the project.** Daily feature vector per ticker, aggregated from all raw and derived data layers. This table serves as training data for ML models. Wide table design avoids JOINs during training: **111 columns** = 2 key + 97 features + 6 return targets + 4 trade labels + 2 metadata columns (`FEATURE_COLUMNS` / `TARGET_COLUMNS` / `LABEL_COLUMNS` / `META_COLUMNS` in `db/models/features.py`).
+**The heart of the project.** Daily feature vector per ticker, aggregated from all raw and derived data layers. This table serves as training data for ML models. Wide table design avoids JOINs during training: **108 columns** = 2 key + 97 features + 5 return targets + 2 trade labels + 2 metadata columns (`FEATURE_COLUMNS` / `TARGET_COLUMNS` / `LABEL_COLUMNS` / `META_COLUMNS` in `db/models/features.py`).
 
 > **Design:** All feature columns are nullable. Features self-activate when sufficient data exists. No imputation at the feature store level — the ML stage decides how to handle NULLs.
 
@@ -761,15 +761,9 @@ CREATE TABLE signals.feature_snapshots (
   return_20d NUMERIC(10,6),              -- 20-session forward return
   return_60d NUMERIC(10,6),              -- 60-session forward return
   -- Barrier trade label (migration 033): entry open d+1, TP +1 % / SL -2 % / max 14 sessions, net of 0.05 % costs
-  return_barrier_14d NUMERIC(10,6),      -- net trade return (variant; first fallback of the model target)
+  return_barrier_14d NUMERIC(10,6),      -- net trade return (older trade concept; to be made strategy-neutral, see DECISIONS_FEATURES 2026-10-17)
   barrier_outcome SMALLINT,              -- 1 = take profit, -1 = stop, 0 = time stop
   barrier_ambiguous BOOLEAN,             -- TP and SL touched on the same day (resolved via OHLC rule)
-  -- Trailing-stop trade label (migration 037, decision 2026-10-17): entry open d+1, trailing stop 3 x ATR(14)
-  -- (fixed distance, ATR of day d) below the high-water mark, max 60 sessions, net of 0.05 % costs;
-  -- NULL until the full 60-session window of real bars exists (same rule as the barrier label)
-  return_trail_60d NUMERIC(10,6),        -- net trade return (model target of the feature analysis)
-  trail_exit_day SMALLINT,               -- exit session 1..60 (time stop = 60)
-  trail_stopped BOOLEAN,                 -- true = trailing stop, false = time stop
   
   -- ═══ Metadata ═══
   computed_at TIMESTAMP DEFAULT NOW(),
@@ -909,7 +903,7 @@ Decision 2026-10-05: the system keeps exactly the last **20 calendar quarters** 
 
 ## Migrations
 
-Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–037 (linear chain, head = 037; production at 036 until 037 is deployed).
+Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–038 (linear chain, head = 038; production at 037 since 2026-10-17 19:03, 038 pending deploy).
 
 | Migration | Description |
 |---|---|
@@ -950,6 +944,7 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 | 035 | Tables `stage2_reviews` + `stage2_decisions` (FK `ON DELETE CASCADE`, check `ck_stage2_decisions_action`, unique `uq_stage2_session_ticker`; stage-2 forward test, concept 2026-10-06 §7.7) |
 | 036 | `feature_snapshots.short_interest_days_to_cover` + `short_interest_change_1m` (NUMERIC(10,4), FINRA settlement features; `FEATURE_VERSION` 2026.10-3). History: `scripts/repair/backfill_short_interest_features.py` (only these two columns) |
 | 037 | Trailing-stop trade label on `feature_snapshots`: `return_trail_60d` (NUMERIC(10,6)), `trail_exit_day` (SMALLINT), `trail_stopped` (BOOLEAN); `ADD COLUMN IF NOT EXISTS`, history via `target_backfill` (nightly chain or `features_rebuild.py --skip-ta --skip-clusters --skip-features`) |
+| 038 | Drops the 037 trailing-stop label columns again (`DROP COLUMN IF EXISTS` `return_trail_60d`, `trail_exit_day`, `trail_stopped`) – scope decision 2026-10-17: Alpaca-Broker forecasts, a separate bot trades; the downgrade re-adds the columns exactly as 037 defined them. 037 itself is unchanged. The model target of the monthly analysis is the strategy-neutral `return_60d` |
 
 > [!NOTE]
 > Migration 024 was extended after production had applied it (commit `81446a4` added `sector_relative_return_20d` / `sector_relative_momentum`), so 025 (`32168a0`) created the two columns in production. On an empty database both added them and `alembic upgrade head` failed at 025. **Fixed 2026-10-16:** 025 uses `ADD COLUMN IF NOT EXISTS` and its downgrade is a no-op (024's downgrade drops the columns). Verified on a throwaway `postgres:18`: fresh `upgrade head` → 035, round trip `025 → 023 → head`, and the production history (old 024 without the columns → 025 creates them). No effect on databases already at 025 or later.

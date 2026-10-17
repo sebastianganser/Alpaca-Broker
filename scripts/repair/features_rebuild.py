@@ -15,10 +15,9 @@ Steps (each can be skipped):
      DELETE the day's rows, FeaturePipeline.compute_daily(d), commit every
      ``--commit-every`` days → resumable with ``--start``
   5. targets: TargetBackfillComputer.recompute_tickers in ticker chunks
-     (new definition close(d+h)/open(d+1) - 1, plus the barrier and the
-     trailing-stop trade labels), committed per chunk. Targets only (e.g.
-     after a label definition change or migration 037):
-     ``--apply --skip-ta --skip-clusters --skip-features``
+     (new definition close(d+h)/open(d+1) - 1, plus the barrier trade
+     label), committed per chunk. Targets only (e.g. after a label
+     definition change): ``--apply --skip-ta --skip-clusters --skip-features``
 
 Runtime: roughly 20-35 s per session for ~750 tickers → a full 5-year
 rebuild (~1250 sessions) takes about 7-12 hours. Run it inside the
@@ -109,13 +108,13 @@ def report_counts(session) -> None:
     cov = session.execute(
         select(
             func.count(FeatureSnapshot.return_20d),
+            func.count(FeatureSnapshot.return_60d),
             func.count(FeatureSnapshot.return_barrier_14d),
-            func.count(FeatureSnapshot.return_trail_60d),
         )
     ).one()
     logger.info(
-        f"labels filled: return_20d={cov[0]}, return_barrier_14d={cov[1]}, "
-        f"return_trail_60d={cov[2]}"
+        f"labels filled: return_20d={cov[0]}, return_60d={cov[1]}, "
+        f"return_barrier_14d={cov[2]}"
     )
 
 

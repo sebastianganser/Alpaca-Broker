@@ -18,13 +18,14 @@
 
 ## Project Mission (One Sentence)
 
-> Build a **Signal Warehouse** that collects as many relevant market data points and "smart money" signals as possible daily, to later develop data-driven, robust trading strategies in Alpaca Paper Trading.
+> Build a **Signal Warehouse** that collects as many relevant market data points and "smart money" signals as possible daily, and from them **forecasts which tickers are expected to rise (later: fall) over days to months**. The data goes to Claude via the context pack, who judges the tickers like a Wall-Street broker. Strategies, exit rules and the actual trading are done later by a **separate bot** (Alpaca paper trading only) – decision 2026-10-17.
 
 ## What This Project Is NOT (Important!)
 
 - ❌ **Not a live trading system** – everything runs exclusively in the Alpaca **paper trading** account
 - ❌ **Not financial advice, no alpha guarantee** – this is a learning and research project
 - ❌ **Not a "Claude trades autonomously" system** – LLMs are only used where natural language adds real value
+- ❌ **No strategy, no exit rules, no order execution** – no entry/exit logic (trailing stop, take profit, …) in targets or code; forecasts are strategy-neutral forward returns (`return_5d`/`return_20d`/`return_60d`, primary horizon 60 sessions). Strategy selection and trading belong to a separate future bot ([DECISIONS_FEATURES.md](docs/DECISIONS_FEATURES.md) 2026-10-17)
 - ❌ **Not crypto trading** (at least not in phase 1)
 - ❌ **No options strategies initially** – wheel strategy deliberately deferred in favor of solid data foundation
 
@@ -41,7 +42,7 @@ Raw data is never modified by evaluations. Evaluations, scores, and signals are 
 **Rolling retention (decision 2026-10-05):** The system keeps exactly the last **20 calendar quarters** (~5 years). Older data is deleted weekly by the `data_retention` job and must not be re-collected by backfills. **No database backups** are kept. Use `trading_signals.utils.retention.data_start_date()` instead of hard-coded start dates.
 
 ### 3. Deterministic Core, LLM Only at the Edges
-Critical paths (data fetching, computations, later order execution) are pure Python code with unit tests. LLMs are only used for unstructured tasks (news parsing, report generation, ad-hoc analyses).
+Critical paths (data fetching, computations; likewise the later separate trading bot) are pure Python code with unit tests. LLMs are only used for unstructured tasks (news parsing, report generation, ad-hoc analyses).
 
 ---
 
@@ -49,9 +50,9 @@ Critical paths (data fetching, computations, later order execution) are pure Pyt
 
 **Phase:** 🟡 Sprint 9.5c (Candidate Pipeline MVP), Phase 2 – review fixes deployed, short-term research K1–K4 finished without a usable edge, K5 (stage-2 forward test) deployed but deliberately deferred until after the sprints
 **Current sprint:** 9.5c Phase 2 – S&P 500 survivorship repair **finished 2026-10-17** (code, membership, prices, feature rebuild, analyses re-run; none of the K1/B/D2 conclusions changed), keep data quality stable; K5 collection deferred, F1 composite score open
-**Next step:** keep collecting data on the repaired universe (760 active tickers). Check the log of the next nightly chain (Tue 2026-10-20 04:30 – first chain run on the repaired universe; `/log-check`). The monthly `feature_analysis` was re-run on the repaired data on 2026-10-17 (no significant feature; `short_interest_days_to_cover` shows a consistently negative rank IC, not significant after correction – candidate for F1, [LEARNINGS.md](docs/LEARNINGS.md) 2026-10-17); next regular run 2026-11-01 (watch days-to-cover and the large t-values of the young sources). Check that the `index_sync` of 2026-11-01 changes nothing for the S&P 500, re-run the Sprint 10 readiness in early December (16.10./17.10.: 29/31, GO). Forward testing (K5) waits until after the sprints; F1 composite score open. Backlog: delisting returns ([LEARNINGS.md](docs/LEARNINGS.md) 2026-10-17). Repair details: [runbook + execution log](docs/reports/2026-10-16_sp500_survivorship_inventory.md), section 8; history: [SESSION_LOG.md](docs/SESSION_LOG.md), Session 34
-**Last updated:** 17 October 2026 (S&P 500 survivorship repair finished: feature rebuild done, `d03955c` deployed, analyses and monthly `feature_analysis` re-run on the repaired data)
-**Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `f92fb28` (deployed 17 October 2026 17:22 via `alpaca-ops deploy`; includes `d03955c`), Alembic revision `036`, 26 jobs
+**Next step:** keep collecting data on the repaired universe (760 active tickers). Check the log of the next nightly chain (Tue 2026-10-20 04:30 – first chain run on the repaired universe; `/log-check`). The monthly `feature_analysis` was re-run on the repaired data on 2026-10-17 (no significant feature; `short_interest_days_to_cover` shows a consistently negative rank IC, not significant after correction – candidate for F1, [LEARNINGS.md](docs/LEARNINGS.md) 2026-10-17); next regular run 2026-11-01 (watch days-to-cover and the large t-values of the young sources). Check that the `index_sync` of 2026-11-01 changes nothing for the S&P 500, re-run the Sprint 10 readiness in early December (16.10./17.10.: 29/31, GO). **Planned next (scope decision 2026-10-17, plan follows):** make the context pack, the 14-day barrier label and K5 strategy-neutral (forecast of 5d/20d/60d returns instead of barrier trades) – [ROADMAP.md](docs/ROADMAP.md) "Prognose-Ziel neutral". Forward testing (K5) waits until after the sprints; F1 composite score open. Backlog: delisting returns ([LEARNINGS.md](docs/LEARNINGS.md) 2026-10-17). Repair details: [runbook + execution log](docs/reports/2026-10-16_sp500_survivorship_inventory.md), section 8; history: [SESSION_LOG.md](docs/SESSION_LOG.md), Session 34
+**Last updated:** 17 October 2026 (evening: scope clarified – Alpaca-Broker forecasts, a separate bot trades; the trailing-stop label of `608674c` removed again via migration 038, model target `return_60d`; commit and deploy pending)
+**Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `608674c` (deployed 17 October 2026 19:03 via `alpaca-ops deploy`), Alembic revision `037`, 26 jobs; **038 (drops the 037 trailing-label columns) pending deploy**
 
 See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 
@@ -65,14 +66,14 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 | **Backend API** | FastAPI (same process as APScheduler) |
 | **Frontend** | Vite + React SPA (Stitch "Precision Architect" Design) |
 | **ORM** | SQLAlchemy 2.0 |
-| **Migrations** | Alembic (001–037) |
+| **Migrations** | Alembic (001–038) |
 | **Database** | PostgreSQL 18 (`postgresql18-alpaca`, 192.168.1.93:5435, DB: `broker_data`, schema: `signals`) |
 | **Package managers** | uv (Python), npm (frontend) |
 | **Scheduler** | APScheduler, 26 jobs (`scheduler/setup.py`): 13 daily (collectors, `log_retention`, `nightly_chain` 04:30), 7 weekly (incl. `data_retention`, FINRA `short_interest_positions_collector`, `universe_validation`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps run by `nightly_chain` |
 | **Price data** | Alpaca Market Data API, **SIP feed** (`ALPACA_DATA_FEED`, default `sip`; production logs show `feed=sip`), automatic IEX fallback marks the run `partial` |
 | **News sentiment** | Alpaca News API + ProsusAI/finbert (local CPU inference) |
 | **Universe** | 760 active tickers (2026-10-17, incl. reactivated BF.B and the onboarded current members SKYD/TWLO/VYLR; S&P 500 + Nasdaq 100 + ARK + benchmark/sector ETFs, other ETFs filtered via blacklist, never a current index member); features use the point-in-time universe |
-| **Tests** | 1454 tests, none needs a database (2026-10-17); run with `uv run pytest` |
+| **Tests** | 1407 tests, none needs a database (2026-10-17); run with `uv run pytest` |
 | **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090, runs as `99:100`) |
 | **Broker (later)** | Alpaca Paper Trading (NEVER live!) |
 | **Version control** | Git, [GitHub](https://github.com/sebastianganser/Alpaca-Broker) |
@@ -88,7 +89,7 @@ Dev machine: Windows 11, working directory = project root. The Bash tool is Git 
 | Lint | `uv run ruff check src tests` – ≈154 pre-existing findings (mostly E501): do not mass-fix, keep new code clean |
 | Frontend | `cd frontend && npm run dev` · `npm run build` (`tsc -b` + vite) · `npm run lint` |
 | Run the app | `uv run python -m trading_signals.main` – needs the DB from `.env`. The local `.env` points at the **production** DB and the app starts the scheduler + startup catch-up → do not start it locally without Sebastian's OK |
-| Migrations | `src/alembic/versions/` (001–037), applied by the container entrypoint on every start (fails hard). Do not run `alembic upgrade` against the local `.env`. A new migration is a new file `038_<name>.py` with `down_revision = "037"` ([DATABASE.md](docs/DATABASE.md)) |
+| Migrations | `src/alembic/versions/` (001–038), applied by the container entrypoint on every start (fails hard). Do not run `alembic upgrade` against the local `.env`. A new migration is a new file `039_<name>.py` with `down_revision = "038"` ([DATABASE.md](docs/DATABASE.md)) |
 | Test migrations on a fresh DB | Docker Desktop: `docker run -d --rm --name alpaca-migtest -e POSTGRES_USER=migtest -e POSTGRES_PASSWORD=migtest -e POSTGRES_DB=broker_data -p 127.0.0.1:55435:5432 postgres:18`, then with `DB_HOST=127.0.0.1 DB_PORT=55435 DB_NAME=broker_data DB_USER=migtest DB_PASSWORD=migtest` (set **all** `DB_*` – `.env` points at production): `.venv/Scripts/alembic.exe upgrade head` and `.venv/Scripts/alembic.exe check` (must print "No new upgrade operations detected."), finally `docker rm -f alpaca-migtest` |
 
 **Production checks (read-only – the primary text channels):**
@@ -148,7 +149,7 @@ Each item is backed by `docs/DECISIONS_*.md`, `docs/LEARNINGS.md` or the code.
 - **Unit tests never open a DB session** (DECISIONS_ARCHITECTURE 2026-10-15). Code that calls `get_session()` internally – e.g. `NewTickerOnboarder` inside `PoliticianTradesCollector.store()` – must be patched (`patch("trading_signals.universe.onboarder.NewTickerOnboarder")`), otherwise the test talks to the production DB. Prove isolation with the unreachable-DB run above.
 
 **Operations**
-- **Migrations:** never change what an applied migration does (production is at 037) – schema changes go into a new migration. The only allowed edit of an applied migration (001–037) is making a migration idempotent so a fresh DB replays cleanly (precedent: 025, 2026-10-16 – 024 had been extended after production applied it). Test every migration on a fresh DB (command above) before deploying – a failing migration sends the container into a restart loop. The ORM must mirror the migrated schema: every schema change = new migration + matching ORM change in one commit, `alembic check` clean.
+- **Migrations:** never change what an applied migration does (production is at 037, 038 pending deploy) – schema changes go into a new migration. The only allowed edit of an applied migration (001–037) is making a migration idempotent so a fresh DB replays cleanly (precedent: 025, 2026-10-16 – 024 had been extended after production applied it). Test every migration on a fresh DB (command above) before deploying – a failing migration sends the container into a restart loop. The ORM must mirror the migrated schema: every schema change = new migration + matching ORM change in one commit, `alembic check` clean.
 - **Container user `99:100`:** never `docker exec -u root` (root-owned files in `context_packs/` cannot be overwritten → `PermissionError`, LEARNINGS 2026-10-15); `/mnt/user/Workfiles/AlpacaBroker` must be owned by `99:100`.
 - **Night window:** collectors 22:30–~03:00, `nightly_chain` 04:30 ([SCHEDULER.md](docs/SCHEDULER.md)). No deploy/restart between 22:15 and 05:15 or while any job has `is_running: true` (a restart kills runs; they are marked stale on the next start). No manual writes to `feature_snapshots` during the chain (04:30–05:00, deadlock risk).
 - **Expected states:** weekend/holiday → `nightly_chain` `skipped` ("no new session"); IEX fallback or stale non-critical chain inputs → `partial`; critical input (prices stale, or < 80 % price coverage of the session vs. the max of the last 5 sessions) → chain `failed`, features + context pack skipped, notes carry the repair hint; earlier sessions with missing snapshots are rebuilt automatically by the next chain runs once their prices are complete (`catch-up: <date>=success|pending|failed`, runs on already processed targets are `catch-up only`); `row_count = -1` in `table_stats` is a bug sentinel. After a deploy hard-reload the browser (Ctrl+F5) before debugging the UI.
