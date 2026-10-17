@@ -282,7 +282,7 @@ full history under the new symbol), so old symbols (FB, BK, ...) must **not** be
 
 ## 8. Repair runbook
 
-Code written 2026-10-16; steps 2a and 2b ran against production on 2026-10-17 and step 3 has been running since 09:53 (see [Execution log 2026-10-17](#execution-log-2026-10-17) at the end of this section). Tested with unit tests (mocked HTTP, no DB) and end to end on a
+Code written 2026-10-16; steps 2a, 2b, 3 and 8 ran against production on 2026-10-17 (see [Execution log 2026-10-17](#execution-log-2026-10-17) at the end of this section) - the repair is complete. Tested with unit tests (mocked HTTP, no DB) and end to end on a
 throwaway Postgres 18 (all 36 migrations, synthetic pre-repair state that reproduces the inventory numbers: 416/426/441/456/472/490 members
 at the year starts, live read-only Wikipedia and Alpaca calls). The numbers below are derived from this inventory and that
 test; **the dry run on production is authoritative** - compare it with this table before every `--apply`.
@@ -347,7 +347,7 @@ than 1 must be understood before `--apply` (the run refuses more than `--max-del
 | PARA | 300 price rows deleted (299 dated >= 2025-08-08 plus the foreign 2025-08-07), about 299 indicator rows deleted, 965 Paramount rows written (close 9.44-36.23), universe row "Paramount Global (Class B)" inactive; other tables only counted |
 | Indicators | recomputed for every ticker that received rows plus PARA (about 70 tickers, roughly 39,000 rows) |
 
-**3 - feature rebuild**: +50,532 ticker-day rows (about 677,300 snapshots in total), 1,242 of 1,265 dates change (`breadth_*` and the new rows); the new
+**3 - feature rebuild** (expected; actual result: +49,541 rows, 676,953 snapshots, see the execution log): +50,532 ticker-day rows (about 677,300 snapshots in total), 1,242 of 1,265 dates change (`breadth_*` and the new rows); the new
 delisted tickers have 12 of 108 feature columns empty (13F, earnings, sector-relative, `st_earnings_reaction`), like ATVI today.
 
 ### Verification
@@ -403,7 +403,7 @@ additions or removals there means the Wikipedia list changed in between.
 
 ### Execution log 2026-10-17
 
-Deploys: `771ab1d` 09:25-09:29 (step 1 code), `8de96a1` 09:42-09:44 (`--add-current-members`, index-member guard in `apply_sector_records`). `d03955c` (same guard in `NewTickerOnboarder`, benchmark ETFs never deactivated) is pushed but not deployed. Backups are in `/mnt/user/Workfiles/AlpacaBroker/ops/` (share: `\\HOMENAS\Workfiles\AlpacaBroker\ops\`).
+Deploys: `771ab1d` 09:25-09:29 (step 1 code), `8de96a1` 09:42-09:44 (`--add-current-members`, index-member guard in `apply_sector_records`). `d03955c` (same guard in `NewTickerOnboarder`, benchmark ETFs never deactivated) was deployed with `f92fb28` at 17:20-17:22 (26 jobs, Alembic `036`). Backups are in `/mnt/user/Workfiles/AlpacaBroker/ops/` (share: `\\HOMENAS\Workfiles\AlpacaBroker\ops\`).
 
 | Step | Time | Result |
 |---|---|---|
@@ -413,7 +413,9 @@ Deploys: `771ab1d` 09:25-09:29 (step 1 code), `8de96a1` 09:42-09:44 (`--add-curr
 | 2b dry run `--fix-para --add-current-members` | after 2a | universe INSERT 71 (68 inactive exits + SKYD, TWLO, VYLR active), REACTIVATE BF.B; prices 43,530 rows for 76 tickers; PARA 301 Banzai rows to delete, 965 Paramount rows to write; indicators for 76 tickers |
 | 2b `--apply` | 09:51 (Sebastian's explicit OK) | `STEP universe: 71 rows inserted, 1 reactivated, 1 blacklist rows removed`; `STEP fix-para: prices_deleted 301, ta_deleted 301, prices_written 965`; `STEP prices: 43530 rows upserted for 75 tickers`; `STEP technical indicators: 76 tickers, 44405 rows, 0 errors`. Backups (all `_20261017_095146.csv`): `ticker_blacklist_reactivated`, `para_prices_daily`, `para_technical_indicators`, `para_universe` |
 | 2a + 2b idempotency dry runs (runbook steps 3 and 6) | 10:13 | `rebuild_sp500_membership.py`: `unchanged 610, INSERT 0, UPDATE 0, DELETE 0`, all year starts and all 1,266 sessions 503-506; `onboard_removed_members.py --fix-para --add-current-members`: universe INSERT 0, no reactivation, prices `rows to write 0` (only the 16 tickers with the 37 known tail gaps left in the plan), PARA `already fixed` (965 rows, 0 with close > 1,000), indicators for 0 tickers. AVB is the 76th price-plan ticker with `write 0` (hence "75 tickers" in the 2b `STEP prices` line); PARA's 964 pre-exit indicator rows were recomputed in 2b (max SMA20 35.09) |
-| 3 | started 09:53, running | `alpaca-ops run-bg scripts/repair/features_rebuild.py --apply --skip-ta --skip-clusters`; window 2021-10-01 to 2026-10-16 (1,266 sessions), first session 527 tickers, about 15 s per session = about 5.3 h for the feature step, then targets; before: 627,412 `feature_snapshots`; progress: `alpaca-ops run-log` |
+| 3 | 09:53-17:13, exit code 0 | `alpaca-ops run-bg scripts/repair/features_rebuild.py --apply --skip-ta --skip-clusters`; window 2021-10-01 to 2026-10-16 (1,266 sessions), first session 527 tickers; feature step until about 17:09 (about 20 s per session, not the estimated 15 s), targets for 768 tickers 17:09-17:13, about 7.3 h in total. `feature_snapshots` **676,953** rows (before 627,412, +49,541; the runbook expected about 677,300), 1,266 sessions 2021-10-01..2026-10-16, all `FEATURE_VERSION` 2026.10-3. Target coverage: `return_1d` 675,156, `return_20d` 661,453, `return_barrier_14d` 665,773 of 676,953 |
+| deploy `f92fb28` | 17:20-17:22 | `alpaca-ops deploy`; contains `d03955c` (index-member guard in the onboarder, benchmark ETFs stay active); 26 jobs, Alembic `036` |
+| 8 | analyses re-run on the repaired data (read-only, `alpaca-ops run-bg ... --out /mnt/user/Workfiles/AlpacaBroker/ops/reports_20261017`) | Reports: [event study index additions](2026-10-17_event_study_index_add.md) (110 labelled events, difference to the universe -0.320 %, before -0.321 %), [walk-forward hit model](2026-10-17_hit_model_walkforward.md) (557,275 snapshots, holdout AUC logit 0.511 / gbm 0.499, holdout 954 trades, difference +0.014 % n.s., still not passed), [barrier backtest](2026-10-17_barrier_backtest.md) (557,166 universe trades, no significantly positive net return, score approx. random); Sprint 10 readiness 29/31 GO (ML window 568,079 snapshots, 752 tickers). The 2026-10-06 reports are the pre-repair comparison. **Not yet re-run:** the monthly `feature_analysis` (`POST /api/v1/analysis/trigger` writes analysis results to the DB) - waits for Sebastian's OK, otherwise it runs on 2026-11-01 |
 
 **Differences to the expected numbers above**
 
@@ -421,6 +423,8 @@ Deploys: `771ab1d` 09:25-09:29 (step 1 code), `8de96a1` 09:42-09:44 (`--add-curr
 * Price rows 43,530 (plus 965 PARA = 44,495 `alpaca_backfill` rows) instead of about 40,100: the 68 exits gave exactly the expected 39,130; on top came BF.B 1,266, TWLO 1,266 (full history as warm-up for a new active ticker), SKYD 301, VYLR 12 and 1,555 IEX-to-SIP overwrites (ANSS 950, ATVI 512, XLNX 93). The dry run planned 76 tickers, `--apply` reported rows upserted for 75.
 * PARA: 301 rows deleted (300 dated >= 2025-08-08 plus the foreign 2025-08-07 row; indicator rows 301 as well) instead of about 300/299; 965 Paramount rows as expected.
 * Tail gaps as expected: 16 tickers, 37 member-sessions without a bar.
+* Snapshots +49,541 (676,953 in total) instead of the expected +50,532 (about 677,300): the difference of 991 rows was not analysed; coverage of the point-in-time members is complete (see "Verified afterwards").
+* Feature step about 20 s per session instead of the estimated 15 s (about 7.3 h in total instead of 5.3 h + targets).
 
 **Verified afterwards (read-only SQL)**
 
@@ -430,3 +434,5 @@ Deploys: `771ab1d` 09:25-09:29 (step 1 code), `8de96a1` 09:42-09:44 (`--add-curr
 * BF.B: active, not blacklisted, 1,266 price rows up to 2026-10-16, 1,265 indicator rows.
 * Active universe: 760 (757 - PARA + SKYD/TWLO/VYLR + BF.B).
 * On 2022-01-03 all 505 point-in-time members have a price row; the only member-sessions without a price are the 37 expected tail gaps.
+* After step 3 (read-only SQL): every point-in-time S&P 500 member has a `feature_snapshots` row on every session (0 member-sessions missing); on 2022-01-03 505 members have a snapshot (runbook expectation). BF.B: 1,266 snapshots with price features (`rsi_14` 1,265) and targets (`return_20d` 1,246). PARA: 966 snapshots 2021-10-01..2025-08-07. Exits such as ATVI, FRC, SIVB and TWTR have snapshots up to their last member day.
+* Known limit (no delisting returns): for abruptly delisted tickers (SIVB, FRC) the targets of roughly the last 20 sessions are NULL because no later price exists ([LEARNINGS.md](../LEARNINGS.md) 2026-10-17).

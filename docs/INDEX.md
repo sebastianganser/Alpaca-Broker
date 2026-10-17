@@ -3,7 +3,7 @@
 > Central navigator for all project documentation.
 > Start here to find the right document for your question.
 
-**Last updated:** 17 October 2026 (S&P 500 survivorship repair runbook now carries the execution log of 2026-10-17)
+**Last updated:** 17 October 2026 (S&P 500 survivorship repair finished; three re-run reports of 2026-10-17 added)
 
 ---
 
@@ -83,17 +83,20 @@
 | [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) | Short-term candidates: barrier evaluation, pre-registered steps A–D, stage-1 risk pre-filter, stage-2 forward test (§7.7) | Active (K5 deferred until after the sprints) |
 | [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) | File format `decisions.yaml` written by the analysis skill, read by `stage2_review` | Active |
 
-### Reports (`docs/reports/`, generated 2026-10-06 and 2026-10-16)
+### Reports (`docs/reports/`, generated 2026-10-06, 2026-10-16 and 2026-10-17)
 
 | Document | Content |
 |---|---|
-| [reports/2026-10-06_hit_model_walkforward.md](reports/2026-10-06_hit_model_walkforward.md) | Step B: walk-forward hit-probability model (failed, AUC ≈ 0.50) |
+| [reports/2026-10-06_hit_model_walkforward.md](reports/2026-10-06_hit_model_walkforward.md) | Step B: walk-forward hit-probability model (failed, AUC ≈ 0.50); pre-repair version |
 | [reports/2026-10-06_event_study_buyback.md](reports/2026-10-06_event_study_buyback.md) | Step D1: 8-K buyback authorizations (failed) |
-| [reports/2026-10-06_event_study_index_add.md](reports/2026-10-06_event_study_index_add.md) | Step D2: index additions (exploratory hint) |
+| [reports/2026-10-06_event_study_index_add.md](reports/2026-10-06_event_study_index_add.md) | Step D2: index additions (exploratory hint); pre-repair version |
 | [reports/2026-10-06_buyback_audit.md](reports/2026-10-06_buyback_audit.md) | Audit sample of the buyback sentence classifier |
 | [reports/2026-10-06_buyback_events.csv](reports/2026-10-06_buyback_events.csv) | Raw event list of the buyback study (data file) |
 | [reports/2026-10-16_sp500_survivorship_inventory.md](reports/2026-10-16_sp500_survivorship_inventory.md) | S&P 500 survivorship inventory (read-only): root cause, reconciliation of Wikipedia vs GitHub, state per category, effort estimate, open questions; section 8 = repair runbook with expected numbers, verification SQL, rollback and the execution log of 2026-10-17 |
 | [reports/2026-10-16_sp500_removals.csv](reports/2026-10-16_sp500_removals.csv) | One row per S&P 500 removal/rename 2021-01-01 … 2026-10-16 (data file of the inventory) |
+| [reports/2026-10-17_hit_model_walkforward.md](reports/2026-10-17_hit_model_walkforward.md) | Step B re-run on the repaired data (557,275 snapshots): still not passed, holdout AUC ≈ 0.50 |
+| [reports/2026-10-17_event_study_index_add.md](reports/2026-10-17_event_study_index_add.md) | Step D2 re-run on the repaired data: 110 events, −0.320 % vs. universe (unchanged) |
+| [reports/2026-10-17_barrier_backtest.md](reports/2026-10-17_barrier_backtest.md) | K1 barrier backtest of the current context-pack score on the repaired data (1,060 days): approx. random, no significantly positive net return |
 
 ### Other READMEs
 
