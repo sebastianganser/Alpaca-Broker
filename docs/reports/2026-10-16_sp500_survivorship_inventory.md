@@ -290,7 +290,7 @@ test; **the dry run on production is authoritative** - compare it with this tabl
 | Step | Script | What it does |
 |---|---|---|
 | 2a | `scripts/repair/rebuild_sp500_membership.py` | `sp500` rows of `index_membership` = ground truth (current constituents + change table since 2021-01-01 + manual PARA/SKYD events); renames = one interval under the current symbol |
-| 2b | `scripts/repair/onboard_removed_members.py` | inactive `universe` rows, price backfill from Alpaca (`source='alpaca_backfill'`), technical indicators; `--fix-para` repairs the PARA/Banzai collision |
+| 2b | `scripts/repair/onboard_removed_members.py` | inactive `universe` rows, price backfill from Alpaca (`source='alpaca_backfill'`), technical indicators; `--fix-para` repairs the PARA/Banzai collision; `--add-current-members` also inserts missing current members (active) and reactivates inactive ones (BF.B) |
 | 3 | `scripts/repair/features_rebuild.py` (existing) | full feature rebuild on the corrected point-in-time universe |
 
 Shared helpers: `src/trading_signals/utils/repair_support.py` (resolved DB target, read-only dry-run session, verified CSV backup).
@@ -312,10 +312,10 @@ per logical step with `--apply`, and is idempotent (a second `--apply` changes n
 | 1 | `rebuild_sp500_membership.py` (dry run) | any time before 22:15 | numbers in 2a below, `database target` = `192.168.1.93:5435/broker_data` |
 | 2 | `rebuild_sp500_membership.py --apply` | 05:15-22:15 | seconds; prints the backup path (`/mnt/user/Workfiles/AlpacaBroker/ops/sp500_membership_backup_<ts>.csv`) |
 | 3 | `rebuild_sp500_membership.py` (dry run) | | `unchanged 610, INSERT 0, UPDATE 0, DELETE 0` |
-| 4 | `onboard_removed_members.py --fix-para` (dry run; add `--add-current-members` if section [1] lists missing current members) | | numbers in 2b below; about 1-3 min (about 65 Alpaca requests) |
-| 5 | same command with `--apply` | 05:15-22:15 | minutes; four `STEP` lines; CSV backups of the deleted PARA rows |
+| 4 | `onboard_removed_members.py --fix-para` (dry run; add `--add-current-members` if section [1] lists missing or inactive current members) | | numbers in 2b below; about 1-3 min (about 65 Alpaca requests) |
+| 5 | same command with `--apply` | 05:15-22:15 | minutes; four `STEP` lines; CSV backups of the deleted PARA rows and the removed blacklist rows |
 | 6 | same command as dry run | | every `write` is 0, PARA `already fixed`, 0 tickers for indicators |
-| 7 | `features_rebuild.py --apply --skip-ta --skip-clusters` (indicators of the new tickers were computed in step 5; insider clusters do not read the membership) | start 05:15-09:00 (4-12 h) | resumable: `--start <last committed date>`; do not start it while the chain runs |
+| 7 | `alpaca-ops run-bg scripts/repair/features_rebuild.py --apply --skip-ta --skip-clusters` (detached - `run` would end with the popup; indicators of the new tickers were computed in step 5; insider clusters do not read the membership) | start 05:15-09:00 on a weekday (4-12 h), any daytime on Saturday/Sunday (no chain run until Tuesday 04:30) | progress: `alpaca-ops run-log`; resumable: `--start <last committed date>`; do not start it while the chain runs |
 | 8 | re-run the analyses that read `index_membership` / `feature_snapshots`: `feature_analysis` (`POST /analysis/trigger`), `scripts/analysis/event_study.py` (index additions: BE/P/ILMN dates move by 10 days, SW is no addition any more), `walkforward_hit_model.py`, `backtest_barrier.py`, `sprint10_readiness.py` | after 7 | results change, see section 1 |
 
 ### Expected numbers
@@ -340,6 +340,7 @@ than 1 must be understood before `--apply` (the run refuses more than `--max-del
 | Item | Expected |
 |---|---|
 | Universe | INSERT 68 inactive rows (`added_by='sp500_history'`, names from the change table or the Alpaca asset); current members missing in the universe (SKYD, possibly TWLO, VYLR) are only listed unless `--add-current-members` (then inserted ACTIVE and priced) |
+| Reactivation | BF.B (false `MUTUALFUND` blacklisting 2026-04-15) - only with `--add-current-members` (without it section [1] lists it as a hint): `universe.is_active` -> true, its `ticker_blacklist` row removed after a CSV backup (`ticker_blacklist_reactivated_<ts>.csv`); `STEP universe: 68 rows inserted, 1 reactivated, 1 blacklist rows removed` (plus the inserted current members in the first number). BF.B has no price rows and is in the price plan with or without the flag (the plan ignores `is_active` and the blacklist), so it is priced and gets indicators like the others. A second run plans 0 reactivations |
 | Price plan | about 72 tickers: the 68 absent ones plus ANSS, ATVI, AVB, XLNX (1-2 tail sessions missing; `write 0` unless their rows come from the old IEX backfill) |
 | Bars | about 39,130 for the 68 (inventory 38,916 plus 214 warm-up bars before the membership start of MOH 104, SBNY 55, SEDG 55) plus 965 for PARA = about 40,100 rows (+4.2 % of 954,558) |
 | Gaps | no head and no internal gaps; tail gaps (delisted before the index removal, sessions with no bar to fetch): CTLT 3, CTXS 1, DAY 3, FRC 3, HES 3, HOLX 2, INFO 2, JNPR 4, MRO 2, PXD 3, SIVB 3, TWTR 2 (and 1-2 for ANSS, ATVI, AVB, XLNX) |
@@ -361,6 +362,8 @@ where index_name = 'sp500' and ticker in ('PSKY','SKYD','PARA','SW','TAP','ILMN'
 -- after 2b
 select count(*), count(*) filter (where is_active) from signals.universe where added_by = 'sp500_history';   -- 68 / 0 (+ current members with the flag)
 select count(*), count(distinct ticker) from signals.prices_daily where source = 'alpaca_backfill';          -- about 40,100 / about 69
+select is_active from signals.universe where ticker = 'BF.B';                                               -- true (with --add-current-members)
+select count(*) from signals.ticker_blacklist where ticker = 'BF.B';                                        -- 0
 select ticker, company_name, is_active, sector, cusip from signals.universe where ticker = 'PARA';          -- Paramount Global (Class B), false, null, null
 select count(*), min(trade_date), max(trade_date), max(close) from signals.prices_daily where ticker = 'PARA'; -- 965, 2021-10-01, 2025-08-06, ~36
 select count(*) from signals.technical_indicators where ticker = 'PARA' and trade_date >= '2025-08-08';       -- 0
@@ -382,6 +385,7 @@ additions or removals there means the Wikipedia list changed in between.
   `delete from signals.prices_daily where source = 'alpaca_backfill'` (note: this also removes the repaired Paramount series), `delete from signals.universe where added_by = 'sp500_history'`.
   The deleted PARA rows and the old PARA universe row are in `para_prices_daily_<ts>.csv`, `para_technical_indicators_<ts>.csv`, `para_universe_<ts>.csv` in the backup directory
   (Banzai's series; only needed to undo the fix, the data are wrong for PARA anyway).
+  The removed `ticker_blacklist` row of BF.B is in `ticker_blacklist_reactivated_<ts>.csv` in the same directory; the reactivation itself is not rolled back (BF.B is a current S&P 500 member).
 * **3**: the feature rebuild replaces rows day by day; there is no backup (no database backups by decision 2026-10-05). Re-running it is the recovery.
 
 ### Deviations from the brief and findings during the test
@@ -395,3 +399,4 @@ additions or removals there means the Wikipedia list changed in between.
 3. A rename is one interval under the current symbol also for DAY (the inventory proposed CDAY + DAY) and for FBHS (keyed FBIN); `universe` gets no CDAY/VIAC rows.
 4. Intervals of the 15 exits before the window are inserted (they only matter for the 2021 year-start count).
 5. The price backfill requests `[data_start_date(), last member day]` for every ticker, i.e. also the warm-up before a late membership start (needed for SMA200/RSI).
+6. BF.B (Brown-Forman Class B, current member) is inactive in `universe` and in `ticker_blacklist` as `MUTUALFUND`/`manual_enrichment` (2026-04-15): the sector enrichment asked Yahoo for the raw symbol `BF.B` before `to_yahoo_symbol` mapped it to `BF-B`. `--add-current-members` reactivates it and drops the blacklist row; the sector enrichment no longer blacklists tickers with an open `index_membership` interval, so the next `index_sync` (which enriches active tickers without a sector) cannot undo it. It is the only false positive in the blacklist.

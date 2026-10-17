@@ -2,7 +2,8 @@
 
 Fetches ``sector``/``industry``/``quoteType`` from yfinance and applies them
 to the universe. Non-equity tickers (ETFs, funds, …) are blacklisted and
-deactivated ("learned ETF filter").
+deactivated ("learned ETF filter") -- except current index members, which are
+equities by definition (see :func:`apply_sector_records`).
 """
 
 from __future__ import annotations
@@ -27,33 +28,82 @@ class SectorEnrichmentResult:
     failed: int = 0  # tickers without any yfinance result
 
 
+def open_index_members(session, tickers: list[str]) -> set[str]:
+    """Tickers of ``tickers`` that are current members of any index.
+
+    A current member has an ``index_membership`` interval that is still open
+    (``valid_to IS NULL``), whatever the index (S&P 500, Nasdaq 100). One query.
+    """
+    from sqlalchemy import select
+
+    from trading_signals.db.models.index_membership import IndexMembership
+
+    if not tickers:
+        return set()
+    stmt = (
+        select(IndexMembership.ticker)
+        .where(
+            IndexMembership.ticker.in_(tickers),
+            IndexMembership.valid_to.is_(None),
+        )
+        .distinct()
+    )
+    return {row[0] for row in session.execute(stmt).all()}
+
+
 def apply_sector_records(
     session, records: list[dict], source: str
 ) -> SectorEnrichmentResult:
-    """Write fetched sector records to the universe (no commit)."""
+    """Write fetched sector records to the universe (no commit).
+
+    The learned ETF filter never blacklists or deactivates a current index
+    member: membership of the S&P 500 / Nasdaq 100 proves the ticker is an
+    equity, so a non-equity ``quoteType`` is a wrong lookup (BF.B was
+    blacklisted as MUTUALFUND on 2026-04-15 after a lookup with the wrong
+    Yahoo symbol). Such a record is logged and takes the normal sector path.
+    """
     from sqlalchemy import update
 
     from trading_signals.db.models.universe import Universe
     from trading_signals.universe.blacklist import add_to_blacklist
+
+    def is_non_equity(record: dict) -> bool:
+        quote_type = record.get("quote_type") or ""
+        return bool(quote_type) and quote_type.upper() != "EQUITY"
+
+    # One query for the whole call, and only if there is a candidate at all
+    index_members = open_index_members(
+        session, [r["ticker"] for r in records if is_non_equity(r)]
+    )
 
     result = SectorEnrichmentResult()
     for record in records:
         ticker = record["ticker"]
         quote_type = record.get("quote_type") or ""
 
-        # Learned ETF filter: blacklist + deactivate non-equity tickers
-        if quote_type and quote_type.upper() != "EQUITY":
-            add_to_blacklist(session, ticker, quote_type=quote_type, source=source)
-            session.execute(
-                update(Universe)
-                .where(Universe.ticker == ticker)
-                .values(is_active=False)
-            )
-            result.deactivated.append(ticker)
-            logger.warning(
-                f"[{source}] blacklisted + deactivated {ticker}: quoteType={quote_type}"
-            )
-            continue
+        if is_non_equity(record):
+            if ticker in index_members:
+                # Wrong lookup, not a fund: keep the ticker and update its sector
+                logger.warning(
+                    f"[{source}] quoteType={quote_type} for index member {ticker}"
+                    " - not blacklisted"
+                )
+            else:
+                # Learned ETF filter: blacklist + deactivate non-equity tickers
+                add_to_blacklist(
+                    session, ticker, quote_type=quote_type, source=source
+                )
+                session.execute(
+                    update(Universe)
+                    .where(Universe.ticker == ticker)
+                    .values(is_active=False)
+                )
+                result.deactivated.append(ticker)
+                logger.warning(
+                    f"[{source}] blacklisted + deactivated {ticker}: "
+                    f"quoteType={quote_type}"
+                )
+                continue
 
         # Never overwrite existing data with empty values
         if record.get("sector") or record.get("industry"):

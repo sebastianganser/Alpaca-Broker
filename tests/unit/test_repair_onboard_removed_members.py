@@ -4,7 +4,7 @@ import importlib.util
 import io
 import sys
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -15,7 +15,9 @@ import requests
 from sqlalchemy import Select
 from sqlalchemy.dialects import postgresql
 
+from trading_signals.db.models.blacklist import TickerBlacklist
 from trading_signals.universe.ticker_aliases import AliasMap, TickerAlias
+from trading_signals.utils.repair_support import read_csv_backup
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -505,6 +507,196 @@ class TestUniverseInserts:
         session.execute.assert_not_called()
 
 
+# ── Reactivation of inactive current members ─────────────────────────────
+
+BF_B = ob.BlacklistEntry(
+    "BF.B", "MUTUALFUND", "manual_enrichment", "quoteType=MUTUALFUND"
+)
+
+
+def blacklist_row() -> TickerBlacklist:
+    return TickerBlacklist(
+        ticker="BF.B",
+        reason="quoteType=MUTUALFUND",
+        quote_type="MUTUALFUND",
+        source="manual_enrichment",
+        detected_at=datetime(2026, 4, 15, 12, 0, tzinfo=UTC),
+    )
+
+
+class TestUniverseReactivations:
+    INTERVALS = {
+        "BF.B": [(dt("2021-01-01"), None)],  # current member, inactive + blacklisted
+        "AAPL": [(dt("2021-01-01"), None)],  # current member, active
+        "KSU": [(dt("2021-01-01"), dt("2021-12-14"))],  # exit, inactive by design
+        "ILMN": [(dt("2021-01-01"), dt("2024-06-24")), (dt("2026-09-21"), None)],
+        "SKYD": [(dt("2025-08-08"), None)],  # current, not in the universe at all
+    }
+    INACTIVE = {"BF.B", "KSU", "ILMN"}
+
+    def plan(self, add_current=True, inactive=None, blacklist=None):
+        return ob.plan_universe_reactivations(
+            self.INTERVALS,
+            self.INACTIVE if inactive is None else inactive,
+            {"BF.B": BF_B} if blacklist is None else blacklist,
+            add_current,
+        )
+
+    def test_inactive_current_members_are_reactivated_with_the_flag(self):
+        reactivate, hint = self.plan()
+        assert hint == []
+        assert [r.ticker for r in reactivate] == ["BF.B", "ILMN"]  # sorted
+        assert reactivate[0].blacklist == BF_B
+        assert reactivate[1].blacklist is None
+
+    def test_without_the_flag_they_are_only_listed(self):
+        reactivate, hint = self.plan(add_current=False)
+        assert reactivate == []
+        assert [r.ticker for r in hint] == ["BF.B", "ILMN"]
+        assert hint[0].blacklist == BF_B  # the hint carries the blacklist entry
+
+    def test_exits_active_and_absent_tickers_are_left_alone(self):
+        reactivate, _ = self.plan()
+        tickers = {r.ticker for r in reactivate}
+        assert "KSU" not in tickers  # closed interval only: an exit stays inactive
+        assert "AAPL" not in tickers  # already active
+        assert "SKYD" not in tickers  # no universe row: plan_universe_inserts
+
+    def test_a_ticker_with_a_closed_and_an_open_interval_is_current(self):
+        reactivate, _ = self.plan()
+        assert "ILMN" in {r.ticker for r in reactivate}
+
+    def test_second_run_plans_nothing(self):
+        # after --apply BF.B and ILMN are active (and no longer blacklisted)
+        assert self.plan(inactive={"KSU"}, blacklist={}) == ([], [])
+
+    def test_inactive_member_without_blacklist_row_has_no_entry(self):
+        (r,), _ = self.plan(blacklist={}, inactive={"BF.B"})
+        assert r.ticker == "BF.B" and r.blacklist is None
+
+    def test_labels_for_the_report(self):
+        assert ob.Reactivation("BF.B", BF_B).label == (
+            "blacklisted: MUTUALFUND/manual_enrichment"
+        )
+        assert ob.Reactivation("X").label == "not blacklisted"
+        assert ob.BlacklistEntry("X").label == "?/?"
+
+    def test_plan_is_disjoint_from_the_insert_plan(self):
+        # BF.B is in the universe -> no insert; SKYD is missing -> no reactivation
+        inserts, skipped = ob.plan_universe_inserts(
+            self.INTERVALS, {"BF.B", "AAPL", "KSU", "ILMN"}, {}, add_current=True
+        )
+        assert [i.ticker for i in inserts] == ["SKYD"] and skipped == []
+
+
+class TestLoaders:
+    def test_inactive_universe_includes_null_is_active(self):
+        session = MagicMock()
+        session.execute.return_value.all.return_value = [("BF.B",), ("KSU",)]
+        assert ob.load_inactive_universe(session) == {"BF.B", "KSU"}
+        stmt = session.execute.call_args.args[0]
+        assert isinstance(stmt, Select)
+        # NULL counts as inactive, exactly like the update's where clause
+        sql = str(stmt.compile(dialect=postgresql.dialect()))
+        assert "is_active IS NOT true" in sql
+
+    def test_blacklist_is_keyed_by_ticker(self):
+        session = MagicMock()
+        session.execute.return_value = [
+            ("BF.B", "MUTUALFUND", "manual_enrichment", "quoteType=MUTUALFUND")
+        ]
+        assert ob.load_blacklist(session) == {"BF.B": BF_B}
+
+
+class TestReactivateRows:
+    @staticmethod
+    def session(blacklist_rows=(), calls=None):
+        """Selects (the backup) return ``blacklist_rows``; writes report rowcount 1."""
+        session = MagicMock()
+
+        def execute(stmt, *a, **k):
+            if calls is not None:
+                calls.append(type(stmt).__name__)
+            if isinstance(stmt, Select):
+                result = MagicMock()
+                result.scalars.return_value.all.return_value = list(blacklist_rows)
+                return result
+            return MagicMock(rowcount=1)
+
+        session.execute.side_effect = execute
+        return session
+
+    def test_order_backup_update_delete(self, tmp_path):
+        calls: list[str] = []
+        counts = ob.reactivate_universe_rows(
+            self.session([blacklist_row()], calls),
+            [ob.Reactivation("BF.B", BF_B)],
+            str(tmp_path),
+        )
+        assert counts == (1, 1)
+        assert calls == ["Select", "Update", "Delete"]  # backup before any change
+
+    def test_blacklist_rows_are_saved_to_a_verified_csv(self, tmp_path):
+        ob.reactivate_universe_rows(
+            self.session([blacklist_row()]),
+            [ob.Reactivation("BF.B", BF_B)],
+            str(tmp_path),
+        )
+        (path,) = tmp_path.glob("ticker_blacklist_reactivated_*.csv")
+        (saved,) = read_csv_backup(path)
+        assert saved["ticker"] == "BF.B" and saved["quote_type"] == "MUTUALFUND"
+        assert saved["source"] == "manual_enrichment"
+        assert saved["reason"] == "quoteType=MUTUALFUND"
+        assert saved["detected_at"].startswith("2026-04-15")
+
+    def test_statements_only_touch_the_planned_tickers(self, tmp_path):
+        session = self.session([blacklist_row()])
+        ob.reactivate_universe_rows(
+            session,
+            [ob.Reactivation("BF.B", BF_B), ob.Reactivation("ILMN")],
+            str(tmp_path),
+        )
+        update, delete = (
+            c.args[0]
+            for c in session.execute.call_args_list
+            if not isinstance(c.args[0], Select)
+        )
+        up = update.compile(dialect=postgresql.dialect())
+        assert "signals.universe" in str(up)
+        assert up.params["is_active"] is True
+        assert up.params["ticker_1"] == ["BF.B", "ILMN"]
+        # idempotent: rows that are active already are not matched
+        assert "is_active IS NOT true" in str(up)
+        down = delete.compile(dialect=postgresql.dialect())
+        assert "signals.ticker_blacklist" in str(down)
+        assert down.params["ticker_1"] == ["BF.B"]  # ILMN has no blacklist row
+
+    def test_without_blacklist_rows_nothing_is_backed_up_or_deleted(self, tmp_path):
+        calls: list[str] = []
+        counts = ob.reactivate_universe_rows(
+            self.session(calls=calls), [ob.Reactivation("ILMN")], str(tmp_path)
+        )
+        assert counts == (1, 0) and calls == ["Update"]
+        assert list(tmp_path.iterdir()) == []
+
+    def test_nothing_planned_does_not_touch_the_db(self):
+        session = MagicMock()
+        assert ob.reactivate_universe_rows(session, [], "/ops") == (0, 0)
+        session.execute.assert_not_called()
+
+    def test_backup_failure_aborts_before_any_change(self, tmp_path):
+        blocker = tmp_path / "blocker"
+        blocker.write_text("x")
+        calls: list[str] = []
+        with pytest.raises(ob.AbortError, match="--backup-dir"):
+            ob.reactivate_universe_rows(
+                self.session([], calls),
+                [ob.Reactivation("BF.B", BF_B)],
+                str(blocker / "ops"),
+            )
+        assert calls == ["Select"]  # only the read for the backup happened
+
+
 # ── Price plan ───────────────────────────────────────────────────────────
 
 
@@ -989,6 +1181,8 @@ def harness(tmp_path):
         sessions=[],
         intervals={},
         universe=set(),
+        inactive=set(),
+        blacklist={},
         stored_dates={},
         bars={},
         errors=[],
@@ -1020,6 +1214,10 @@ def harness(tmp_path):
         patch.object(ob, "announce_db_target"),
         patch.object(ob, "load_intervals", side_effect=lambda s: state.intervals),
         patch.object(ob, "load_universe", side_effect=lambda s: state.universe),
+        patch.object(
+            ob, "load_inactive_universe", side_effect=lambda s: state.inactive
+        ),
+        patch.object(ob, "load_blacklist", side_effect=lambda s: state.blacklist),
         patch.object(ob, "load_real_dates", side_effect=lambda *a: state.stored_dates),
         patch.object(ob, "load_stored_prices", return_value={}),
         patch.object(ob, "load_para_state", side_effect=lambda s: state.para_state),
@@ -1039,6 +1237,16 @@ def harness(tmp_path):
             side_effect=lambda s, ins: (
                 state.events.append(("universe", len(ins))) or len(ins)
             ),
+        ),
+        patch.object(
+            ob,
+            "reactivate_universe_rows",
+            side_effect=lambda s, rs, d: (
+                state.events.append(("reactivate", [r.ticker for r in rs]))
+                if rs
+                else None
+            )
+            or (len(rs), sum(1 for r in rs if r.blacklist)),
         ),
         patch.object(
             ob,
@@ -1175,6 +1383,92 @@ class TestRun:
         assert ob.main(["--add-current-members"]) == 0
         out = capsys.readouterr().out
         assert "ACTIVE" in out and "1 tickers whose membership sessions" in out
+
+    @staticmethod
+    def bf_b_state(state):
+        """BF.B: current member, inactive and falsely blacklisted, no prices."""
+        state.intervals = {
+            "BF.B": [(dt("2021-01-01"), None)],
+            "KSU": [(dt("2021-01-01"), dt("2021-12-14"))],  # exit, inactive by design
+        }
+        state.universe = {"BF.B", "KSU"}
+        state.inactive = {"BF.B", "KSU"}
+        state.blacklist = {"BF.B": BF_B}
+
+    def test_dry_run_lists_the_reactivation_and_still_prices_the_ticker(
+        self, harness, capsys
+    ):
+        self.bf_b_state(harness)
+        assert ob.main(["--add-current-members"]) == 0
+        out = capsys.readouterr().out
+        assert "REACTIVATE 1 current members" in out
+        assert "    REACTIVATE BF.B (blacklisted: MUTUALFUND/manual_enrichment)" in out
+        assert "KSU (" not in out.split("[2]")[0]  # an exit stays inactive
+        # the price plan looks at neither is_active nor the blacklist
+        assert "BF.B 2021-10-01..2026-10-15" in out.split("[2]")[1]
+        assert harness.events == [] and harness.sessions == [True]
+
+    def test_without_the_flag_the_reactivation_is_only_a_hint(self, harness, capsys):
+        self.bf_b_state(harness)
+        assert ob.main([]) == 0
+        out = capsys.readouterr().out
+        universe = out.split("[2]")[0]
+        assert "REACTIVATE" not in universe
+        assert "1 CURRENT members are INACTIVE" in universe
+        assert "NOT reactivated" in universe
+        assert "BF.B (blacklisted: MUTUALFUND/manual_enrichment)" in universe
+        assert "--add-current-members" in universe
+        assert "BF.B 2021-10-01..2026-10-15" in out.split("[2]")[1]  # still priced
+
+    def test_apply_reactivates_inside_the_universe_step(self, harness, capsys):
+        self.bf_b_state(harness)
+        assert ob.main(["--apply", "--add-current-members"]) == 0
+        # insert + reactivate share the first transaction: one commit after both
+        assert harness.events[:3] == [
+            ("universe", 0), ("reactivate", ["BF.B"]), "commit"
+        ]  # fmt: skip
+        assert (
+            "STEP universe: 0 rows inserted, 1 reactivated, 1 blacklist rows removed"
+            in capsys.readouterr().out
+        )
+
+    def test_apply_without_the_flag_reactivates_nothing(self, harness, capsys):
+        self.bf_b_state(harness)
+        assert ob.main(["--apply"]) == 0
+        assert not any(
+            isinstance(e, tuple) and e[0] == "reactivate" for e in harness.events
+        )
+        assert "STEP universe: 0 rows inserted, 0 reactivated, 0 blacklist" in (
+            capsys.readouterr().out
+        )
+
+    def test_second_run_after_the_reactivation_plans_none(self, harness, capsys):
+        self.bf_b_state(harness)
+        harness.inactive = {"KSU"}  # BF.B is active now ...
+        harness.blacklist = {}  # ... and no longer blacklisted
+        assert ob.main(["--add-current-members"]) == 0
+        out = capsys.readouterr().out
+        assert "REACTIVATE" not in out and "INACTIVE" not in out
+
+    def test_tickers_option_restricts_the_reactivations(self, harness, capsys):
+        self.bf_b_state(harness)
+        harness.intervals["ILMN"] = [(dt("2021-01-01"), None)]
+        harness.universe.add("ILMN")
+        harness.inactive.add("ILMN")
+        assert ob.main(["--add-current-members", "--tickers", "bf.b"]) == 0
+        universe = capsys.readouterr().out.split("[2]")[0]
+        assert "REACTIVATE BF.B" in universe and "ILMN" not in universe
+
+    def test_backup_failure_aborts_the_universe_step_before_the_commit(
+        self, harness, capsys
+    ):
+        self.bf_b_state(harness)
+        with patch.object(
+            ob, "reactivate_universe_rows", side_effect=ob.AbortError("backup failed")
+        ):
+            assert ob.main(["--apply", "--add-current-members"]) == 2
+        assert "ABORT: backup failed" in capsys.readouterr().out
+        assert "commit" not in harness.events  # the step was never committed
 
     def test_para_is_never_part_of_the_regular_price_plan(self, harness, capsys):
         harness.intervals = {"PARA": [(dt("2021-01-01"), dt("2025-08-08"))]}

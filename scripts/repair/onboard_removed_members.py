@@ -9,7 +9,14 @@ ticker with an interval inside the retention window:
    Wikipedia change table or the Alpaca asset). Current members that are missing
    (e.g. TWLO, VYLR, SKYD) are only listed: they must be ACTIVE so that the
    collectors pick them up -- the monthly ``index_sync`` adds them, or pass
-   ``--add-current-members`` to insert them as active rows here.
+   ``--add-current-members`` to insert them as active rows here. The same flag
+   also REACTIVATES current members (open ``sp500`` interval) whose universe row
+   is inactive (``is_active = true``) and removes them from
+   ``signals.ticker_blacklist`` (CSV backup of those rows first). Case in point:
+   BF.B (Brown-Forman Class B) was blacklisted as ``MUTUALFUND`` on 2026-04-15
+   because the sector enrichment asked Yahoo for the raw symbol ``BF.B`` instead
+   of ``BF-B``; it has no price rows at all. Without the flag these members are
+   only listed.
 2. **Prices** -- tickers whose real (non-extrapolated) ``prices_daily`` rows do not
    cover the membership sessions inside the window are downloaded from Alpaca
    with the collector's parameters (``adjustment=all``, feed from
@@ -47,8 +54,9 @@ tables are only counted and printed, never deleted.
 Dry run (default) = read-only DB session (``SET TRANSACTION READ ONLY``) plus the
 read-only Alpaca/Wikipedia GETs needed for the report (``--no-fetch`` skips all
 network access). ``--apply`` writes one transaction per logical step: universe
-rows, PARA fix, price backfill, indicators; each step is idempotent, so an
-interrupted run can simply be repeated.
+rows (inserts, reactivations, blacklist removals), PARA fix, price backfill,
+indicators; each step is idempotent, so an interrupted run can simply be
+repeated.
 
 Usage (inside the container; ``alpaca-ops run`` refuses 22:15-05:15)::
 
@@ -64,7 +72,10 @@ production is authoritative):
 
 * universe: INSERT 68 inactive rows (the exits that are absent today); with
   ``--add-current-members`` also the current members that are missing (SKYD,
-  TWLO, VYLR if not yet there) as ACTIVE rows;
+  TWLO, VYLR if not yet there) as ACTIVE rows, and REACTIVATE 1 row (BF.B, with
+  its false ``MUTUALFUND`` blacklist entry removed; BF.B is priced like the
+  others -- it is in the price plan with or without the flag, because the price
+  plan does not look at ``is_active`` or the blacklist);
 * prices: ~72 tickers in the table (68 absent + ANSS, ATVI, AVB, XLNX which miss
   1-2 tail sessions; their ``write`` is 0 unless the stored rows came from the old
   IEX backfill), about 39,130 bars to write for the 68 (inventory 38,916 + 214
@@ -77,16 +88,20 @@ production is authoritative):
   "Paramount Global (Class B)", inactive; rows in other tables are only counted;
 * technical indicators for ~70 tickers (every ticker with written rows + PARA).
 
-Verify: dry run again (every ticker ``write 0``, PARA ``already fixed``, 0 tickers
-for TA), and ``select count(*), count(distinct ticker) from signals.prices_daily
-where source = 'alpaca_backfill'``; ``select * from signals.universe where ticker
-= 'PARA'``; no PARA price/indicator row from 2025-08-08 on.
+Verify: dry run again (every ticker ``write 0``, PARA ``already fixed``, 0
+reactivations, 0 tickers for TA), and ``select count(*), count(distinct ticker)
+from signals.prices_daily where source = 'alpaca_backfill'``; ``select * from
+signals.universe where ticker = 'PARA'``; no PARA price/indicator row from
+2025-08-08 on; ``select is_active from signals.universe where ticker = 'BF.B'`` is
+true and ``select * from signals.ticker_blacklist where ticker = 'BF.B'`` is empty.
 
 Rollback: the onboarded rows are new (``universe.added_by='sp500_history'``,
 ``prices_daily.source='alpaca_backfill'``) and can be deleted by those markers
 (their indicator rows by ticker); the deleted PARA rows and the old PARA universe
 row are saved as CSV in ``--backup-dir`` (default
-/mnt/user/Workfiles/AlpacaBroker/ops).
+/mnt/user/Workfiles/AlpacaBroker/ops), and so are the removed blacklist rows
+(``ticker_blacklist_reactivated_<ts>.csv``). The reactivations themselves are
+deliberately not rolled back (the tickers are current index members).
 """
 
 from __future__ import annotations
@@ -522,6 +537,33 @@ class UniverseInsert:
     exchange: str | None = None
 
 
+@dataclass(frozen=True)
+class BlacklistEntry:
+    """A ``signals.ticker_blacklist`` row (what the dry run shows)."""
+
+    ticker: str
+    quote_type: str | None = None
+    source: str | None = None
+    reason: str | None = None
+
+    @property
+    def label(self) -> str:
+        return f"{self.quote_type or '?'}/{self.source or '?'}"
+
+
+@dataclass(frozen=True)
+class Reactivation:
+    """A current index member whose universe row is inactive."""
+
+    ticker: str
+    blacklist: BlacklistEntry | None = None
+
+    @property
+    def label(self) -> str:
+        entry = self.blacklist
+        return f"blacklisted: {entry.label}" if entry else "not blacklisted"
+
+
 @dataclass
 class TickerPlan:
     ticker: str
@@ -569,6 +611,31 @@ def plan_universe_inserts(
             )
         )
     return inserts, skipped_current
+
+
+def plan_universe_reactivations(
+    intervals: Intervals,
+    inactive: set[str],
+    blacklist: dict[str, BlacklistEntry],
+    add_current: bool = False,
+) -> tuple[list[Reactivation], list[Reactivation]]:
+    """Current members that sit inactive in the universe: ``(reactivate, hint only)``.
+
+    A current member has an open interval (``valid_to`` is ``None``); an inactive
+    one has a universe row with ``is_active`` false/NULL (``inactive``). Nobody
+    collects such a ticker, e.g. BF.B after its false ``MUTUALFUND`` blacklisting.
+    Tickers with closed intervals only (the exits) stay inactive. With
+    ``add_current`` they are reactivated (and their blacklist entry, if any, is
+    removed by :func:`reactivate_universe_rows`), otherwise they are only listed.
+    Tickers that are not in the universe at all are the business of
+    :func:`plan_universe_inserts`.
+    """
+    found = [
+        Reactivation(ticker, blacklist.get(ticker))
+        for ticker in sorted(intervals)
+        if ticker in inactive and any(iv[1] is None for iv in intervals[ticker])
+    ]
+    return (found, []) if add_current else ([], found)
 
 
 def plan_prices(
@@ -865,6 +932,26 @@ def load_universe(session) -> set[str]:
     return {r[0] for r in session.execute(select(Universe.ticker)).all()}
 
 
+def load_inactive_universe(session) -> set[str]:
+    """Universe tickers that are not active (``is_active`` false or NULL)."""
+    from sqlalchemy import select
+
+    from trading_signals.db.models.universe import Universe
+
+    stmt = select(Universe.ticker).where(Universe.is_active.is_not(True))
+    return {r[0] for r in session.execute(stmt).all()}
+
+
+def load_blacklist(session) -> dict[str, BlacklistEntry]:
+    """All rows of ``signals.ticker_blacklist`` by ticker."""
+    from sqlalchemy import select
+
+    from trading_signals.db.models.blacklist import TickerBlacklist as B
+
+    stmt = select(B.ticker, B.quote_type, B.source, B.reason)
+    return {r[0]: BlacklistEntry(r[0], r[1], r[2], r[3]) for r in session.execute(stmt)}
+
+
 def load_real_dates(
     session, tickers: Sequence[str], ds: date, last_session: date
 ) -> dict[str, set[date]]:
@@ -938,6 +1025,49 @@ def insert_universe_rows(session, inserts: Sequence[UniverseInsert]) -> int:
         .on_conflict_do_nothing(index_elements=["ticker"])
     )
     return int(result.rowcount or 0)
+
+
+def reactivate_universe_rows(
+    session, reactivations: Sequence[Reactivation], backup_dir: str
+) -> tuple[int, int]:
+    """Set ``is_active`` and drop the blacklist entries; ``(reactivated, removed)``.
+
+    Part of the universe step (the caller commits). The blacklist rows are
+    written to a verified CSV backup before anything changes; a backup failure
+    raises :class:`AbortError` and the caller's transaction is rolled back.
+    Idempotent: only rows that are not active yet are updated, and a ticker
+    without a blacklist row deletes nothing.
+    """
+    from sqlalchemy import delete, update
+
+    from trading_signals.db.models.blacklist import TickerBlacklist
+    from trading_signals.db.models.universe import Universe
+
+    if not reactivations:
+        return 0, 0
+    tickers = sorted({r.ticker for r in reactivations})
+    blacklisted = sorted({r.ticker for r in reactivations if r.blacklist})
+
+    blacklist_where = (TickerBlacklist.ticker.in_(blacklisted),)
+    if blacklisted:
+        _backup_rows(
+            session,
+            TickerBlacklist,
+            blacklist_where,
+            backup_dir,
+            "ticker_blacklist_reactivated",
+        )
+    result = session.execute(
+        update(Universe)
+        .where(Universe.ticker.in_(tickers), Universe.is_active.is_not(True))
+        .values(is_active=True, last_seen=date.today())
+    )
+    reactivated = int(result.rowcount or 0)
+    removed = 0
+    if blacklisted:
+        result = session.execute(delete(TickerBlacklist).where(*blacklist_where))
+        removed = int(result.rowcount or 0)
+    return reactivated, removed
 
 
 def _all_tables() -> list:
@@ -1180,7 +1310,11 @@ def _range(d: Sequence[date]) -> str:
 
 
 def print_universe_section(
-    inserts: Sequence[UniverseInsert], skipped_current: Sequence[str], n_tickers: int
+    inserts: Sequence[UniverseInsert],
+    skipped_current: Sequence[str],
+    n_tickers: int,
+    reactivations: Sequence[Reactivation] = (),
+    skipped_reactivations: Sequence[Reactivation] = (),
 ) -> None:
     out(f"[1] Universe  ({n_tickers} tickers with an sp500 interval in the window)")
     out(f"  INSERT {len(inserts)} rows ({sum(i.active for i in inserts)} active)")
@@ -1198,6 +1332,25 @@ def print_universe_section(
         out(
             "    -> they must be active: let index_sync add them or use "
             "--add-current-members"
+        )
+    if reactivations:
+        blacklisted = sum(1 for r in reactivations if r.blacklist)
+        out(
+            f"  REACTIVATE {len(reactivations)} current members (is_active -> true; "
+            f"{blacklisted} blacklist rows removed after a CSV backup)"
+        )
+        for r in reactivations:
+            out(f"    REACTIVATE {r.ticker} ({r.label})")
+    if skipped_reactivations:
+        out(
+            f"  {len(skipped_reactivations)} CURRENT members are INACTIVE in the "
+            "universe and are NOT reactivated:"
+        )
+        for r in skipped_reactivations:
+            out(f"    {r.ticker} ({r.label})")
+        out(
+            "    -> nobody collects them: use --add-current-members to reactivate "
+            "them and drop their blacklist entries"
         )
 
 
@@ -1378,6 +1531,8 @@ class Plan:
     intervals: Intervals = field(default_factory=dict)
     inserts: list[UniverseInsert] = field(default_factory=list)
     skipped_current: list[str] = field(default_factory=list)
+    reactivations: list[Reactivation] = field(default_factory=list)
+    skipped_reactivations: list[Reactivation] = field(default_factory=list)
     prices: list[TickerPlan] = field(default_factory=list)
     stored_rows: dict[str, dict[date, StoredPrice]] = field(default_factory=dict)
     para_state: ParaState = field(default_factory=ParaState)
@@ -1423,7 +1578,14 @@ def build_plan(session, ctx: Context, args: argparse.Namespace) -> Plan:
     plan.inserts, plan.skipped_current = plan_universe_inserts(
         intervals, universe, {}, add_current=args.add_current_members
     )
-    # a ticker can only get prices if it is (or is about to be) in the universe
+    plan.reactivations, plan.skipped_reactivations = plan_universe_reactivations(
+        intervals,
+        load_inactive_universe(session),
+        load_blacklist(session),
+        add_current=args.add_current_members,
+    )
+    # a ticker can only get prices if it is (or is about to be) in the universe;
+    # neither is_active nor the blacklist matters here (BF.B is priced anyway)
     insertable = universe | {i.ticker for i in plan.inserts}
     stored_dates = load_real_dates(session, sorted(intervals), ctx.ds, ctx.last_session)
     plan.prices = [
@@ -1487,7 +1649,13 @@ def fetch_phase(plan: Plan, ctx: Context, args: argparse.Namespace) -> None:
 def print_report(plan: Plan, args: argparse.Namespace) -> None:
     wanted = wanted_tickers(args)
     out("")
-    print_universe_section(plan.inserts, plan.skipped_current, len(plan.intervals))
+    print_universe_section(
+        plan.inserts,
+        plan.skipped_current,
+        len(plan.intervals),
+        plan.reactivations,
+        plan.skipped_reactivations,
+    )
     out("")
     print_price_section(plan.prices, plan.fetched)
     for e in plan.fetch_errors:
@@ -1509,8 +1677,14 @@ def apply_steps(plan: Plan, args: argparse.Namespace) -> int:
     """One transaction per logical step; every step is idempotent."""
     with repair_session(read_only=False) as session:
         n = insert_universe_rows(session, plan.inserts)
+        reactivated, unlisted = reactivate_universe_rows(
+            session, plan.reactivations, args.backup_dir
+        )
         session.commit()
-    out(f"STEP universe: {n} rows inserted")
+    out(
+        f"STEP universe: {n} rows inserted, {reactivated} reactivated, "
+        f"{unlisted} blacklist rows removed"
+    )
 
     if args.fix_para:
         with repair_session(read_only=False) as session:
@@ -1574,7 +1748,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--add-current-members",
         action="store_true",
-        help="Also insert current members missing in the universe, as ACTIVE rows",
+        help=(
+            "Also insert current members missing in the universe as ACTIVE rows "
+            "and reactivate inactive current members (removing them from "
+            "ticker_blacklist, CSV backup first)"
+        ),
     )
     p.add_argument(
         "--no-fetch",
@@ -1600,8 +1778,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--backup-dir",
         default=DEFAULT_BACKUP_DIR,
-        help="Directory for the CSV backups of deleted PARA rows (default: "
-        "%(default)s)",
+        help="Directory for the CSV backups of deleted PARA rows and removed "
+        "blacklist rows (default: %(default)s)",
     )
     return p.parse_args(argv)
 
