@@ -1,0 +1,184 @@
+# Forecasts – `forecasts.yaml` and the pre-registered evaluation
+
+Status: format `forecasts/v1` and evaluation designed 2026-10-17 (plan [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md), steps 1–2), reviewed the same day (Opus review: late forecasts, interval method, freezing, absolute vs relative, screen coverage). **Not deployed yet:** parser, ingest and the nightly step come in plan step 4; until then [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) (`decisions.yaml`) stays valid. The evaluation functions already exist and are tested ([`analysis/forecast_eval.py`](../src/trading_signals/analysis/forecast_eval.py)); the size of the decisive criterion was measured by simulation ([`analysis/criterion_sim.py`](../src/trading_signals/analysis/criterion_sim.py), §6).
+
+> **Decided by Sebastian (2026-10-17):** (1) the decisive test examines the **system** – Claude's final calls against the gated universe; Claude's value-add over the screen shortlist is reported as a secondary result (`decisive_mode = system` is the default); (2) the true absolute hit rate ("the price really rose") is **reported only** and does not enter the verdict; (3) any change of prompt, skill or model version before the verdict starts a **new frozen sample** automatically, the aborted partial sample is reported (`forecaster_version`).
+>
+> **Still a proposal:** the success criterion itself and its constants (20 sessions, ≥ 200 sessions with ≥ 100 `up` and ≥ 100 `down` calls, both lower bounds above zero, §6). It becomes binding (pre-registered like H14) when Sebastian confirms it, after reading the simulated size and power in §6; the sample-size constants must not change afterwards.
+
+## 1. Scope
+
+Alpaca-Broker **forecasts**; a separate, later bot **trades**. A forecast says what Claude expects the price to do over a horizon – nothing about entries, exits, stops, targets or position sizes. Claude forecasts the **absolute** direction (price up / down / neutral); the evaluation reports **both absolute and relative** results (relative to the same-day universe and to SPY) so that the market move and the stock-picking skill are visible separately. Only the relative side (selection skill) can be tested at the sample sizes in question – see §5 and §7.
+
+Claude works from the context pack (which tickers get a full file is decided by the [screen](SCREEN.md): 10 bullish, 10 bearish once enabled, 5 random controls, requested tickers; `screen.csv` lists every ticker that passes the quality gate).
+
+## 2. File and lifecycle
+
+The Claude skill writes `context_packs/<session>/forecasts.yaml` **into the folder of the pack it reviewed** (same folder as `00_uebersicht.md`). The nightly step (plan step 4, `forecast_review`) reads it, validates it and stores it append-only. A file that fails validation is rejected as a whole with a precise error message in the job log (nothing is stored, as for `decisions.yaml`).
+
+**On-time rule.** The forecast enters the evaluation as *on time* only if the file was written (last write) before the open of the session after the pack day (09:30 New York, normally 15:30 German time; 14:30 in the weeks of the clock change) – the evaluated return starts at `open(d+1)`. Later files or later edits are *late*: they are stored, evaluated separately (descriptive only) and **never** count towards the success criterion – neither in the sample nor in the statistics, also not when they fall inside the frozen sessions. After the open nothing may be changed.
+
+## 3. Format `forecasts/v1`
+
+```yaml
+schema: forecasts/v1
+session: 2026-10-16                    # = as_of of the pack (folder name), NOT today's date
+decided_at: 2026-10-17T09:40:00+02:00  # time of the decision, with time zone
+forecaster_version: aktien-analyse/2026-10-17+claude-opus-4  # prompt / skill / model, see below
+forecasts:
+  - ticker: NVDA
+    horizon_days: 60          # 20 | 60 (5 optional)
+    direction: up             # up | down | neutral
+    confidence: 0.62          # P(direction is correct), 0.50 .. 0.95
+    conviction: 4             # 1 .. 5
+    expected_pct: 4.5         # optional, signed expected raw return in percent
+    drivers: [revisions, insider]
+    reason: "Estimates revised up twice in 30 days, CEO purchase, no earnings before the horizon ends."
+    risks: "Export restrictions; crowded positioning."
+  - ticker: NVDA
+    horizon_days: 20
+    direction: neutral
+    reason: "Earnings in 6 sessions, no edge either way."
+```
+
+| Field | Required | Rule |
+|---|---|---|
+| `schema` | yes | exactly `forecasts/v1` |
+| `session` | yes | date of the pack = folder name |
+| `decided_at` | yes | ISO 8601 with time zone |
+| `forecaster_version` | yes | non-empty string, at most 64 characters, identifying everything that shapes the forecasts: the skill / prompt version, the model and the pack format (`pack_format`). It is copied onto every forecast row. **Rule:** whenever it changes before the verdict of the decisive criterion, a new frozen sample starts automatically and the aborted partial sample is reported (§6). Change it deliberately and only when the forecaster really changes; keep it identical across days otherwise |
+| `forecasts` | yes | list, may be empty (`forecasts: []` = reviewed, nothing to forecast) |
+| `ticker` | yes | upper case; any ticker of the universe is allowed, also tickers without a full file |
+| `horizon_days` | yes | `20` or `60`; `5` is accepted but only ever descriptive. One forecast per `(ticker, horizon_days)` per session; a ticker may have several horizons |
+| `direction` | yes | `up`, `down` or `neutral`. `up` / `down` = Claude expects the **raw price return** over the horizon (`close(d+h) / open(d+1) − 1`) to be positive / negative; `neutral` = no view, scored only as a count |
+| `confidence` | for `up` / `down` | calibrated probability that the called direction is correct, 0.50 – 0.95. Scored by calibration and Brier score. Omitted for `neutral` |
+| `conviction` | for `up` / `down` | integer 1 – 5, ordinal strength of the evidence, independent of the probability. Used for the rank IC of *signed* conviction (`conviction × ±1`; `neutral` counts as 0) |
+| `expected_pct` | no | signed expected raw return over the horizon in percent (positive for `up`, negative for `down`; sign must match `direction`). Checked by rank correlation and bias, never decisive |
+| `drivers` | no | up to 5 tags from a controlled vocabulary: the 12 screen groups (`trend`, `reversal`, `value`, `quality`, `revisions`, `surprise`, `analyst`, `insider`, `institutional`, `short_interest`, `short_volume`, `sentiment`) plus `news`, `earnings`, `sector`, `macro`, `other`. Unknown tags are rejected. Used for the descriptive by-driver table |
+| `reason`, `risks` | no | free text, at most 1,000 characters each |
+
+**Forbidden fields.** Anything that belongs to the bot is rejected by the parser with a specific message: `limit`, `limit_price`, `entry`, `exit`, `target`, `target_pct`, `target_price`, `price_target`, `stop`, `stop_pct`, `stop_price`, `stop_loss`, `take_profit`, `trailing`, `size`, `position`, `position_size`, `quantity`, `qty`, `shares`, `weight`, `leverage`, `order`, `action`, `buy`, `sell`. Unknown fields are rejected as well (a typo fails loudly instead of being silently ignored).
+
+## 4. What is measured
+
+For a forecast made on session `d`:
+
+- `ret` = realised `return_<h>d` of the ticker (`close(d+h) / open(d+1) − 1`, the same definition as the targets of the feature snapshots; extrapolated prices never count). Open windows are *pending* and not scored. A horizon for which the return column is missing is skipped with a log line (the forecasts stay, unscored).
+- **Universe** = the tickers that passed the quality gate on `d` (the `screen.csv` population). `uni_mean` = their mean `ret`; the **same-day universe share** of an `up` call is the share of the universe with `ret > 0`, of a `down` call the share with `ret < 0` – the hit rate of a forecaster without skill *in the cross-section*.
+- Excess returns: `ex_uni = ret − uni_mean`, `ex_spy = ret − return of SPY` (same definition). A requested ticker outside the gate is evaluated against the gated universe.
+- `hit = (sign × ret > 0)` for `up` / `down` (raw direction right); `neutral` forecasts have no hit.
+- **Shortlist benchmark** (only for the value-add, §6): for an `up` call the same-day `bull` shortlist of the pack, for a `down` call the `bear` shortlist – the mean excess return of all its members and the share of them that moved in the called direction. Where that shortlist is empty on a day (the bearish bucket is off at go-live) the benchmark falls back to the universe.
+
+## 5. Pre-registered metrics
+
+All figures are **date-weighted** – each session counts once, because the unit of independence is the date, not the forecast – and reported per horizon, for on-time forecasts only.
+
+**Intervals.** 95 % **batch-jackknife** intervals ([`stats.batch_jackknife`](../src/trading_signals/analysis/stats.py)): the sessions are cut into `g = ⌊n / 2h⌋` consecutive batches (at least `2h` sessions each), the statistic is recomputed with each batch left out, and the interval is `estimate ± t(g − 1) · SE_jackknife` (for a mean this is the batch-means t interval). The h-day returns of consecutive sessions overlap, so `n` sessions carry about `n / h` independent periods, and persistent calls on the same names stretch the dependence beyond `h`; a percentile date-block bootstrap (block `h` or `2h`, moving, circular or stationary) turned out far too narrow at these sample sizes (§6: each statistic alone passed a no-skill forecaster in 4.3–10.5 % of the simulated worlds instead of 2.5 %), whereas the batch jackknife kept the false-pass rate of the decisive criterion below 2.5 % in every simulated scenario. The same method is used for the screen backtest and the event study (horizon mode); the older barrier tools, which are being removed in step 6, keep their bootstrap. With fewer than two batches (< 4h sessions) no interval is shown. t-statistics of the rank IC and of the selection hit edge are Newey-West with lag `h − 1`.
+
+**Markers.** A check or cross next to an interval appears only from **10 × h sessions with data for that very figure** (200 at 20 days; a difference of two directions is as thin as its thinner side); below that the interval is shown without a verdict.
+
+| # | Metric | Definition |
+|---|---|---|
+| S1 | **Selection hit edge** (formerly "A1") | per session `hit rate − same-day universe share`, over all `up` / `down` forecasts, averaged over sessions; also split by `up` and `down`. This is a **cross-sectional** measure: the universe share moves with the market on the same day, so market timing contributes zero – it asks "did Claude pick the names that did better than the typical name", not "did the price rise" |
+| A0 | **True absolute hit rate** (descriptive, not decisive) | raw hit rate of the `up` calls (share with `ret > 0`) and of the `down` calls (share with `ret < 0`) against **50 %** and against the **long-run unconditional share** of positive / negative h-day returns of the universe (taken from the whole `universe_returns` frame handed to the evaluation – step 4 loads the retention window, not just the forecast sessions), plus the mean raw return of the `up` and of the `down` calls. Over a few months this is dominated by the market's own path (a rising market makes `up` calls "right"); it is reported so that the market move is visible, and never enters a verdict |
+| A2 | Up minus down, absolute | mean raw return of `up` forecasts (averaged per session, then over the sessions that have any) minus the same for `down` forecasts (contains market timing) |
+| R1 | Up minus down, relative | the same on `ex_uni` and on `ex_spy` |
+| R2 | Following the calls | mean of `sign × ret` (absolute), `sign × ex_uni`, `sign × ex_spy` |
+| R3 | Paired up minus down | on sessions with both directions: the market cancels, absolute = relative |
+| C1 | Rank IC | per-session Spearman correlation of signed conviction with `ret` (sessions with ≥ 5 forecasts), mean with Newey-West t. A session-constant benchmark does not change a per-session rank, so one IC covers absolute and relative |
+| C2 | Calibration | confidence bins [0.50, 0.60), [0.60, 0.70), [0.70, 0.80), [0.80, 0.95]: mean confidence vs hit rate; Brier score of the stated confidences against the **constant forecaster 0.5** (Brier 0.25; this reference is known at time `d` and cannot peek at the outcome) and the Brier skill `1 − Brier / 0.25`. For information only: the same against the constant forecaster that says the *pooled whole-sample* hit rate (known only afterwards). Never the realised same-day universe share |
+| V1 | Claude vs shortlist | on the sessions with forecasts: mean return of Claude's `up` and `down` calls, the **bullish shortlist** (all full-file bullish candidates regardless of Claude's call), the bearish shortlist, the **random controls** and the **universe**, each absolute and as excess over the universe / SPY; plus the paired `Claude up − shortlist` difference. Separates the screen effect from the Claude effect. The **value-add statistics** (§6) are computed from the same benchmark |
+| D1 | By driver | hit rate, selection hit edge and `sign × ex_uni` per named driver (descriptive only, small cells) |
+| E1 | `expected_pct` | rank correlation with `ret` and mean bias (only with ≥ 30 values; descriptive) |
+
+**Reliability.** Following `MIN_INDEPENDENT_PERIODS = 10` of the monthly analysis, a result is called reliable only from **10 × horizon sessions: 200 sessions for 20 days (≈ 10 months), 600 for 60 days (≈ 2.4 years)**, 50 for 5 days. Before that every figure is labelled *descriptive only* in the report.
+
+## 6. Decisive criterion (PROPOSAL – constants awaiting Sebastian's confirmation)
+
+Pre-registered in the style of H14: a fixed sample, **one look**, no optional stopping, all constants fixed in advance. Mode, absolute block and version rule are confirmed (header); what is proposed is the success criterion and its constants.
+
+**Hypothesis.** At the 20-session horizon, Claude's directional calls separate subsequent relative performance, and the calls pick names that do better than the typical name of the same day.
+
+**Statistics** (decisive mode `system`; the report always computes both modes):
+
+- **R – relative up minus down.** `mean over sessions (mean ex_uni of the up calls) − mean over sessions (mean ex_uni of the down calls)` (R1).
+- **S – selection hit edge** (S1): hit rate minus the same-day universe share. Not the absolute hit rate (A0), which is descriptive.
+- **Value-add (secondary, reported, not decisive):** `claude_value_add` replaces the universe by the same-day shortlist of the called direction in both statistics (`ex_uni − shortlist excess`, `hit − shortlist hit share`), i.e. the **paired comparison of Claude's calls with the screen bucket**. With the bearish bucket off, the down side is judged against the universe, as in `system`. `decisive_mode` can be switched to `claude_value_add` in the configuration; the choice made by Sebastian is `system`.
+
+**Interval and success.** 95 % batch jackknife (§5), batches of `2 × 20 = 40` sessions, t critical value with `g − 1` degrees of freedom (`g = 5` at 200 sessions: 2.776). **Success** iff the lower bound of R **and** the lower bound of S are above zero. Anything else is `failed` (not "inconclusive": the test has been looked at once and is over for this forecaster version).
+
+**Sample – frozen from the forecasts alone.** [`freeze_sample`](../src/trading_signals/analysis/forecast_eval.py) takes the on-time `up` / `down` forecasts with `horizon_days = 20` **of one forecaster version**, in session order (sessions that have at least one such forecast). The sample is the first `m` sessions, where `m` is the smallest number ≥ **200** for which the sample holds at least **100 `up` and 100 `down`** forecasts. Until then the status is `insufficient_data` with progress (sessions, `up`, `down`). Everything this uses is known at forecast time, so **whether and when the sample freezes cannot depend on which returns happen to be available**. The frozen sample is identified by the session list, the forecast ids and a SHA-256 key. Constants: `CRITERION_MIN_PER_SIDE = 100`, `reliable_dates(20) = 200`, `CRITERION_GRACE_SESSIONS = 10`.
+
+**Verdict timing – computed once.** [`verdict_from_frozen`](../src/trading_signals/analysis/forecast_eval.py) uses only the forecasts of the frozen sample (late forecasts and other versions never enter, also not inside the frozen sessions). While windows are open the status is `awaiting_returns` (progress `x / y` shown). The verdict is computed when all returns of the sample exist or, at the latest, `h + 10` sessions after the last frozen session (grace period 10 sessions: delistings and data gaps must not block it forever); forecasts still without a return are then left out and reported (`n_missing`).
+
+**Persistence (plan step 4).** The nightly step persists, once, (a) the frozen sample (sessions, forecast ids, key, version, constants) as soon as it freezes and (b) the verdict **together with the per-forecast values it was computed from** (`ret`, excess returns, hit, benchmark; [`VALUE_COLUMNS`](../src/trading_signals/analysis/forecast_eval.py)). Later reports show the persisted rows; they never recompute the verdict from live returns, so a price correction or a restated return cannot change it ([`verdict_from_values`](../src/trading_signals/analysis/forecast_eval.py) reproduces it from the stored values; tested). The tables come with migration 039. A report after the freeze shows the frozen verdict unchanged next to rolling, explicitly exploratory figures.
+
+**Forecaster version.** The criterion filters on **one** `forecaster_version`. If the version changes before the verdict, the partial sample of the old version is **aborted** (reported with its sessions and counts, never evaluated) and a new sample starts with the first session of the new version; a sample that had already reached its size keeps its verdict. The active version is that of the newest on-time directional forecast.
+
+**Not decisive:** every other metric of §5 (including A0 and V1), the SPY-relative figures, the 5- and 60-session horizons. The 60-session horizon gets the same rule on the first **600** sessions (≥ 100 `up` / `down`) as a later, separate pre-registration; its output is labelled *not registered* until then; 5 days is never decisive.
+
+**What the verdict says.** `passed`: the forecasts show a selection edge that is unlikely to be luck at this sample size and are worth handing to the bot with a track record; `failed`: they do not (yet) and the bot should not rely on them. The criterion makes no statement about tradable profit – costs, sizing and exits are the bot's business, and none about market timing (A0).
+
+### Size of the criterion (simulated)
+
+The claim "false pass rate ≤ 2.5 %" of the first draft was wrong in its justification: two lower bounds above zero are two one-sided tests at 2.5 %, and the probability that both pass is bounded by the **smaller** of the two marginal rates – the Fréchet bound `min(α₁, α₂)` – **but only if each test is calibrated** (`P(pass) ≤ 2.5 %` under no skill). Positive correlation between the two statistics pushes the joint rate **up** towards that bound (independence would give `α₁ · α₂ ≈ 0.06 %`), not down. Whether the tests are calibrated at 10–25 independent periods is an empirical question, so it was simulated.
+
+**Setup** ([`scripts/analysis/simulate_criterion_size.py`](../scripts/analysis/simulate_criterion_size.py), fixed seed, **2,000 simulated worlds per scenario**, Monte-Carlo standard error of a rate near 2.5 % ≈ 0.35 percentage points): 300 tickers; daily returns = market shock (1 %) + idiosyncratic shock (2 %); the 20-day return of a call on session `d` is the sum of the daily returns of `d+1 … d+20`, so consecutive sessions **overlap by 19 of 20 days**; a **no-skill** forecaster whose calls follow a persistent latent state per name (AR(1), ρ = 0.95: the same ≈ 8 names stay `up` and ≈ 8 `down` for weeks); 200 sessions (the minimum of the criterion). Variations: ρ = 0 and 0.99, 15 calls per side, 300 and 400 sessions, heavy tails (Student t₄), horizon 60 (600 sessions), horizon 5, and calls clustered in 10 sectors with common sector shocks. The simulation runs the real code (forecasts → `attach_outcomes` → per-session table → the two decisive statistics); only the **interval method** is swapped, so the columns compare like with like. No selection, no tuning of any constant on these worlds.
+
+**False-pass rate of the criterion** (both lower bounds above zero, no skill; nominal ≤ 2.5 %; in %):
+
+| Scenario | bootstrap, block h (moving) | circular h | circular 2h | stationary, mean 2h | Newey-West lag h−1, t(n/h−1) | Newey-West lag 2h, t(n/2h−1) | jackknife, batch h | **jackknife, batch 2h (chosen)** |
+|---|---|---|---|---|---|---|---|---|
+| base (ρ 0.95) | 4.5 | 4.5 | 4.8 | 5.7 | 2.5 | 1.4 | 2.2 | **1.1** |
+| no persistence (ρ 0) | 2.5 | 2.4 | 3.1 | 3.9 | 1.1 | 0.7 | 1.4 | **0.8** |
+| very persistent (ρ 0.99) | 5.1 | 5.0 | 5.4 | 7.0 | 3.2 | 2.1 | 3.1 | **1.9** |
+| 15 calls per side (ρ 0.9) | 4.1 | 3.9 | 4.1 | 5.0 | 2.5 | 1.4 | 2.2 | **1.1** |
+| 300 sessions | 3.4 | 3.0 | 3.0 | 3.8 | 2.4 | 1.6 | 1.9 | **1.2** |
+| 400 sessions | 3.5 | 3.5 | 3.8 | 4.2 | 2.5 | 2.1 | 2.3 | **1.9** |
+| heavy tails (t₄) | 4.3 | 4.0 | 4.7 | 6.2 | 2.3 | 1.3 | 1.9 | **1.1** |
+| horizon 60 (600 sessions) | 4.7 | 3.5 | 5.2 | 6.4 | 1.9 | 1.0 | 1.4 | **1.2** |
+| horizon 5 | 3.4 | 3.4 | 2.8 | 3.0 | 2.8 | 1.8 | 2.8 | **1.9** |
+| calls clustered in 10 sectors | 6.0 | 5.1 | 5.5 | 6.8 | 3.0 | 1.5 | 2.2 | **1.8** |
+
+**Reading.**
+
+- **The first draft's claim was not true for the bootstrap.** A percentile date-block bootstrap – block `h`, circular or stationary block `2h` – passes a no-skill forecaster in **2.4–7.0 %** of the worlds, each decisive statistic alone in **4.3–10.5 %** instead of 2.5 %. Two things are at work. A block of `h` captures only about two thirds of the long-run variance of overlapping `h`-day returns of a fixed set of names (a triangular autocorrelation), and persistent calls stretch the dependence beyond `h`. But even with ρ = 0, where the dependence is short, the bootstrap passes each statistic alone in 5–9 %, so the main cause is the small number of independent periods (≈ 10): the studentised statistic has a heavy t-tail and a noisy variance estimate that a percentile bootstrap cannot reproduce. Longer blocks do not repair it: they lose bootstrap variance to the finite-sample bias of fewer blocks.
+- **Chosen: batch jackknife, batches of `2h` sessions, t critical value with `g − 1` degrees of freedom.** Its false-pass rate is **0.8–1.9 %** in all ten scenarios, i.e. **≤ 2.5 % everywhere** (the largest value, 1.9 %, still lies about two standard errors below 2.5 %). Each statistic *on its own* is slightly liberal (2.4–3.7 % instead of 2.5 %); it is the conjunction of the two that is conservative, which is what the criterion registers. Newey-West with lag `2h` and a small-sample t (0.7–2.1 %) would also have done; it needs a linearisation per statistic, the jackknife does not, so the jackknife is used for **every** statistic of the per-session table. Variants with batch `h` or Newey-West lag `h − 1` exceed 2.5 % in the persistent scenarios and are rejected.
+- **Why the corrected bound is `min(α₁, α₂)`.** The two lower bounds are two one-sided tests at 2.5 %; the probability that both pass is at most the smaller of the two marginal rates (Fréchet bound) – and that only for **calibrated** tests. Positive correlation between the statistics moves the joint rate **up** towards that bound (independence would give `α₁ · α₂ ≈ 0.06 %`), not down. With the jackknife the marginal rates are 2.4–3.7 % and the joint rate 0.8–1.9 %, so the two statistics are only moderately correlated here.
+
+**Power** (planted edge, jackknife 2h, the criterion passes; 1,000 worlds per cell; "mean R" is the mean estimated relative up-minus-down excess over 20 sessions in the simulated worlds):
+
+| mean R | 200 sessions | 300 sessions | 400 sessions |
+|---|---|---|---|
+| +0.6 % | 4.3 % | 6.1 % | 10.0 % |
+| +1.2 % | 10.7 % | 18.7 % | 28.7 % |
+| +1.7 % | 25.3 % | 37.9 % | 58.1 % |
+| +2.9 % | 59.1 % | 85.0 % | 95.1 % |
+| +4.7 % | 93.2 % | 99.7 % | 100 % |
+
+The criterion is a test for a **clearly visible** edge, not a measuring device: at the proposed 200 sessions a relative long-short edge of +1.7 % per 20 sessions (roughly 20 % a year, a rank IC of about 0.04) passes in one world of four, +2.9 % in six of ten. A smaller true edge will mostly end as `failed` – that is the price of an error rate that is honestly below 2.5 %. If that is too harsh, the lever is the sample size, not a looser interval: 300 sessions (≈ 14 months) lift the power at +1.7 % to 38 % and at +2.9 % to 85 %, 400 sessions (≈ 19 months) to 58 % and 95 %. The constants (200 sessions, 100 per side) stay a **proposal** until Sebastian decides; this table is the decision aid.
+
+**Caveats of the model.** Independent idiosyncratic shocks, a constant volatility, calls on every session with both directions present, no regime shifts; real data have volatility clustering and sector factors (covered only by the sector scenario) and gaps in the forecast sessions. The simulated sizes are therefore a plausibility check of the method under stated assumptions, not a guarantee. Re-run the script after any change of the interval method or of the criterion (`uv run python scripts/analysis/simulate_criterion_size.py --runs 2000 --workers 8 --out reports`; a fast reduced version runs in the unit tests, `tests/unit/test_criterion_sim.py`).
+
+## 7. Limits
+
+- **Forward test only.** A language model may know the outcomes of the past, so Claude's forecasts cannot be back-tested; the evaluation runs on live forecasts from the first deployed session on. (The *screen* has no such problem and is validated historically, see SCREEN.md §7.)
+- **Information time.** The skill may use live data until it writes the file, i.e. also news after the close of `d` – that is allowed (the entry is `open(d+1)`) and is why the on-time rule exists.
+- **Overlap and few independent periods.** Forecasts for several tickers on one date and 20/60-day windows on consecutive dates are dependent; date-weighting, the batch jackknife and the Newey-West lag address it, but the effective sample is far smaller than the number of forecasts: about 10 independent 20-day periods at 200 sessions. Power is limited accordingly (§6).
+- **Market timing is not testable here.** Whether "the price rises" is mostly the market's path over the sample (A0); the verdict therefore rests on the cross-sectional statistics R and S. A forecaster that is right about the market but picks no better than average cannot pass, by design.
+- **Base rate drift.** In a rising market the share of positive returns is high; the selection hit edge and the relative statistics separate skill from drift, the raw hit rate does not.
+- **Survivorship.** Returns of delisted tickers are NULL for the missing window (known limit of the targets); the effect on a 20-session horizon is small.
+
+## 8. Implementation map
+
+| Piece | Where | Status |
+|---|---|---|
+| Screen (gate, groups, buckets) | `analysis/screen.py`, [SCREEN.md](SCREEN.md) | done (step 2) |
+| Screen backtest | `analysis/screen_backtest.py`, `scripts/analysis/screen_backtest.py` | done (step 2) |
+| Evaluation functions, report, `freeze_sample` / `verdict_from_frozen` / `verdict_from_values` | `analysis/forecast_eval.py` | done (step 2) |
+| Batch-jackknife intervals | `analysis/stats.py` (`batch_jackknife`, `batch_jackknife_diff`, `ci_supports_verdict`) | done (step 2) |
+| Size / power simulation of the criterion | `analysis/criterion_sim.py`, `scripts/analysis/simulate_criterion_size.py`, `tests/unit/test_criterion_sim.py` | done (step 2) |
+| SPY forward returns | `analysis/benchmark.py` | done (step 2) |
+| Parser / ingest (`forecasts.yaml` → tables `forecast_reviews`, `forecasts` (incl. `forecaster_version`), `pack_candidates`) and persistence of the frozen sample and the verdict | `derived/forecast_decisions.py`, migration 039 | step 4 |
+| Nightly step `forecast_review`, report `context_packs/forecast_auswertung.md` | scheduler / nightly chain | step 4 |
+| Context pack v2, `screen.csv`, `pack_candidates` | `derived/context_pack_generator.py` | step 3 |

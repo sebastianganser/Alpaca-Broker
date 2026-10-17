@@ -181,7 +181,8 @@ MODES = {"stop": "konservativ", "ohlc": "OHLC-Pfad"}
 def run_combo(p, universe: dict[str, pd.DataFrame], groups: dict[str, pd.DataFrame],
               block: int) -> list[str]:
     """Report for one TP/SL combination; ``universe`` maps mode → trades."""
-    from trading_signals.analysis.barrier import block_bootstrap_diff, summarize
+    from trading_signals.analysis.barrier import summarize
+    from trading_signals.analysis.stats import block_bootstrap_diff
 
     key = ["snapshot_date", "ticker"]
     lines = [f"## {p.label}", "",

@@ -11,7 +11,6 @@ from trading_signals.analysis.barrier import (
     OUTCOME_TIME,
     OUTCOME_TP,
     BarrierParams,
-    block_bootstrap_diff,
     simulate_signals,
     simulate_windows,
     summarize,
@@ -127,12 +126,3 @@ def test_summarize_date_weighted():
     s = summarize(tr, P)
     assert s["hit_rate"] == pytest.approx(0.75)
     assert s["avg_net_return"] == pytest.approx((-0.005 + 0.01) / 2)
-
-
-def test_block_bootstrap_detects_shift():
-    idx = pd.date_range("2026-01-01", periods=200)
-    rng = np.random.default_rng(1)
-    a = pd.Series(rng.normal(0.01, 0.001, 200), index=idx)
-    b = pd.Series(rng.normal(0.0, 0.001, 200), index=idx)
-    diff, lo, hi = block_bootstrap_diff(a, b, block=10, n_boot=300)
-    assert lo > 0 and diff == pytest.approx(0.01, abs=0.001)

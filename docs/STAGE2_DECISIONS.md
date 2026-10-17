@@ -1,5 +1,7 @@
 # Stufe 2 – Rückmeldung per `decisions.yaml`
 
+> **Historisch – abgelöst durch den strategieneutralen Umbau (Plan [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md), Entscheidung Sebastian 17.10.2026).** Das Nachfolgeformat ist `forecasts.yaml` (Schema `forecasts/v1`, absolute Richtung statt Kaufentscheidung mit Barrier-Regel), siehe [FORECASTS.md](FORECASTS.md). Dieses Dokument bleibt gültig, bis die Prognose-Pipeline deployt ist (Plan Schritt 5); `decisions.yaml` wird dann nicht mehr eingelesen.
+
 Stand 2026-10-07 · Konzept: [§7.7](2026-10-06_Konzept_Kurzfrist_Kandidaten.md)
 
 Der Skill `aktien-analyse` (Claude-Broker) prüft die Kandidaten eines Context Packs mit Live-Daten und schreibt das Ergebnis **in denselben Ordner** wie das Pack:

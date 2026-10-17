@@ -22,7 +22,6 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from trading_signals.analysis.barrier import block_bootstrap_diff
 from trading_signals.analysis.event_study import (
     BREAK_EVEN_HIT_RATE,
     evaluate_events,
@@ -31,6 +30,7 @@ from trading_signals.analysis.event_study import (
     passes_criterion,
 )
 from trading_signals.analysis.hit_model import DATE_COL
+from trading_signals.analysis.stats import block_bootstrap_diff
 from trading_signals.derived.context_pack_generator import prefilter_reasons
 
 MIN_TRADES_VERDICT = 100

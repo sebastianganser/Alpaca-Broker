@@ -33,9 +33,12 @@ from sklearn.metrics import roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from trading_signals.analysis.barrier import MAIN_BARRIER, block_bootstrap_diff
+from trading_signals.analysis.barrier import MAIN_BARRIER
 from trading_signals.analysis.feature_groups import is_market_wide
-from trading_signals.analysis.stats import cross_sectional_transform
+from trading_signals.analysis.stats import (
+    block_bootstrap_diff,
+    cross_sectional_transform,
+)
 from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)

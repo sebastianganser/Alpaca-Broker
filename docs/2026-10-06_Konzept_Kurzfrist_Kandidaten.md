@@ -1,5 +1,7 @@
 # Konzept – Kurzfrist-Kandidaten (1–14 Tage, Gewinnmitnahme 0,5–1 %)
 
+> **Historisch – abgelöst durch den strategieneutralen Umbau (Plan [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md), Entscheidung Sebastian 17.10.2026; [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md) „Strategy-Neutral Rework Approved“).** Alpaca-Broker prognostiziert nur noch (absolute Richtung je Ticker und Horizont, siehe [FORECASTS.md](FORECASTS.md)); Handelsregeln wie Barrier, Stop und Haltedauer gehören einem späteren eigenen Bot. Dieses Konzept bleibt gültig, bis die Prognose-Pipeline deployt ist, und dokumentiert, was gebaut und getestet wurde (K1–K5).
+
 **Stand:** 6. Oktober 2026
 **Gegenstand:** Ausrichtung der täglichen Kandidatenauswahl auf das tatsächliche Handelsziel,
 Validierung per Rückblick-Test (Barrier-Backtest), Regeln für „heute keine Kandidaten“

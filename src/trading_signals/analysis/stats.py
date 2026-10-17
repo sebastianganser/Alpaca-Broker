@@ -553,3 +553,157 @@ def bootstrap_ci(samples: np.ndarray, alpha: float = 0.05) -> tuple[float, float
         float(np.percentile(s, 100 * alpha / 2)),
         float(np.percentile(s, 100 * (1 - alpha / 2))),
     )
+
+
+#: A date-block bootstrap needs at least this many blocks to say anything.
+MIN_BOOTSTRAP_BLOCKS = 2
+
+
+def has_block_ci(n_dates: int, block: int) -> bool:
+    """True if ``n_dates`` observations hold at least two blocks of ``block``.
+
+    With fewer, every resample is (nearly) the original sample, so the
+    "confidence interval" collapses onto the point estimate and must not be
+    reported as one.
+    """
+    return int(n_dates) >= MIN_BOOTSTRAP_BLOCKS * max(1, int(block))
+
+
+def block_bootstrap_diff(
+    a: pd.Series, b: pd.Series, block: int = 20, n_boot: int = 2000, seed: int = 0
+) -> tuple[float, float, float]:
+    """Mean difference ``a - b`` of two per-date series with a date-block bootstrap.
+
+    Returns ``(mean_diff, ci_low_95, ci_high_95)``. Only dates present in
+    both series are used; consecutive blocks of ``block`` dates are resampled
+    to respect overlapping holding periods.
+
+    (Moved here from ``analysis/barrier.py``, plan 2026-10-17 step 2; the
+    resampling sequence is unchanged, so results are identical.)
+    """
+    d = (a - b).dropna().sort_index().to_numpy()
+    if len(d) == 0:
+        return float("nan"), float("nan"), float("nan")
+    block = max(1, min(block, len(d)))
+    n_blocks = int(np.ceil(len(d) / block))
+    starts_max = len(d) - block + 1
+    rng = np.random.default_rng(seed)
+    means = np.empty(n_boot)
+    for i in range(n_boot):
+        starts = rng.integers(0, starts_max, size=n_blocks)
+        sample = np.concatenate([d[s:s + block] for s in starts])[: len(d)]
+        means[i] = sample.mean()
+    lo, hi = np.percentile(means, [2.5, 97.5])
+    return float(d.mean()), float(lo), float(hi)
+
+
+# ── Batch jackknife (intervals of the forecast / screen / event reports) ──
+#
+# Plan 2026-10-17 review M1. The h-day returns of consecutive sessions overlap,
+# so n sessions carry only about n / h independent periods, and persistent
+# calls on the same names stretch the dependence beyond h. A percentile
+# date-block bootstrap with block = h (or 2h, circular or stationary) turned
+# out far too narrow at the sample sizes in question (10 - 25 independent
+# periods): simulated one-sided size 4 - 10 % per statistic instead of 2.5 %
+# (``analysis/criterion_sim.py``, ``scripts/analysis/simulate_criterion_size.py``,
+# docs/FORECASTS.md section 6). The grouped (delete-a-batch) jackknife with
+# batches of 2h sessions and a t critical value with g - 1 degrees of freedom
+# kept the false-pass rate of the decisive two-sided criterion below 2.5 % in
+# every simulated scenario, so every NEW interval uses it. (The older
+# ``block_bootstrap_diff`` stays for the barrier tools that are being removed.)
+
+#: Batch length of the grouped jackknife in multiples of the horizon.
+JACKKNIFE_BATCH_FACTOR = 2
+#: A jackknife interval needs at least this many batches (t with 1 df is huge).
+MIN_JACKKNIFE_BATCHES = 2
+#: Observations (in horizons) from which an interval may carry a verdict marker;
+#: same threshold as ``feature_report.MIN_INDEPENDENT_PERIODS`` (10 periods).
+MIN_BLOCKS_FOR_VERDICT = 10
+
+
+def jackknife_batches(n_obs: int, horizon: int, factor: int | None = None) -> int:
+    """Number of batches of at least ``factor * horizon`` observations in ``n_obs``.
+
+    ``factor`` defaults to :data:`JACKKNIFE_BATCH_FACTOR` (2); other values
+    exist only for the size simulation that compares them.
+    """
+    f = JACKKNIFE_BATCH_FACTOR if factor is None else int(factor)
+    return int(n_obs) // (f * max(1, int(horizon)))
+
+
+def has_batch_ci(n_obs: int, horizon: int) -> bool:
+    """True if ``n_obs`` sessions hold at least two batches (an interval exists)."""
+    return jackknife_batches(n_obs, horizon) >= MIN_JACKKNIFE_BATCHES
+
+
+def ci_supports_verdict(n_obs: int, horizon: int) -> bool:
+    """True from ``MIN_BLOCKS_FOR_VERDICT`` horizons of data on: only then a
+    significance marker (check / cross) next to an interval is warranted."""
+    return int(n_obs) >= MIN_BLOCKS_FOR_VERDICT * max(1, int(horizon))
+
+
+def batch_jackknife(
+    table: np.ndarray | pd.DataFrame,
+    stats: Mapping[str, Callable[[np.ndarray], float]],
+    horizon: int,
+    level: float = 0.95,
+    batch_factor: int | None = None,
+) -> dict[str, tuple[float, float, float]]:
+    """``{name: (estimate, ci_low, ci_high)}`` by the delete-a-batch jackknife.
+
+    ``table`` holds one row per session in chronological order; every
+    statistic maps a 2-D array of such rows to a float (NaN-aware means,
+    differences of means, ...). The rows are split into ``g = n // (2 *
+    horizon)`` contiguous batches (sizes differ by at most one row), the
+    statistic is recomputed with each batch left out, and the interval is
+    ``estimate +/- t(g - 1) * SE`` with the jackknife standard error
+    ``sqrt((g - 1) / g * sum((theta_(-j) - mean)^2))``. For a mean this is the
+    batch-means t interval. Fewer than two batches (or a leave-one-out
+    statistic that is NaN) give NaN bounds. Deterministic: no seed.
+    """
+    arr = np.asarray(table, dtype="float64")
+    nan = float("nan")
+    est = {name: float(fn(arr)) for name, fn in stats.items()}
+    g = jackknife_batches(len(arr), horizon, batch_factor)
+    if g < MIN_JACKKNIFE_BATCHES:
+        return {name: (v, nan, nan) for name, v in est.items()}
+    groups = np.array_split(np.arange(len(arr)), g)
+    crit = float(_sps.t.ppf(0.5 + level / 2.0, g - 1))
+    loo = {name: np.empty(g) for name in stats}
+    for j, idx in enumerate(groups):
+        rest = np.delete(arr, idx, axis=0)
+        for name, fn in stats.items():
+            loo[name][j] = fn(rest)
+    out: dict[str, tuple[float, float, float]] = {}
+    for name, theta in loo.items():
+        if np.isnan(theta).any() or not np.isfinite(est[name]):
+            out[name] = (est[name], nan, nan)
+            continue
+        se = math.sqrt((g - 1.0) / g * float(((theta - theta.mean()) ** 2).sum()))
+        out[name] = (est[name], est[name] - crit * se, est[name] + crit * se)
+    return out
+
+
+def batch_jackknife_mean(
+    series: Sequence[float] | pd.Series, horizon: int
+) -> tuple[float, float, float]:
+    """``(mean, ci_low, ci_high)`` of a per-session series (NaNs are dropped)."""
+    x = np.asarray(series, dtype="float64")
+    x = x[~np.isnan(x)]
+    if x.size == 0:
+        nan = float("nan")
+        return nan, nan, nan
+    return batch_jackknife(x[:, None], {"mean": lambda a: float(a[:, 0].mean())},
+                           horizon)["mean"]
+
+
+def batch_jackknife_diff(
+    a: pd.Series, b: pd.Series, horizon: int
+) -> tuple[float, float, float]:
+    """Mean of ``a - b`` over the dates present in both, with a jackknife interval.
+
+    Replacement of :func:`block_bootstrap_diff` for new code; ``horizon`` (not
+    a block length) is the parameter, the batch length is ``2 * horizon``.
+    """
+    d = (a - b).dropna().sort_index()
+    return batch_jackknife_mean(d.to_numpy(), horizon)

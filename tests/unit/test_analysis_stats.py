@@ -7,16 +7,24 @@ from scipy.stats import spearmanr
 
 from trading_signals.analysis.stats import (
     available_features,
+    batch_jackknife,
+    batch_jackknife_diff,
+    batch_jackknife_mean,
+    block_bootstrap_diff,
     block_bootstrap_indices,
     bootstrap_ci,
+    ci_supports_verdict,
     cross_sectional_transform,
     daily_group_difference,
     daily_rank_ic,
     date_block_bootstrap,
     excess_returns,
+    has_batch_ci,
+    has_block_ci,
     horizon_from_target,
     ic_difference,
     ic_summary,
+    jackknife_batches,
     mean_test,
     newey_west_se,
     newey_west_tstat,
@@ -279,3 +287,125 @@ def test_date_block_bootstrap_dataframe_mode():
     assert samples.shape == (20,) and np.all(samples > 0)
     with pytest.raises(ValueError):
         date_block_bootstrap(df, 5, n_boot=2)
+
+
+def test_block_bootstrap_diff_detects_shift():
+    # moved from analysis/barrier.py (plan 2026-10-17, step 2)
+    idx = pd.date_range("2026-01-01", periods=200)
+    rng = np.random.default_rng(1)
+    a = pd.Series(rng.normal(0.01, 0.001, 200), index=idx)
+    b = pd.Series(rng.normal(0.0, 0.001, 200), index=idx)
+    diff, lo, hi = block_bootstrap_diff(a, b, block=10, n_boot=300)
+    assert lo > 0 and diff == pytest.approx(0.01, abs=0.001)
+    assert lo < diff < hi
+
+
+def test_block_bootstrap_diff_edge_cases():
+    idx = pd.date_range("2026-01-01", periods=30)
+    a = pd.Series(np.linspace(0, 1, 30), index=idx)
+    # identical series -> zero difference, degenerate CI
+    diff, lo, hi = block_bootstrap_diff(a, a, block=5, n_boot=50)
+    assert diff == 0 and lo == 0 and hi == 0
+    # only common dates count, a block longer than the sample is clipped
+    diff, lo, hi = block_bootstrap_diff(a, a.iloc[:3] * 0, block=100, n_boot=20)
+    assert np.isfinite(diff)
+    # no overlap -> NaN triple
+    other = pd.Series([1.0], index=pd.to_datetime(["2030-01-01"]))
+    assert all(np.isnan(v) for v in block_bootstrap_diff(a, other, n_boot=5))
+    empty = block_bootstrap_diff(a.iloc[:0], a.iloc[:0], n_boot=5)
+    assert all(np.isnan(v) for v in empty)
+    # deterministic with the default seed
+    x = block_bootstrap_diff(a, a * 0.5, block=5, n_boot=100)
+    assert x == block_bootstrap_diff(a, a * 0.5, block=5, n_boot=100)
+
+
+def test_has_block_ci_needs_two_blocks():
+    assert has_block_ci(40, 20) and has_block_ci(120, 60)
+    assert not has_block_ci(39, 20) and not has_block_ci(80, 60)
+    assert has_block_ci(2, 0) and not has_block_ci(1, 1)  # block floor of 1
+
+
+# ── batch jackknife (review M1) ──────────────────────────────────────
+
+
+def test_batch_counts_and_thresholds():
+    # batches of 2 x horizon sessions; an interval needs two of them, a verdict
+    # marker ten horizons of data
+    assert jackknife_batches(200, 20) == 5 and jackknife_batches(79, 20) == 1
+    assert jackknife_batches(80, 20) == 2 and jackknife_batches(5, 0) == 2
+    assert has_batch_ci(80, 20) and not has_batch_ci(79, 20)
+    assert not has_batch_ci(1, 1) and has_batch_ci(4, 1)
+    assert ci_supports_verdict(200, 20) and not ci_supports_verdict(199, 20)
+    assert ci_supports_verdict(600, 60) and not ci_supports_verdict(599, 60)
+    assert jackknife_batches(200, 20, factor=1) == 10  # simulation comparison only
+
+
+def test_batch_jackknife_of_a_mean_is_the_batch_means_t_interval():
+    from scipy import stats as sps
+
+    x = np.random.default_rng(3).normal(size=80)
+    est, lo, hi = batch_jackknife(x[:, None], {"m": lambda a: float(a[:, 0].mean())},
+                                  horizon=10)["m"]  # 4 batches of 20
+    means = x.reshape(4, 20).mean(axis=1)
+    se = means.std(ddof=1) / 2.0
+    crit = sps.t.ppf(0.975, 3)
+    assert est == pytest.approx(x.mean())
+    assert (lo, hi) == pytest.approx((x.mean() - crit * se, x.mean() + crit * se))
+    # deterministic: no seed involved
+    assert batch_jackknife_mean(x, 10) == batch_jackknife_mean(x, 10)
+    assert batch_jackknife_mean(x, 10) == pytest.approx((est, lo, hi))
+
+
+def test_batch_jackknife_ragged_batches_and_several_statistics():
+    x = np.random.default_rng(4).normal(size=90)  # 4 batches of 23 / 22 rows
+    y = x ** 2
+    arr = np.column_stack([x, y])
+    res = batch_jackknife(arr, {"a": lambda m: float(m[:, 0].mean()),
+                                "d": lambda m: float(m[:, 1].mean() - m[:, 0].mean())},
+                          horizon=10)
+    assert set(res) == {"a", "d"}
+    for est, lo, hi in res.values():
+        assert lo < est < hi
+    # a statistic that is NaN when a batch is left out has no interval
+    est, lo, hi = batch_jackknife(arr, {"n": lambda m: float(m[0, 0])}, 10)["n"]
+    assert est == pytest.approx(x[0]) and np.isfinite(est)
+    assert np.isnan(batch_jackknife(
+        arr, {"n": lambda m: float("nan") if len(m) < 80 else 1.0}, 10)["n"][1])
+
+
+def test_batch_jackknife_needs_two_batches():
+    x = np.arange(39, dtype=float)
+    est, lo, hi = batch_jackknife_mean(x, 10)  # 39 // 20 = 1 batch
+    assert est == pytest.approx(19.0) and np.isnan(lo) and np.isnan(hi)
+    assert all(np.isnan(v) for v in batch_jackknife_mean([], 10))
+    assert all(np.isnan(v) for v in batch_jackknife_mean([np.nan, np.nan], 10))
+    # NaNs inside a series are dropped
+    y = np.concatenate([np.random.default_rng(0).normal(size=60), [np.nan] * 5])
+    assert np.isfinite(batch_jackknife_mean(y, 10)[1])
+
+
+def test_batch_jackknife_diff_uses_the_common_dates_only():
+    idx = pd.date_range("2024-01-01", periods=100, freq="B")
+    rng = np.random.default_rng(5)
+    a = pd.Series(0.02 + rng.normal(scale=0.01, size=100), index=idx)
+    b = pd.Series(rng.normal(scale=0.01, size=100), index=idx)
+    est, lo, hi = batch_jackknife_diff(a, b, 10)
+    assert est == pytest.approx((a - b).mean()) and lo > 0 > -lo and lo < est < hi
+    # dates present in one series only drop out
+    est2, _, _ = batch_jackknife_diff(a.iloc[:60], b.iloc[20:], 10)
+    assert est2 == pytest.approx((a.iloc[20:60] - b.iloc[20:60]).mean())
+    # a difference is order-sensitive but symmetric in sign
+    e3, lo3, hi3 = batch_jackknife_diff(b, a, 10)
+    assert (e3, lo3, hi3) == pytest.approx((-est, -hi, -lo))
+    assert all(np.isnan(v) for v in batch_jackknife_diff(a.iloc[:0], b.iloc[:0], 10))
+
+
+def test_batch_jackknife_is_wider_than_the_naive_iid_interval_on_overlapping_sums():
+    # 20-day sums of iid daily shocks: the mean of the overlapping series has
+    # about 20 times the variance of an iid sample of that size
+    rng = np.random.default_rng(6)
+    daily = rng.normal(size=400 + 20)
+    sums = np.convolve(daily, np.ones(20), mode="valid")[:400]
+    est, lo, hi = batch_jackknife_mean(sums, 20)  # 10 batches of 40
+    naive = 1.96 * sums.std(ddof=1) / np.sqrt(len(sums))
+    assert (hi - lo) / 2 > 2.5 * naive

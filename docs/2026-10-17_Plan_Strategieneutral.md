@@ -1,6 +1,6 @@
 # Plan: Alpaca-Broker strategieneutral machen
 
-**Stand:** 17. Oktober 2026 · **Status:** Entwurf – wartet auf Sebastians Freigaben (Abschnitt 6)
+**Stand:** 17. Oktober 2026 · **Status:** freigegeben am 17.10.2026 (Entscheidungen siehe Abschnitt 6) – Umsetzung läuft
 **Anlass:** Klarstellung von Sebastian am 17.10.: Alpaca-Broker sammelt Daten und soll Ticker identifizieren, deren Kurse in den nächsten Tagen bis Monaten voraussichtlich **steigen** (später auch **fallen**). Die Daten bekommt Claude über den Context Pack und bewertet die Ticker wie ein Wall-Street-Broker. Strategie, Ein-/Ausstiegsregeln und das eigentliche Trading übernimmt später ein **eigener Bot**, nicht Alpaca-Broker.
 
 Voraussetzung: Migration 038 (Rückbau des Trailing-Labels) ist deployt. Neue Migrationen dieses Plans heißen daher 039 und 040.
@@ -73,7 +73,7 @@ forecasts:
 
 Felder wie Limit, Kursziel, Stop oder Positionsgröße lehnt der Parser ab – das ist Sache des Bots.
 
-**Bewertung** (`analysis/forecast_eval.py`): realisierte 20-/60-Tage-Rendite – absolut, gegenüber dem Universums-Mittel und gegenüber SPY; Up-minus-Down-Differenz mit Bootstrap-KI, Trefferquote gegen Basisrate, Rang-IC (Konviktion × Richtung), Kalibrierung, Aufschlüsselung nach Treibern, Claude vs. Shortlist vs. Zufalls-Kontrolle. Das Urteil wird vorab registriert (wie H14). Realistisch belastbar: ~200 Handelstage für 20 Tage (≈ 10 Monate), ~600 für 60 Tage (≈ 2,4 Jahre); davor nur beschreibend. Der Screen selbst ist sofort rückwirkend prüfbar.
+**Bewertung** (`analysis/forecast_eval.py`): realisierte 20-/60-Tage-Rendite – absolut, gegenüber dem Universums-Mittel und gegenüber SPY; Up-minus-Down-Differenz mit Batch-Jackknife-Intervall (der Datumsblock-Bootstrap war in der Simulation zu eng, siehe FORECASTS.md §6), Auswahl-Trefferquote gegen die Basisrate, Rang-IC (Konviktion × Richtung), Kalibrierung, Aufschlüsselung nach Treibern, Claude vs. Shortlist vs. Zufalls-Kontrolle. Das Urteil wird vorab registriert (wie H14). Realistisch belastbar: ~200 Handelstage für 20 Tage (≈ 10 Monate), ~600 für 60 Tage (≈ 2,4 Jahre); davor nur beschreibend. Der Screen selbst ist sofort rückwirkend prüfbar.
 
 ## 3. Barrier-Label und Stage-2-Tabellen
 
@@ -112,6 +112,16 @@ Gesamt ca. 10–12 Agenten-Tage.
 **Schnittstelle für den späteren Bot** (Tabellen jetzt, API nach ~1 Monat Forecasts): append-only `forecasts` (Sitzung, Zeitpunkt, Horizont, Richtung, Wahrscheinlichkeit, Konviktion, Treiber), View `forecast_outcomes` (Forecast + realisierte Renditen), `GET /api/v1/forecasts`, Risikokontext je Ticker (Kurs, ATR, ADV, Earnings-Termin, Sektor), Kalibrierungskennzahlen, Feature-Export. Stops, Ziele, Trailing, Positionsgröße und Orders bleiben im Bot.
 
 ## 6. Freigaben durch Sebastian
+
+**Entschieden am 17.10.2026 (Sebastian):**
+
+- **Prognose-Richtung:** Claude prognostiziert die **absolute** Richtung (Kurs steigt / fällt / neutral); ausgewertet wird **absolut und relativ** (gegenüber Universums-Mittel und SPY).
+- **Auswahl:** Variante **D** (Hybrid: `screen.csv` für alle Gate-Ticker, Volldateien für 10 bullische + 10 bärische (anfangs per Config aus) + 5 Zufalls-Kontrollen + Wunsch-Ticker).
+- **Barrier-Label:** wird **gelöscht** (Migration 040), ebenso die leeren Stage-2-Tabellen.
+- **H14-Sekundärziel:** keine Antwort → H14 bleibt unverändert; nach dem Löschen der Barrier-Spalte entfällt die Info-Zeile (vom Code abgefangen), die Vorab-Registrierung bleibt unberührt.
+
+Ursprüngliche Liste der offenen Freigaben:
+
 
 1. Forecast-Schema und vorab registrierte Bewertungskriterien – insbesondere: soll Claude die **absolute** Richtung prognostizieren (Kurs steigt/fällt) oder die **relative** (besser/schlechter als der Markt)? Empfehlung: absolute Richtung prognostizieren, aber beides auswerten, damit Marktbewegung und echte Auswahlqualität getrennt sichtbar sind.
 2. Auswahl-Option D, Anzahl der Volldateien und Zufalls-Kontrollen

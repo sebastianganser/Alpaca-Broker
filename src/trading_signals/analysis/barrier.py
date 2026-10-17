@@ -198,28 +198,3 @@ def summarize(trades: pd.DataFrame, p: BarrierParams) -> dict:
         "ambiguous_share": float(per_date["amb"].mean()),
         "worst_trade": float(t["net_return"].min()),
     }
-
-
-def block_bootstrap_diff(
-    a: pd.Series, b: pd.Series, block: int = 20, n_boot: int = 2000, seed: int = 0
-) -> tuple[float, float, float]:
-    """Mean difference ``a - b`` of two per-date series with a date-block bootstrap.
-
-    Returns ``(mean_diff, ci_low_95, ci_high_95)``. Only dates present in
-    both series are used; consecutive blocks of ``block`` dates are resampled
-    to respect overlapping holding periods.
-    """
-    d = (a - b).dropna().sort_index().to_numpy()
-    if len(d) == 0:
-        return float("nan"), float("nan"), float("nan")
-    block = max(1, min(block, len(d)))
-    n_blocks = int(np.ceil(len(d) / block))
-    starts_max = len(d) - block + 1
-    rng = np.random.default_rng(seed)
-    means = np.empty(n_boot)
-    for i in range(n_boot):
-        starts = rng.integers(0, starts_max, size=n_blocks)
-        sample = np.concatenate([d[s:s + block] for s in starts])[: len(d)]
-        means[i] = sample.mean()
-    lo, hi = np.percentile(means, [2.5, 97.5])
-    return float(d.mean()), float(lo), float(hi)

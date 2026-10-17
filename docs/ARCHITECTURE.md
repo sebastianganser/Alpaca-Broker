@@ -128,8 +128,10 @@ Alpaca-Broker/
 │   │                                #   collect_short_interest, backfill_short_interest_features,
 │   │                                #   rebuild_sp500_membership + onboard_removed_members – S&P 500
 │   │                                #   survivorship repair, dry run by default, …)
-│   ├── analysis/                    # Research: backtest_barrier, walkforward_hit_model,
-│   │                                #   event_study, collect_buyback_events
+│   ├── analysis/                    # Research: screen_backtest (neutral screen validation),
+│   │                                #   simulate_criterion_size (size/power of the forecast criterion),
+│   │                                #   event_study (horizon + barrier mode), collect_buyback_events,
+│   │                                #   backtest_barrier, walkforward_hit_model (barrier, removed in plan step 6)
 │   ├── archive/                     # Obsolete one-time scripts (kept for reference)
 │   ├── sprint10_readiness.py        # Data-maturity check for the scoring model
 │   └── *.py                         # Universe init/sync/validate, recompute helpers, backfills
@@ -197,11 +199,17 @@ trading_signals/
 │   └── stage2_decisions.py       # Reads/validates decisions.yaml → stage2_reviews / stage2_decisions
 ├── analysis/
 │   ├── feature_report.py   # Monthly FeatureAnalysisEngine (daily rank IC, excess returns) → analysis_reports
-│   ├── stats.py / modeling.py / feature_groups.py  # Pure stats, leakage-safe RF+LASSO, feature grouping
-│   ├── barrier.py          # Barrier trade simulation (MAIN_BARRIER: +1 % / −2 % / 14 sessions)
-│   ├── hit_model.py        # Walk-forward hit-probability model (building blocks)
-│   ├── event_study.py      # Event studies on the barrier trade (building blocks)
-│   └── stage2_eval.py      # Stage-2 forward-test evaluation + report (stage2_auswertung.md)
+│   ├── stats.py / modeling.py / feature_groups.py  # Pure stats (Newey-West, rank IC, batch-jackknife intervals), leakage-safe RF+LASSO, feature grouping
+│   ├── screen.py           # Neutral candidate screen: quality gate, 12 evidence groups with literature signs, buckets (SCREEN.md)
+│   ├── screen_backtest.py  # Historical validation of the screen (absolute / relative / SPY; scripts/analysis/screen_backtest.py)
+│   ├── forecast_eval.py    # Pre-registered evaluation of Claude's forecasts; freeze_sample / verdict_from_frozen = decisive criterion (FORECASTS.md)
+│   ├── criterion_sim.py    # Simulated size / power of that criterion (scripts/analysis/simulate_criterion_size.py)
+│   ├── benchmark.py        # SPY forward returns on the target definition (read-only loader)
+│   ├── report_format.py    # Markdown cell formatters shared by the analysis reports
+│   ├── event_study.py      # Event studies: horizon mode (20/60-session raw and excess returns) + barrier mode (barrier mode removed in step 6)
+│   ├── barrier.py          # Barrier trade simulation (MAIN_BARRIER: +1 % / −2 % / 14 sessions) – removed in plan step 6
+│   ├── hit_model.py        # Walk-forward hit-probability model for the barrier label – removed in step 6
+│   └── stage2_eval.py      # Stage-2 forward-test evaluation + report (stage2_auswertung.md) – replaced by forecast_eval in step 4/6
 ├── scheduler/
 │   ├── setup.py            # JOB_DEFINITIONS (cron, Europe/Berlin) + create_scheduler()
 │   ├── registry.py         # job id ↔ collector_name, CHAIN_STEP_JOB_IDS, NIGHTLY_UPSTREAM, CATCHUP_JOBS
