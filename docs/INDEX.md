@@ -102,6 +102,7 @@
 | [reports/2026-10-17_hit_model_walkforward.md](reports/2026-10-17_hit_model_walkforward.md) | Step B re-run on the repaired data (557,275 snapshots): still not passed, holdout AUC ≈ 0.50 |
 | [reports/2026-10-17_event_study_index_add.md](reports/2026-10-17_event_study_index_add.md) | Step D2 re-run on the repaired data: 110 events, −0.320 % vs. universe (unchanged) |
 | [reports/2026-10-17_barrier_backtest.md](reports/2026-10-17_barrier_backtest.md) | K1 barrier backtest of the current context-pack score on the repaired data (1,060 days): approx. random, no significantly positive net return |
+| [reports/2026-10-17_screen_backtest.md](reports/2026-10-17_screen_backtest.md) | Historical validation of the strategy-neutral screen `screen/v1` (raw, vs universe, vs SPY; 20/60 sessions); 60d: bullish +1.65 % vs universe (CI > 0), bullish minus bearish +4.13 % (CI > 0) – partly in-sample (short interest, insider) and before 2026 only 6 of 12 groups had data |
 
 ### Other READMEs
 
