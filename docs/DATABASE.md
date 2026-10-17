@@ -44,7 +44,8 @@ CREATE TABLE signals.universe (
   industry        VARCHAR(100),
   added_date      DATE NOT NULL,
   added_by        VARCHAR(50),        -- 'sp500', 'nasdaq100', 'ark_etf', 'manual'; 'sp500_history' = inactive row of a
-                                      --   former S&P 500 member (repair step 2b, planned)
+                                      --   former S&P 500 member (repair step 2b, applied 2026-10-17: 71 rows, 3 active =
+                                      --   current members SKYD/TWLO/VYLR)
   is_active       BOOLEAN DEFAULT TRUE,
   last_seen       DATE,
   index_membership VARCHAR(20)[],     -- {sp500, nasdaq100} (migration 005)
@@ -81,7 +82,8 @@ CREATE TABLE signals.prices_daily (
   adj_close       NUMERIC(16,4),      -- = close for Alpaca (adjustment=all)
   volume          BIGINT,
   source          VARCHAR(50) DEFAULT 'yfinance',  -- 'alpaca', 'yfinance'; 'alpaca_backfill' = SIP backfill of former
-                                                   --   S&P 500 members (repair step 2b, planned)
+                                                   --   S&P 500 members (repair step 2b, applied 2026-10-17: 44,495 rows,
+                                                   --   76 tickers incl. PARA and 1,555 rows overwritten from IEX)
   is_extrapolated BOOLEAN DEFAULT FALSE,           -- gap-filled row (not a real bar)
   fetched_at      TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (ticker, trade_date)
@@ -371,7 +373,7 @@ point-in-time universe queries to prevent survivorship bias
 - **Rename convention:** a ticker rename is one continuous interval under the **current** symbol (e.g. `META` from 2021-01-01, `DAY` including the CDAY years); old symbols get no interval. A real exit ends the interval at the effective removal date; the company's prices are stored under the same current symbol. Intervals of long-standing members start at 2021-01-01 (not at `data_start_date()`).
 - **`source` values:** `wikipedia`, `github_csv`, `index_sync`, `initial_seed`, `manual` (events that no change table lists, e.g. the Paramount Global exit / Paramount Skydance entry of 2025-08-08).
 - **State before the S&P 500 repair (2026-10-16):** 506 `sp500` rows = 416 `initial_seed` members (from 2021-01-01) + 87 `wikipedia` + 3 `index_sync` additions, only 3 closed intervals (TAP, TTD, BLDR, dated 10 days late). Point-in-time S&P 500 members: 426 (2022-01-03), 441 (2023), 456 (2024), 472 (2025), 490 (2026) instead of 503–505; 92 real exits inside the data window were missing. The Nasdaq-100 rows are not affected.
-- **State after the repair (planned, step 2a not applied yet):** 610 `sp500` intervals = 503 open + 107 closed (92 exits in the window incl. 3 merger successors, 15 exits before 2021-10-01), 503–506 members on every session since 2021-10-01. `scripts/repair/rebuild_sp500_membership.py` replaces only the `sp500` rows (backup CSV first); runbook and expected numbers: [reports/2026-10-16_sp500_survivorship_inventory.md](reports/2026-10-16_sp500_survivorship_inventory.md), decision: [DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-10-16.
+- **State after the repair (applied 2026-10-17, step 2a):** 610 `sp500` intervals = 503 open + 107 closed (92 exits in the window incl. 3 merger successors, 15 exits before 2021-10-01), 503–506 members on every session since 2021-10-01. `scripts/repair/rebuild_sp500_membership.py` replaces only the `sp500` rows (backup CSV first); runbook and expected numbers: [reports/2026-10-16_sp500_survivorship_inventory.md](reports/2026-10-16_sp500_survivorship_inventory.md), decision: [DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-10-16.
 
 ```sql
 CREATE TABLE signals.index_membership (
@@ -501,7 +503,7 @@ CREATE INDEX idx_short_volume_date ON signals.short_volume(trade_date);
 Bi-monthly FINRA short interest settlement data (outstanding short positions per settlement date). Written by the weekly `short_interest_positions_collector` (`collectors/short_interest_positions_collector.py`, collector name `short_interest_positions`, since 2026-10-16; Massive `GET /stocks/v1/short-interest`, upsert on `(ticker, settlement_date, source)`, so FINRA revisions overwrite). Initial history via `scripts/repair/collect_short_interest.py`; details: [DATA_SOURCES.md](DATA_SOURCES.md) §10.
 
 > [!NOTE]
-> The table exists since migration 027 but stayed empty until the collector was added (2026-10-16; before the first run on the server it is still empty). `short_interest_collector.py` writes only `short_volume` (daily short *volume*) – the two are different datasets. Rows cover all universe tickers incl. inactive ones (survivorship). `days_to_cover` and `avg_daily_volume` are NULL when the API reports the "no volume" sentinel (`days_to_cover = 999.99`, `avg_daily_volume = 0`). The payload has **no publication date**: consumers must apply an availability lag (feature pipeline: 9 NYSE sessions, see the feature columns below and `derived/short_interest_features.py`). The ORM classes `ShortVolume`/`ShortInterest` live in `db/models/short_interest.py` but are not re-exported from `db/models/__init__.py`; the dashboard reads `short_interest` (`api/routes/dashboard.py`), `data_retention` prunes it by `settlement_date`.
+> The table exists since migration 027 but stayed empty until the collector was added (2026-10-16; filled the same day by the initial backfill: 94,370 rows, 120 settlement dates 2021-10-15 to 2026-09-30). `short_interest_collector.py` writes only `short_volume` (daily short *volume*) – the two are different datasets. Rows cover all universe tickers incl. inactive ones (survivorship). `days_to_cover` and `avg_daily_volume` are NULL when the API reports the "no volume" sentinel (`days_to_cover = 999.99`, `avg_daily_volume = 0`). The payload has **no publication date**: consumers must apply an availability lag (feature pipeline: 9 NYSE sessions, see the feature columns below and `derived/short_interest_features.py`). The ORM classes `ShortVolume`/`ShortInterest` live in `db/models/short_interest.py` but are not re-exported from `db/models/__init__.py`; the dashboard reads `short_interest` (`api/routes/dashboard.py`), `data_retention` prunes it by `settlement_date`.
 
 ```sql
 CREATE TABLE signals.short_interest (

@@ -282,7 +282,7 @@ full history under the new symbol), so old symbols (FB, BK, ...) must **not** be
 
 ## 8. Repair runbook
 
-Code written 2026-10-16, **not yet run against production**. Tested with unit tests (mocked HTTP, no DB) and end to end on a
+Code written 2026-10-16; steps 2a and 2b ran against production on 2026-10-17 and step 3 has been running since 09:53 (see [Execution log 2026-10-17](#execution-log-2026-10-17) at the end of this section). Tested with unit tests (mocked HTTP, no DB) and end to end on a
 throwaway Postgres 18 (all 36 migrations, synthetic pre-repair state that reproduces the inventory numbers: 416/426/441/456/472/490 members
 at the year starts, live read-only Wikipedia and Alpaca calls). The numbers below are derived from this inventory and that
 test; **the dry run on production is authoritative** - compare it with this table before every `--apply`.
@@ -382,7 +382,7 @@ additions or removals there means the Wikipedia list changed in between.
 * **2a**: `rebuild_sp500_membership.py --restore <backup.csv> --apply` (the CSV holds all old `sp500` rows incl. ids; the current state is backed up again
   first). Check with the dry run: `unchanged 506`. The Nasdaq-100 rows are never touched.
 * **2b**: delete by marker, in this order: `delete from signals.technical_indicators where ticker in (select ticker from signals.universe where added_by = 'sp500_history')`,
-  `delete from signals.prices_daily where source = 'alpaca_backfill'` (note: this also removes the repaired Paramount series), `delete from signals.universe where added_by = 'sp500_history'`.
+  `delete from signals.prices_daily where source = 'alpaca_backfill'` (note: this also removes the repaired Paramount series and, since the run of 2026-10-17, the 1,555 rows of ANSS/ATVI/XLNX that were overwritten IEX-to-SIP - the marker count 44,495 = 43,530 + 965 shows they carry it; their old IEX values are not backed up), `delete from signals.universe where added_by = 'sp500_history'`.
   The deleted PARA rows and the old PARA universe row are in `para_prices_daily_<ts>.csv`, `para_technical_indicators_<ts>.csv`, `para_universe_<ts>.csv` in the backup directory
   (Banzai's series; only needed to undo the fix, the data are wrong for PARA anyway).
   The removed `ticker_blacklist` row of BF.B is in `ticker_blacklist_reactivated_<ts>.csv` in the same directory; the reactivation itself is not rolled back (BF.B is a current S&P 500 member).
@@ -400,3 +400,33 @@ additions or removals there means the Wikipedia list changed in between.
 4. Intervals of the 15 exits before the window are inserted (they only matter for the 2021 year-start count).
 5. The price backfill requests `[data_start_date(), last member day]` for every ticker, i.e. also the warm-up before a late membership start (needed for SMA200/RSI).
 6. BF.B (Brown-Forman Class B, current member) is inactive in `universe` and in `ticker_blacklist` as `MUTUALFUND`/`manual_enrichment` (2026-04-15): the sector enrichment asked Yahoo for the raw symbol `BF.B` before `to_yahoo_symbol` mapped it to `BF-B`. `--add-current-members` reactivates it and drops the blacklist row; the sector enrichment no longer blacklists tickers with an open `index_membership` interval, so the next `index_sync` (which enriches active tickers without a sector) cannot undo it. It is the only false positive in the blacklist.
+
+### Execution log 2026-10-17
+
+Deploys: `771ab1d` 09:25-09:29 (step 1 code), `8de96a1` 09:42-09:44 (`--add-current-members`, index-member guard in `apply_sector_records`). `d03955c` (same guard in `NewTickerOnboarder`, benchmark ETFs never deactivated) is pushed but not deployed. Backups are in `/mnt/user/Workfiles/AlpacaBroker/ops/` (share: `\\HOMENAS\Workfiles\AlpacaBroker\ops\`).
+
+| Step | Time | Result |
+|---|---|---|
+| 2a dry run | before 09:35 | Matched the table above exactly: INSERT 105, UPDATE 9, DELETE 1 (PSKY), unchanged 496; 1,266 sessions, after the repair min 503 / max 506 members, 0 outside 495-510 |
+| 2b dry run, *before* 2a was applied | | Found nothing to onboard - by design, the script reads `index_membership` (it warns "run rebuild --apply first"); only the PARA part is informative. It surfaced BF.B (finding 6 above) |
+| 2a `--apply` | 09:35 (Sebastian's OK) | 1 deleted, 9 updated, 105 inserted, post-check OK; backup `sp500_membership_backup_20261017_093532.csv` |
+| 2b dry run `--fix-para --add-current-members` | after 2a | universe INSERT 71 (68 inactive exits + SKYD, TWLO, VYLR active), REACTIVATE BF.B; prices 43,530 rows for 76 tickers; PARA 301 Banzai rows to delete, 965 Paramount rows to write; indicators for 76 tickers |
+| 2b `--apply` | 09:51 (Sebastian's explicit OK) | `STEP universe: 71 rows inserted, 1 reactivated, 1 blacklist rows removed`; `STEP fix-para: prices_deleted 301, ta_deleted 301, prices_written 965`; `STEP prices: 43530 rows upserted for 75 tickers`; `STEP technical indicators: 76 tickers, 44405 rows, 0 errors`. Backups (all `_20261017_095146.csv`): `ticker_blacklist_reactivated`, `para_prices_daily`, `para_technical_indicators`, `para_universe` |
+| 2a + 2b idempotency dry runs (runbook steps 3 and 6) | 10:13 | `rebuild_sp500_membership.py`: `unchanged 610, INSERT 0, UPDATE 0, DELETE 0`, all year starts and all 1,266 sessions 503-506; `onboard_removed_members.py --fix-para --add-current-members`: universe INSERT 0, no reactivation, prices `rows to write 0` (only the 16 tickers with the 37 known tail gaps left in the plan), PARA `already fixed` (965 rows, 0 with close > 1,000), indicators for 0 tickers. AVB is the 76th price-plan ticker with `write 0` (hence "75 tickers" in the 2b `STEP prices` line); PARA's 964 pre-exit indicator rows were recomputed in 2b (max SMA20 35.09) |
+| 3 | started 09:53, running | `alpaca-ops run-bg scripts/repair/features_rebuild.py --apply --skip-ta --skip-clusters`; window 2021-10-01 to 2026-10-16 (1,266 sessions), first session 527 tickers, about 15 s per session = about 5.3 h for the feature step, then targets; before: 627,412 `feature_snapshots`; progress: `alpaca-ops run-log` |
+
+**Differences to the expected numbers above**
+
+* Universe INSERT 71 instead of 68: SKYD, TWLO, VYLR were inserted active through `--add-current-members` (listed in the 2b table as "possibly").
+* Price rows 43,530 (plus 965 PARA = 44,495 `alpaca_backfill` rows) instead of about 40,100: the 68 exits gave exactly the expected 39,130; on top came BF.B 1,266, TWLO 1,266 (full history as warm-up for a new active ticker), SKYD 301, VYLR 12 and 1,555 IEX-to-SIP overwrites (ANSS 950, ATVI 512, XLNX 93). The dry run planned 76 tickers, `--apply` reported rows upserted for 75.
+* PARA: 301 rows deleted (300 dated >= 2025-08-08 plus the foreign 2025-08-07 row; indicator rows 301 as well) instead of about 300/299; 965 Paramount rows as expected.
+* Tail gaps as expected: 16 tickers, 37 member-sessions without a bar.
+
+**Verified afterwards (read-only SQL)**
+
+* `index_membership` `sp500`: 503 open / 610 total; PSKY and CDAY gone; PARA 2021-01-01..2025-08-08, SKYD 2025-08-08..open, DAY 2021-09-20..2026-02-09; Nasdaq-100 untouched (157 rows, 101 open); all 1,266 sessions have 503-506 members.
+* `universe` with `added_by = 'sp500_history'`: 71 rows, 3 active; `prices_daily` with `source = 'alpaca_backfill'`: 44,495 rows for 76 tickers.
+* PARA: "Paramount Global (Class B)", inactive, sector and cusip NULL; 965 price rows 2021-10-01..2025-08-06, max close 36.23; no technical indicators dated >= 2025-08-08.
+* BF.B: active, not blacklisted, 1,266 price rows up to 2026-10-16, 1,265 indicator rows.
+* Active universe: 760 (757 - PARA + SKYD/TWLO/VYLR + BF.B).
+* On 2022-01-03 all 505 point-in-time members have a price row; the only member-sessions without a price are the 37 expected tail gaps.

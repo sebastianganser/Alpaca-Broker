@@ -3,7 +3,7 @@
 > Central navigator for all project documentation.
 > Start here to find the right document for your question.
 
-**Last updated:** 16 October 2026 (S&P 500 survivorship inventory and repair runbook added to the reports)
+**Last updated:** 17 October 2026 (S&P 500 survivorship repair runbook now carries the execution log of 2026-10-17)
 
 ---
 
@@ -12,7 +12,7 @@
 | I'm looking for... | Document |
 |---|---|
 | Project overview, mission, principles, current status | [CLAUDE.md](../CLAUDE.md) |
-| **Where did the last session stop? What is deployed? What is open?** | [SESSION_LOG.md](SESSION_LOG.md) – last entry (Session 33) · [ROADMAP.md](ROADMAP.md) – "Offene Punkte" |
+| **Where did the last session stop? What is deployed? What is open?** | [SESSION_LOG.md](SESSION_LOG.md) – last entry (Session 34) · [ROADMAP.md](ROADMAP.md) – "Offene Punkte" |
 | How is the system deployed and structured? | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | What database tables exist? (DDL, migrations 001–036, retention) | [DATABASE.md](DATABASE.md) |
 | When do jobs run? (schedule, nightly chain) | [SCHEDULER.md](SCHEDULER.md) |
@@ -37,7 +37,7 @@
 | [CLAUDE.md](../CLAUDE.md) | Entry point for every AI session – project identity, principles, status, quick facts, session checklists | Status after every session |
 | [README.md](../README.md) | GitHub-facing project overview | After major milestones |
 | [.claude/](../.claude/) | Shared Claude Code setup: subagents (`log-checker` Haiku, `doc-keeper` Sonnet, `code-reviewer` Opus), skills (`/log-check`, `/deploy`, `/session-end`), permissions (`settings.json`) | When the workflow changes |
-| [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) | Host operations (status, logs, deploy, run) behind the Unraid User Script `alpaca-ops` | When ops change |
+| [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) | Host operations (status, logs, deploy, run, run-bg) behind the Unraid User Script `alpaca-ops` | When ops change |
 
 ### Architecture & Infrastructure
 
@@ -92,7 +92,7 @@
 | [reports/2026-10-06_event_study_index_add.md](reports/2026-10-06_event_study_index_add.md) | Step D2: index additions (exploratory hint) |
 | [reports/2026-10-06_buyback_audit.md](reports/2026-10-06_buyback_audit.md) | Audit sample of the buyback sentence classifier |
 | [reports/2026-10-06_buyback_events.csv](reports/2026-10-06_buyback_events.csv) | Raw event list of the buyback study (data file) |
-| [reports/2026-10-16_sp500_survivorship_inventory.md](reports/2026-10-16_sp500_survivorship_inventory.md) | S&P 500 survivorship inventory (read-only): root cause, reconciliation of Wikipedia vs GitHub, state per category, effort estimate, open questions; section 8 = repair runbook with expected numbers, verification SQL and rollback |
+| [reports/2026-10-16_sp500_survivorship_inventory.md](reports/2026-10-16_sp500_survivorship_inventory.md) | S&P 500 survivorship inventory (read-only): root cause, reconciliation of Wikipedia vs GitHub, state per category, effort estimate, open questions; section 8 = repair runbook with expected numbers, verification SQL, rollback and the execution log of 2026-10-17 |
 | [reports/2026-10-16_sp500_removals.csv](reports/2026-10-16_sp500_removals.csv) | One row per S&P 500 removal/rename 2021-01-01 … 2026-10-16 (data file of the inventory) |
 
 ### Other READMEs

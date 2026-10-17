@@ -93,9 +93,9 @@ Claude Code reaches the production system through three channels (no SSH):
 |---------|--------|----------|
 | Production API | `http://192.168.1.93:8090/api/v1/…`, read-only `GET` via `curl`: `health`, `dashboard/summary` (collectors with `last_status`/`is_running`, `table_stats`, `system_health` incl. Alembic revision and job count), `logs` (filters `status`, `collector`, `page`, `limit`) | Health and log checks (agent `log-checker`, skill `log-check`) |
 | Context-pack share | `\\HOMENAS\Workfiles\AlpacaBroker\context_packs\` – read-only, by hostname (access via IP is denied) | Context packs, `decisions.yaml`, `stage2_auswertung.md` |
-| Unraid WebGUI | `http://192.168.1.93` in Claude Code's built-in browser pane; Sebastian logs in himself. One User Script **`alpaca-ops`** (Settings → User Scripts → Run Script, argument = command: `status`, `logs [N] [SINCE]`, `deploy`, `deploy-log`, `restart`, `run scripts/…py [args]`). The wrapper fetches [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) from `origin/main` on every run (a push changes the ops logic, the deployed app only changes with `deploy`) and mirrors each run's output to `\\HOMENAS\Workfiles\AlpacaBroker\ops\<command>.log` | Deploy (skill `deploy`), container state, container logs, project scripts in the container |
+| Unraid WebGUI | `http://192.168.1.93` in Claude Code's built-in browser pane; Sebastian logs in himself. One User Script **`alpaca-ops`** (Settings → User Scripts → Run Script, argument = command: `status`, `logs [N] [SINCE]`, `deploy`, `deploy-log`, `restart`, `run scripts/…py [args]`, and for long runs `run-bg scripts/…py [args]` / `run-log [N]` / `run-stop` – detached, output in `ops/bg-job.log`). The wrapper fetches [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) from `origin/main` on every run (a push changes the ops logic, the deployed app only changes with `deploy`) and mirrors each run's output to `\\HOMENAS\Workfiles\AlpacaBroker\ops\<command>.log` | Deploy (skill `deploy`), container state, container logs, project scripts in the container |
 
-Scope and guard rules: in the WebGUI only the container `alpaca-broker`, its folders and its own User Scripts may be touched – never other containers (GynOrg, PostgreSQL), array, shares, users, network or security settings. Deploys/restarts are not allowed between 22:15 and 05:15 (collectors + nightly chain) or while a job is running (`is_running` in `dashboard/summary`). The shared Claude Code setup (permissions, subagents, skills) lives in `.claude/`; the working rules are in [CLAUDE.md](../CLAUDE.md).
+Scope and guard rules: in the WebGUI only the container `alpaca-broker`, its folders and its own User Scripts may be touched – never other containers (GynOrg, PostgreSQL), array, shares, users, network or security settings. Deploys/restarts are not allowed between 22:15 and 05:15 (collectors + nightly chain), while a job is running (`is_running` in `dashboard/summary`) or while a project script runs in the container (`docker top`; started via `run` or `run-bg`). `run` and `run-bg` are refused in the night window at the start; a detached `run-bg` is not stopped at 22:15, so it must end before the chain (04:30, Tue–Sat) or be stopped with `run-stop` (decision [2026-10-17](DECISIONS_ARCHITECTURE.md)). The shared Claude Code setup (permissions, subagents, skills) lives in `.claude/`; the working rules are in [CLAUDE.md](../CLAUDE.md).
 
 ---
 
@@ -118,7 +118,7 @@ Alpaca-Broker/
 │   ├── Dockerfile.collector         # 3-stage build (Node → uv/Python → slim runtime, user 99:100)
 │   ├── entrypoint.sh                # pg_isready → alembic upgrade head → CMD
 │   └── unraid/
-│       └── alpaca-ops.sh            # Host ops (status/logs/deploy/run), run via User Script "alpaca-ops"
+│       └── alpaca-ops.sh            # Host ops (status/logs/deploy/run/run-bg), run via User Script "alpaca-ops"
 ├── src/
 │   ├── alembic/versions/            # Migrations 001–036
 │   └── trading_signals/             # Python package (see below)
@@ -216,7 +216,7 @@ trading_signals/
 │   ├── ticker_aliases.py   # 24 documented renames (current-symbol convention), AliasMap, symbol re-use list
 │   ├── corporate_actions.py# Alpaca corporate actions (name_change, mergers), read-only
 │   ├── validation.py       # Weekly universe validation against Alpaca assets (job universe_validation)
-│   ├── alpaca_validator.py / onboarder.py / blacklist.py  # Tradeability, auto-onboarding, ETF filter
+│   ├── alpaca_validator.py / onboarder.py / blacklist.py  # Tradeability, auto-onboarding, ETF filter (never blacklists a ticker with an open index_membership interval)
 ├── data/congress_members.py# Static Congress member → party mapping
 ├── db/
 │   ├── base.py             # Declarative base (schema signals), now_local()

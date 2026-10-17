@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_DATA.md](DECISIONS_DATA.md) · [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md)
 
-**Last updated:** 16 October 2026
+**Last updated:** 17 October 2026
 
 ---
 
@@ -197,8 +197,8 @@
 ### [2026-10-16] Unraid Operations via WebGUI and One User Script (No SSH)
 
 **Context:** To work autonomously Claude Code needs to deploy, read container logs and run project scripts on the Unraid host. SSH is disabled on the server; a restricted forced-command SSH key was prepared but not installed.
-**Decision (Sebastian):** Claude works on Unraid through the WebGUI in Claude Code's built-in browser – Sebastian logs in himself. Host actions run through **one** User Script `alpaca-ops` whose argument is the command (`status`, `logs`, `deploy`, `deploy-log`, `restart`, `run scripts/…py`). Deploys of finished, tested, pushed work may be run autonomously; data-changing actions (repair scripts with `--apply`, mutating `/ops/*` calls) only on request.
-**Implementation:** The User Script is a 10-line wrapper that fetches [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) from `origin/main` (`git show`, working tree untouched) – the ops logic is versioned and changes by push, the deployed app only by `deploy`. Every run mirrors its output to `Workfiles/AlpacaBroker/ops/<command>.log`, which Claude reads as text via `\\HOMENAS\Workfiles` instead of interpreting terminal screenshots. Guards in the script: no deploy/restart 22:15–05:15 or while a job has `is_running: true`; deploy builds before recreating (old container keeps serving), detached with a lock.
+**Decision (Sebastian):** Claude works on Unraid through the WebGUI in Claude Code's built-in browser – Sebastian logs in himself. Host actions run through **one** User Script `alpaca-ops` whose argument is the command (`status`, `logs`, `deploy`, `deploy-log`, `restart`, `run scripts/…py`; since 2026-10-17 also `run-bg`, `run-log`, `run-stop`, see below). Deploys of finished, tested, pushed work may be run autonomously; data-changing actions (repair scripts with `--apply`, mutating `/ops/*` calls) only on request.
+**Implementation:** The User Script is a 10-line wrapper that fetches [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) from `origin/main` (`git show`, working tree untouched) – the ops logic is versioned and changes by push, the deployed app only by `deploy`. Every run mirrors its output to `Workfiles/AlpacaBroker/ops/<command>.log`, which Claude reads as text via `\\HOMENAS\Workfiles` instead of interpreting terminal screenshots. Guards in the script: no deploy/restart 22:15–05:15 or while a job has `is_running: true` or (since 2026-10-17) a project script runs in the container; deploy builds before recreating (old container keeps serving), detached with a lock.
 **Scope:** in the WebGUI only `alpaca-broker`, its appdata/Workfiles folders and its own User Script – never other containers (GynOrg, other projects on the host), array, shares, users, network or security settings (CLAUDE.md, "Unraid WebGUI scope").
 **Trade-off:** the wrapper runs repo code as root on the host, so anyone who can push to `main` can act on the host when the script is run – acceptable for a single-developer private repo; the previous 2026-10-15 note "deploy remains a manual step" is superseded.
 
@@ -215,6 +215,13 @@
 **Context:** Migration 024 had been extended after production applied it, so 025 re-added the same columns; production was fine, but a fresh `alembic upgrade head` failed at 025.
 **Decision:** Applied migrations (001–035 at the time; every migration once deployed) never change their effect. The only allowed edit is making a migration idempotent so both histories replay (025: `ADD COLUMN IF NOT EXISTS`, downgrade no-op because 024 owns the columns). Every new migration is tested on a throwaway local `postgres:18` (Docker Desktop, all `DB_*` overridden – the local `.env` points at production) before it is deployed: fresh `upgrade head`, a downgrade/upgrade round trip and `alembic check`. The ORM mirrors the migrated schema (aligned 2026-10-16: nullability, server defaults, indexes, no FK `technical_indicators → universe`); `env.py` compares only the `signals` schema and also server defaults, so `alembic check` is a real gate.
 **Rationale:** production only runs revisions after its current head, so idempotency edits are no-ops there; a broken chain blocks rebuilding the DB (the system keeps no backups) and a failing migration puts the container into a restart loop.
+
+### [2026-10-17] Detached Script Runs in `alpaca-ops` (`run-bg`, `run-log`, `run-stop`)
+
+**Context:** `alpaca-ops run` executes `docker exec` in the foreground of the User Script popup; closing the popup (or losing the browser session) aborts the script. The S&P 500 survivorship repair needs a full feature rebuild of about 5.3 h for the feature step alone (1,266 sessions at about 15 s). A deploy or restart during such a run would kill it halfway.
+**Decision:** Three more commands of the single User Script (`158bc59`): `run-bg scripts/…py [args]` starts the same `docker exec … python -u` detached (`setsid nohup`), output goes to `ops/bg-job.log` and ends with `## <timestamp> exit code <rc>`; `run-log [N]` shows whether a project script is running (via `docker top`) plus the log tail; `run-stop` sends SIGTERM to the project script processes. Argument validation is the same as for `run`. Only one project script at a time (`run-bg` refuses while one runs). `deploy`, `restart` and the deploy worker right before the container recreate refuse while a project script runs in the container; `status` lists running scripts.
+**Rationale:** the long-running repair must survive the popup and still be protected from the host operations that would kill it; `docker top` reads the process list from the host, so the image needs no `procps`.
+**Consequence:** The window guard (no start 22:15–05:15) only applies at the start – a detached run is **not** stopped at 22:15, so it must end before the nightly chain (04:30, Tuesday–Saturday) or be stopped with `run-stop`; scripts that write `feature_snapshots` must not overlap the chain (deadlock risk, 2026-10-15). Monitoring: `run-log`, the API, and the popup text rather than the cached share file (LEARNINGS 2026-10-17).
 
 ---
 

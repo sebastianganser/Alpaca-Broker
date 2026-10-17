@@ -5,9 +5,9 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** 16 October 2026 (verified against `scheduler/setup.py` + `scheduler/registry.py`)
+**Last updated:** 17 October 2026 (verified against `scheduler/setup.py` + `scheduler/registry.py`; production `job_count` 26)
 
-**26 registered jobs:** 13 daily (11 upstream jobs, `log_retention`, `nightly_chain`), 7 weekly (Sunday, incl. `data_retention`, `universe_validation`), 2 monthly, 4 paused chain steps. All times Europe/Berlin. (`universe_validation` is in the code since 2026-10-16 but not deployed yet – production reports 25 until the next deploy; remove this note afterwards.)
+**26 registered jobs:** 13 daily (11 upstream jobs, `log_retention`, `nightly_chain`), 7 weekly (Sunday, incl. `data_retention`, `universe_validation`), 2 monthly, 4 paused chain steps. All times Europe/Berlin. (`universe_validation` is live since the deploy of 2026-10-17; production reports `job_count` 26.)
 
 **Log names:** `collection_log.collector_name` differs from the job id for some jobs (`scheduler/registry.JOB_COLLECTOR_NAMES`), e.g. `price_collector` → `prices_alpaca`, `news_collector` → `news_alpaca`, `fundamentals_collector` → `fundamentals_yf`, `short_interest_positions_collector` → `short_interest_positions`. The jobs `ark_holdings` and `form4_collector` additionally write the follow-up runs `ark_deltas` and `insider_clusters`.
 

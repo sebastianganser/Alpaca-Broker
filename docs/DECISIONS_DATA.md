@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) · [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md)
 
-**Last updated:** 16 October 2026
+**Last updated:** 17 October 2026
 
 ---
 
@@ -419,12 +419,32 @@
 - **Manual event:** Paramount Global (PARA) left and Paramount Skydance joined on 2025-08-08; this is in neither the Wikipedia table nor the GitHub snapshots, so `rebuild_sp500_membership.py` adds it as a manual event (`source='manual'`; the successor is keyed by its current symbol SKYD, formerly PSKY; skipped automatically once Wikipedia lists it). The existing `PSKY` row (from 2021-01-01, 966 phantom member days) is deleted. `universe.PARA` currently holds Banzai International, so Paramount's PARA price series is replaced via `onboard_removed_members.py --fix-para`.
 - **Ongoing maintenance:** `IndexSyncer` dates intervals with the effective change date (the sync date only as a logged fallback) and re-keys the open interval on a rename (alias list first, then Alpaca `name_change`). New weekly job `universe_validation` (Sunday 13:00) deactivates tickers that are untradable on Alpaca – unless an index interval is still open (then a warning, run status `partial`) – and writes renames/mergers from Alpaca corporate actions (`universe/corporate_actions.py`) into the run notes ([SCHEDULER.md](SCHEDULER.md)).
 - **Price backfill rule:** exits get inactive `universe` rows (`added_by='sp500_history'`) and SIP price rows (`source='alpaca_backfill'`, `adjustment=all`). For delisted or re-used symbols the Alpaca `asof` parameter is the **first member day** of the request, not the last: `asof` = last day returned 2 bars of an ETF that re-used INFO after IHS Markit's delisting.
-- **Repair in three steps** (runbook: section 8 of the inventory): (1) code – committed 2026-10-16 (`c290f65`, `3d85fcf`), not deployed; (2) data – `scripts/repair/rebuild_sp500_membership.py` (expected +105 / ~9 updated / −1 `sp500` rows, members 503–506 on every session since 2021, refuses more than 10 deletes or member counts outside 495–510, CSV backup, `--restore`) and `scripts/repair/onboard_removed_members.py --fix-para` (68 inactive universe rows, ~40,100 price rows, technical indicators); both are dry runs by default and `--apply` needs Sebastian's OK; (3) full feature rebuild and re-run of the analyses.
+- **Repair in three steps** (runbook: section 8 of the inventory; execution log 2026-10-17 there): (1) code – committed 2026-10-16 (`c290f65`, `3d85fcf`), deployed 2026-10-17; (2) data (applied 2026-10-17, dry runs matched the runbook; follow-up scope: next entry) – `scripts/repair/rebuild_sp500_membership.py` (expected +105 / ~9 updated / −1 `sp500` rows, members 503–506 on every session since 2021, refuses more than 10 deletes or member counts outside 495–510, CSV backup, `--restore`) and `scripts/repair/onboard_removed_members.py --fix-para` (68 inactive universe rows, ~40,100 price rows, technical indicators); both are dry runs by default and `--apply` needs Sebastian's OK; (3) full feature rebuild and re-run of the analyses.
 
 **Rationale:** Index exits are the survivorship signal; a history without them is worse than none because it looks complete. Fixing the source, the sync and the convention first (step 1) means the repaired data stays correct after the next monthly sync; one interval per entity under the current symbol keeps point-in-time joins on `ticker` consistent with the price tables.
 
 **Consequence:**
-- All analyses that read the S&P 500 point-in-time universe since August 2026 ran on a survivor-biased universe (R1, the K1–K4 research steps incl. the index-addition event study, the monthly feature analysis, walk-forward, Sprint 10 readiness) and **must be re-run after the repair**; results will change. Until step 2 is applied, features built on the S&P universe stay biased.
+- All analyses that read the S&P 500 point-in-time universe since August 2026 ran on a survivor-biased universe (R1, the K1–K4 research steps incl. the index-addition event study, the monthly feature analysis, walk-forward, Sprint 10 readiness) and **must be re-run after the repair**; results will change. Membership and prices were repaired on 2026-10-17 (step 2); features and analyses computed before that date stay biased until the feature rebuild (step 3) has run and the analyses are re-run.
 - The feature rebuild changes 1,242 of 1,265 snapshot dates (+~50,500 ticker-day rows, 12 of 108 feature columns empty for the backfilled delisted tickers, as for ATVI today); `breadth_*` features change for every date.
 - The Nasdaq-100 intervals are untouched (the DB already holds 56 exits there; every statement of the rebuild is restricted to `index_name = 'sp500'`). The four exits of Q4 2021 leave the retention window on 2027-01-01.
 - Open uncertainties are listed in section 7 of the inventory (entity vs ticker key, WRK→SW, IEX vs SIP quality of the old delisted backfill, non-price source tables for the 70 tickers).
+
+---
+
+### [2026-10-17] Index Members Are Never Blacklisted; Scope of the Repair for Current Members
+
+**Context:** The first dry run of `onboard_removed_members.py` on 2026-10-17 (before the membership rebuild was applied) found nothing to onboard – by design, it reads `index_membership` – but surfaced a false positive: BF.B (Brown-Forman Class B, a current S&P 500 member) was `is_active = false` and in `ticker_blacklist` as `MUTUALFUND` / `manual_enrichment` since 2026-04-15. The sector enrichment asked Yahoo for the raw symbol `BF.B` before `to_yahoo_symbol` mapped it to `BF-B`; the wrong lookup returned a fund, and the learned ETF filter blacklisted and deactivated the ticker. BF.B never had a price row, and 1,266 feature snapshots existed without price data. It was the only false positive among the 54 blacklist entries (the other 53 are ETFs).
+
+**Decision:**
+- **Index membership proves an equity.** The learned ETF filter never blacklists or deactivates a ticker with an open `index_membership` interval: `apply_sector_records` (monthly `index_sync` enrichment, UI backfill) and `NewTickerOnboarder` (`_verify_equity_type` and `_enrich_sector`, which now uses the shared `apply_sector_records`) log a warning and take the normal sector path (`8de96a1`, `d03955c`). The benchmark/sector ETFs (`BENCHMARK_TICKERS`) are never deactivated by `apply_sector_records` either.
+- **Reactivation by the repair:** `onboard_removed_members.py --add-current-members` reactivates inactive current S&P 500 members and removes their `ticker_blacklist` rows after a CSV backup; applied on 2026-10-17 for BF.B.
+- **IEX→SIP overwrite accepted:** the repair re-fetched the tail of ANSS, ATVI and XLNX and overwrote 1,555 rows of the old IEX backfill (ANSS 950, ATVI 512, XLNX 93) with SIP bars (`source = 'alpaca_backfill'`), in line with the SIP-only price policy.
+- **Current members onboarded active by the repair:** SKYD, TWLO and VYLR were inserted as active universe rows and priced (TWLO with its full history as indicator warm-up) instead of waiting for the monthly `index_sync` of 2026-11-01.
+- **Banzai International is not added:** the company behind the PARA symbol collision is no index member and not part of the project; its 301 price rows under PARA were deleted and replaced by Paramount's series.
+
+**Rationale:** A false positive in the blacklist silently removes a current member from prices, features and every point-in-time universe, and nothing flags it. Membership of the S&P 500 / Nasdaq 100 is stronger evidence than a Yahoo `quoteType`, which can come from the wrong symbol form. Waiting for the monthly sync would have left three current members without prices (and without features) for two more weeks; the old IEX rows were of lower quality than SIP and the tail sessions had to be fetched anyway.
+
+**Consequence:**
+- Active universe 760 (757 − PARA + SKYD/TWLO/VYLR + BF.B). The check `select b.ticker from signals.ticker_blacklist b join signals.index_membership m on m.ticker = b.ticker where m.valid_to is null` must return no rows (standing check after every `index_sync`).
+- The ANSS/ATVI/XLNX rows can no longer be distinguished from the other backfilled rows by `source`; the old IEX values are not backed up.
+- Numbers and backups of the run: runbook section 8, "Execution log 2026-10-17" ([report](reports/2026-10-16_sp500_survivorship_inventory.md)).

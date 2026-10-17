@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** 16 October 2026
+**Last updated:** 17 October 2026
 
 ---
 
@@ -297,4 +297,27 @@ On 2026-10-05 12:10 `target_backfill` (manually triggered chain) failed with a P
 - Renames are not exits, and tickers are re-used (FB, LB, PARA, INFO): key history by the current symbol and fetch prices with `asof` = first member day.
 - Manual hygiene does not scale: 10 delisted/renamed tickers stayed active for months until `validate_universe.py` was run by hand; it is now the weekly job `universe_validation`.
 - When a source is known to have changed (`8b7709e` noted that the table was gone), re-verify what the dependent data looks like instead of only making the parser "not crash".
-**Status:** 🟡 Open – code fixed (`c290f65`, `3d85fcf`) but not deployed; data repair (steps 2–3) pending, see [DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-10-16.
+**Status:** 🟡 Open – code fixed (`c290f65`, `3d85fcf`) and deployed 2026-10-17; membership and prices repaired the same day (steps 2a/2b), the feature rebuild and the re-run of the analyses (step 3) are pending, see [DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-10-16 and 2026-10-17.
+
+### [2026-10-17] ⚠️ A Wrong Yahoo Symbol Blacklisted a Current S&P 500 Member as a Fund (BF.B)
+**Observation:** Brown-Forman Class B (BF.B), a current S&P 500 member, was `is_active = false` and in `ticker_blacklist` as `MUTUALFUND` / `manual_enrichment` since 2026-04-15. The sector enrichment asked Yahoo for the raw symbol `BF.B` before `to_yahoo_symbol` mapped it to `BF-B`; the lookup returned a fund and the self-learning ETF filter blacklisted and deactivated the ticker. BF.B never had a price row, yet 1,266 feature snapshots existed for it (all without price data). Nobody noticed for six months; it surfaced in the dry run of the survivorship repair, which checks the current index members against the universe. It was the only false positive among the 54 blacklist entries (the other 53 are ETFs).
+**Lesson:**
+- A learned filter that deactivates tickers needs a veto from stronger evidence: index membership proves an equity (`apply_sector_records`, `NewTickerOnboarder`), benchmark ETFs are never deactivated. Decision: [DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-10-17.
+- Symbol forms differ per source (`BF.B` in the universe, `BF-B` for Yahoo): map before every external lookup, in every code path, not only in the main one.
+- Cross-check derived lists against an independent source: `select b.ticker from signals.ticker_blacklist b join signals.index_membership m on m.ticker = b.ticker where m.valid_to is null` must return no rows; a current member without prices is a data hole, not a quiet default.
+**Status:** ✅ Fixed – BF.B reactivated and removed from the blacklist by the repair on 2026-10-17 (`8de96a1`, `d03955c`).
+
+### [2026-10-17] 🛠️ `alpaca-ops run` Dies with the Popup – Long Runs Need `run-bg`
+**Observation:** `alpaca-ops run` executes the script in the foreground of the User Script popup; closing the popup (or the browser session) ends the script. A full feature rebuild takes about 5.3 h for the feature step (1,266 sessions at about 15 s each).
+**Lesson:** Use `alpaca-ops run-bg` for anything longer than a few minutes (detached, output in `ops/bg-job.log` with the exit code, `run-log` / `run-stop`). While a project script runs, `deploy` and `restart` refuse, and the detached run is not stopped at 22:15 – plan it so that it ends before the nightly chain. Decision: [DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) 2026-10-17.
+**Status:** ✅ Solved (`158bc59`).
+
+### [2026-10-17] 🛠️ The SMB Share Showed a Stale Run Log – Read the Popup Text
+**Observation:** `ops/run.log` on the share showed only its first 4 lines for minutes although the run had long finished (Windows caches share files; same effect as with `deploy-worker.log` on 2026-10-16). The mtime and the API were current.
+**Lesson:** For live output, read the text of the popup's iframe through the browser pane (`document.querySelectorAll('iframe')[1].contentDocument.body.innerText`) instead of screenshots or the cached file; trust the API and `ops/deployed.txt` over any rewritten log. For detached runs use `alpaca-ops run-log`.
+**Status:** ✅ Workaround documented (CLAUDE.md, "Unraid actions").
+
+### [2026-10-17] 🛠️ Repair Scripts Have an Order – a Dry Run Before the Predecessor Is Not Informative
+**Observation:** `onboard_removed_members.py` reads `index_membership` to decide whom to onboard. Its dry run *before* `rebuild_sp500_membership.py --apply` found nothing to onboard and printed the warning "run rebuild --apply first"; only the PARA part (independent of the membership) was meaningful. The real dry run after the rebuild produced the runbook numbers exactly (39,130 bars for the 68 exits).
+**Lesson:** Follow the runbook order (rebuild, dry run, apply, dry run); read warnings of a dry run as a precondition check, not as noise. A dry run that "finds nothing" can mean the precondition is missing, not that nothing is wrong.
+**Status:** ✅ Runbook order confirmed ([report](reports/2026-10-16_sp500_survivorship_inventory.md), section 8).
