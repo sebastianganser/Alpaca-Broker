@@ -241,6 +241,18 @@ class FeatureSnapshot(Base):
     barrier_outcome: Mapped[int | None] = mapped_column(SmallInteger)
     barrier_ambiguous: Mapped[bool | None] = mapped_column(Boolean)
 
+    # Trailing-stop trade label (decision 2026-10-17, migration 037, see
+    # analysis/trailing.py MAIN_TRAILING): entry open(d+1), trailing stop at
+    # a FIXED distance of 3 x ATR(14) below the high-water mark, time stop
+    # after 60 sessions, 0.05 % round-trip cost. NULL until the full 60
+    # session window exists (same rule as the barrier label).
+    #   return_trail_60d – net trade return
+    #   trail_exit_day   – exit session, 1..60 (d+1 = 1; time stop = 60)
+    #   trail_stopped    – True trailing stop, False time stop
+    return_trail_60d: Mapped[float | None] = mapped_column(Numeric(10, 6))
+    trail_exit_day: Mapped[int | None] = mapped_column(SmallInteger)
+    trail_stopped: Mapped[bool | None] = mapped_column(Boolean)
+
     # ── Metadata ─────────────────────────────────────────────────────
     computed_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=True, server_default=func.now()
@@ -262,10 +274,13 @@ class FeatureSnapshot(Base):
 KEY_COLUMNS: tuple[str, ...] = ("snapshot_date", "ticker")
 #: Forward-return target columns (never use as model inputs).
 TARGET_COLUMNS: tuple[str, ...] = (
-    "return_1d", "return_5d", "return_20d", "return_60d", "return_barrier_14d",
+    "return_1d", "return_5d", "return_20d", "return_60d",
+    "return_barrier_14d", "return_trail_60d",
 )
 #: Non-return trade labels (never use as model inputs, not excess-adjusted).
-LABEL_COLUMNS: tuple[str, ...] = ("barrier_outcome", "barrier_ambiguous")
+LABEL_COLUMNS: tuple[str, ...] = (
+    "barrier_outcome", "barrier_ambiguous", "trail_exit_day", "trail_stopped",
+)
 #: Bookkeeping columns that are neither features nor targets.
 META_COLUMNS: tuple[str, ...] = ("computed_at", "feature_version")
 #: All feature columns, derived from the model (single source of truth).

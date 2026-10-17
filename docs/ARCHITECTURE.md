@@ -120,7 +120,7 @@ Alpaca-Broker/
 │   └── unraid/
 │       └── alpaca-ops.sh            # Host ops (status/logs/deploy/run/run-bg), run via User Script "alpaca-ops"
 ├── src/
-│   ├── alembic/versions/            # Migrations 001–036
+│   ├── alembic/versions/            # Migrations 001–037
 │   └── trading_signals/             # Python package (see below)
 ├── scripts/                         # Run manually (locally or via docker exec)
 │   ├── repair/                      # One-off repairs/backfills (features_rebuild, refetch prices,
@@ -191,7 +191,7 @@ trading_signals/
 │   ├── short_term_features.py    # 9 st_* price features (1–14 session horizon)
 │   ├── short_interest_features.py # 2 FINRA short-interest features (9-session lag; pure + vectorised, kept identical by a test)
 │   ├── feature_pipeline.py       # ~97 features / 17 groups (incl. st_*, short_interest_*) per PIT-universe ticker and session
-│   ├── target_backfill.py        # Forward returns 1/5/20/60d + barrier label (return_barrier_14d, …)
+│   ├── target_backfill.py        # Forward returns 1/5/20/60d + barrier label (return_barrier_14d, …) + trailing-stop label (return_trail_60d, …)
 │   ├── recompute.py              # Recompute TA, targets, st_* after a price-history refresh
 │   ├── context_pack_generator.py # Stage-1 risk pre-filter + provisional ranking → Markdown packs
 │   └── stage2_decisions.py       # Reads/validates decisions.yaml → stage2_reviews / stage2_decisions
@@ -199,6 +199,7 @@ trading_signals/
 │   ├── feature_report.py   # Monthly FeatureAnalysisEngine (daily rank IC, excess returns) → analysis_reports
 │   ├── stats.py / modeling.py / feature_groups.py  # Pure stats, leakage-safe RF+LASSO, feature grouping
 │   ├── barrier.py          # Barrier trade simulation (MAIN_BARRIER: +1 % / −2 % / 14 sessions)
+│   ├── trailing.py         # Trailing-stop trade simulation (MAIN_TRAILING: 3 × ATR(14) trail / 60 sessions)
 │   ├── hit_model.py        # Walk-forward hit-probability model (building blocks)
 │   ├── event_study.py      # Event studies on the barrier trade (building blocks)
 │   └── stage2_eval.py      # Stage-2 forward-test evaluation + report (stage2_auswertung.md)
@@ -244,7 +245,7 @@ flowchart TD
     RAW --> CHAIN
     DER --> CHAIN["Nightly chain 04:30"]
     CHAIN --> FS["feature_snapshots (features incl. st_*)"]
-    FS --> TGT["Targets: return_1d/5d/20d/60d + barrier label"]
+    FS --> TGT["Targets: return_1d/5d/20d/60d + barrier label + trailing-stop label"]
     TGT --> S2["stage2_review: decisions.yaml → stage2_reviews / stage2_decisions + stage2_auswertung.md"]
     FS --> CP["Context Pack (risk pre-filter + provisional ranking) → Markdown on Unraid share"]
     CP -. "Claude broker skill writes decisions.yaml" .-> S2
@@ -267,7 +268,7 @@ flowchart TD
     C -- no --> D["wait_for_upstream: poll every 5 min, max 2 h, while stale upstream collectors are still running"]
     D --> E["1. technical_indicators catch-up"]
     E --> F["2. feature_pipeline(target)"]
-    F --> G["3. target_backfill (returns + barrier label)"]
+    F --> G["3. target_backfill (returns + barrier + trailing-stop label)"]
     G --> H["4. stage2_review"]
     H --> I{"feature_pipeline SUCCESS or PARTIAL?"}
     I -- yes --> J["5. context_pack_generator(target)"]

@@ -9,8 +9,8 @@ import pytest
 
 from trading_signals.analysis.barrier import BarrierParams
 from trading_signals.analysis.feature_report import (
+    BARRIER_TARGET,
     FALLBACK_TARGET,
-    MODEL_TARGET,
     resolve_model_target,
 )
 from trading_signals.derived.target_backfill import (
@@ -102,13 +102,15 @@ def test_bulk_update_writes_barrier_columns():
     assert params[0]["return_barrier_14d"] == pytest.approx(0.0095)
     assert params[0]["barrier_outcome"] == 1 and params[0]["barrier_ambiguous"] is False
     assert params[1]["return_barrier_14d"] is None
-    assert params[1]["barrier_outcome"] is None and params[1]["barrier_ambiguous"] is None
+    assert params[1]["barrier_outcome"] is None
+    assert params[1]["barrier_ambiguous"] is None
 
 
-def test_resolve_model_target():
+def test_resolve_model_target_barrier_stage():
+    """Without a trailing label the model target is barrier -> return_20d."""
     df = pd.DataFrame({FALLBACK_TARGET: [0.1, 0.2, 0.3, 0.4]})
     assert resolve_model_target(df)[0] == FALLBACK_TARGET
-    df[MODEL_TARGET] = [np.nan, np.nan, np.nan, 0.1]  # 25 % coverage
+    df[BARRIER_TARGET] = [np.nan, np.nan, np.nan, 0.1]  # 25 % coverage
     assert resolve_model_target(df)[0] == FALLBACK_TARGET
-    df[MODEL_TARGET] = [0.1, 0.2, np.nan, 0.1]  # 75 % coverage
-    assert resolve_model_target(df) == (MODEL_TARGET, 14)
+    df[BARRIER_TARGET] = [0.1, 0.2, np.nan, 0.1]  # 75 % coverage
+    assert resolve_model_target(df) == (BARRIER_TARGET, 14)

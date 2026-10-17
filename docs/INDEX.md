@@ -14,7 +14,7 @@
 | Project overview, mission, principles, current status | [CLAUDE.md](../CLAUDE.md) |
 | **Where did the last session stop? What is deployed? What is open?** | [SESSION_LOG.md](SESSION_LOG.md) – last entry (Session 34) · [ROADMAP.md](ROADMAP.md) – "Offene Punkte" |
 | How is the system deployed and structured? | [ARCHITECTURE.md](ARCHITECTURE.md) |
-| What database tables exist? (DDL, migrations 001–036, retention) | [DATABASE.md](DATABASE.md) |
+| What database tables exist? (DDL, migrations 001–037, retention) | [DATABASE.md](DATABASE.md) |
 | When do jobs run? (schedule, nightly chain) | [SCHEDULER.md](SCHEDULER.md) |
 | How does data source X work? | [DATA_SOURCES.md](DATA_SOURCES.md) |
 | Why was decision Y made? | `DECISIONS_*.md` (see below) |
@@ -44,7 +44,7 @@
 | Document | Purpose | Update Frequency |
 |---|---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Deployment topology (Unraid, container, volumes), project structure, data flow, nightly chain, context-pack output | On structural changes |
-| [DATABASE.md](DATABASE.md) | Database schema – all tables, migration history 001–036, retention per table | On schema changes / migrations |
+| [DATABASE.md](DATABASE.md) | Database schema – all tables, migration history 001–037, retention per table | On schema changes / migrations |
 | [SCHEDULER.md](SCHEDULER.md) | Execution schedule – all 26 jobs, nightly chain, manual operations | When jobs change |
 
 ### Data Sources

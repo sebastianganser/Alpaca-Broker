@@ -38,7 +38,7 @@ All collectors label their data with the **last completed NYSE session** (`utils
 1. `technical_indicators_computer` (catch-up)
 2. **Session catch-up** – `feature_pipeline` for earlier sessions with missing snapshots (see below)
 3. `feature_pipeline` (skipped on non-trading days → status `skipped`)
-4. `target_backfill` (target = `close(d+h) / open(d+1) − 1` + barrier label; retries up to 3× on PostgreSQL deadlock since `97fcdb0`)
+4. `target_backfill` (target = `close(d+h) / open(d+1) − 1` + barrier label + trailing-stop label `return_trail_60d`; retries up to 3× on PostgreSQL deadlock since `97fcdb0`)
 5. `stage2_review` (reads `decisions.yaml` files, writes `context_packs/stage2_auswertung.md`; see [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md))
 6. `context_pack_generator` (only if `feature_pipeline` ended `success`/`partial`, otherwise `skipped`)
 

@@ -14,8 +14,10 @@ Methodology (rebuilt for review finding H4):
   significance is Bonferroni-corrected over all feature x target tests.
 * RF / LASSO use per-date ranked features, median imputation and scaling
   inside purged walk-forward folds (purge = model horizon in dates). The
-  model target is the barrier trade label ``return_barrier_14d`` (TP +1 % /
-  SL −2 % / 14 sessions) once back-filled, otherwise ``return_20d``.
+  model target is the trailing-stop trend trade label ``return_trail_60d``
+  (3 x ATR(14) trail / 60 sessions) once back-filled, otherwise the barrier
+  trade label ``return_barrier_14d`` (TP +1 % / SL −2 % / 14 sessions), then
+  ``return_20d`` (see ``MODEL_TARGET_CHAIN``).
 * Hypothesis tests use per-date group differences / daily IC differences
   with Newey-West t-stats instead of row-iid Welch t-tests.
 * H14 (days-to-cover) is the exception: a *pre-registered* confirmatory test
@@ -83,23 +85,42 @@ TARGET_RETURNS: list[str] = list(TARGET_COLUMNS)
 ALL_FEATURES: list[str] = list(FEATURE_COLUMNS)
 
 #: Target / horizon used for RF, LASSO, hypothesis tests and consensus:
-#: the barrier trade label (concept 2026-10-06). Until it is back-filled
-#: (less than MODEL_TARGET_MIN_COVERAGE of the return_20d rows) the
-#: analysis falls back to return_20d.
-MODEL_TARGET = 'return_barrier_14d'
-MODEL_HORIZON = 14
+#: the trailing-stop trend trade label (decision 2026-10-17: 3 x ATR(14)
+#: trail, time stop 60 sessions). Fallback chain when a label is not
+#: back-filled yet (less than MODEL_TARGET_MIN_COVERAGE of the return_20d
+#: rows): barrier trade label (concept 2026-10-06) -> return_20d.
+MODEL_TARGET = 'return_trail_60d'
+MODEL_HORIZON = 60
+BARRIER_TARGET = 'return_barrier_14d'
+BARRIER_HORIZON = 14
 FALLBACK_TARGET = 'return_20d'
 FALLBACK_HORIZON = 20
+#: Preference order of the model target as ``(target, horizon)``; the last
+#: entry is the unconditional fallback.
+MODEL_TARGET_CHAIN: tuple[tuple[str, int], ...] = (
+    (MODEL_TARGET, MODEL_HORIZON),
+    (BARRIER_TARGET, BARRIER_HORIZON),
+    (FALLBACK_TARGET, FALLBACK_HORIZON),
+)
 MODEL_TARGET_MIN_COVERAGE = 0.5
 
 
 def resolve_model_target(df: pd.DataFrame) -> tuple[str, int]:
-    """``(target, horizon)`` for the model step – barrier label if filled."""
-    if MODEL_TARGET in df.columns:
-        n_main = int(df[MODEL_TARGET].notna().sum())
-        n_ref = int(df[FALLBACK_TARGET].notna().sum()) if FALLBACK_TARGET in df.columns else 0
+    """``(target, horizon)`` for the model step.
+
+    The first target of :data:`MODEL_TARGET_CHAIN` whose non-NULL count is at
+    least ``MODEL_TARGET_MIN_COVERAGE`` of the ``return_20d`` count wins;
+    ``return_20d`` itself is the unconditional fallback.
+    """
+    n_ref = 0
+    if FALLBACK_TARGET in df.columns:
+        n_ref = int(df[FALLBACK_TARGET].notna().sum())
+    for target, horizon in MODEL_TARGET_CHAIN[:-1]:
+        if target not in df.columns:
+            continue
+        n_main = int(df[target].notna().sum())
         if n_main > 0 and n_main >= MODEL_TARGET_MIN_COVERAGE * n_ref:
-            return MODEL_TARGET, MODEL_HORIZON
+            return target, horizon
     return FALLBACK_TARGET, FALLBACK_HORIZON
 
 
@@ -285,7 +306,7 @@ class FeatureAnalysisEngine:
 
     @property
     def model_horizon(self) -> int:
-        return MODEL_HORIZON if self.model_target == MODEL_TARGET else FALLBACK_HORIZON
+        return dict(MODEL_TARGET_CHAIN).get(self.model_target, FALLBACK_HORIZON)
 
     def run(self) -> AnalysisReport | None:
         """Run the full analysis pipeline and store results."""
@@ -798,7 +819,8 @@ class FeatureAnalysisEngine:
 
         def _sp_score(f: str) -> float:
             c = correlations.get(f, {}).get(self.model_target, {})
-            if not c.get('reliable', True):  # too short history (see MIN_INDEPENDENT_PERIODS)
+            # too short history (see MIN_INDEPENDENT_PERIODS)
+            if not c.get('reliable', True):
                 return 0.0
             return abs(c.get('rho', 0) or 0)
 
@@ -1017,6 +1039,11 @@ class FeatureAnalysisEngine:
             "Window: snapshot_date &ge; ml_start_date(). Targets: excess returns "
             "(return minus per-date cross-sectional mean), "
             "return_h = close(d+h)/open(d+1) - 1.",
+            "Trade labels (entry open(d+1), net of 0.05 % round-trip cost): "
+            "return_barrier_14d = take profit +1 % / stop -2 % / 14 sessions; "
+            "return_trail_60d = trailing stop 3 x ATR(14) below the high-water "
+            "mark (fixed distance, daily-bar approximation) / 60 sessions; both "
+            "NULL until the full window exists.",
             f"Correlations: {ic_label} (Spearman per date, averaged over dates); "
             "p-values from Newey-West t-stats with lag h-1; Bonferroni over all tests.",
             "RF / LASSO: per-date ranked features, imputer+scaler fit inside purged "

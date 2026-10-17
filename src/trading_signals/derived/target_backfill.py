@@ -31,6 +31,16 @@ Barrier label (migration 033, ``analysis.barrier.MAIN_BARRIER``): the actual
 short-term trade – entry open(d+1), take profit +1 %, stop −2 %, time stop
 14 sessions – stored as ``return_barrier_14d`` / ``barrier_outcome`` /
 ``barrier_ambiguous`` with the same session and price rules.
+
+Trailing-stop label (migration 037, ``analysis.trailing.MAIN_TRAILING``): the
+medium-term trend trade – entry open(d+1), trailing stop at a fixed
+3 x ATR(14) below the high-water mark, time stop after 60 sessions – stored as
+``return_trail_60d`` / ``trail_exit_day`` / ``trail_stopped``. Same session and
+price rules; the ATR is the stored ``technical_indicators.atr_14`` of ``d``
+(Wilder ATR(14) of real, non-extrapolated bars up to and including ``d``).
+Like the barrier label it stays NULL until the **full** 60-session window of
+real bars exists – a trade that already stopped out is not labelled early, so
+the labelled set of recent dates is not skewed towards losers.
 """
 
 from __future__ import annotations
@@ -43,13 +53,20 @@ import pandas as pd
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
+from trading_signals.analysis import trailing
 from trading_signals.analysis.barrier import (
     MAIN_BARRIER,
     BarrierParams,
     simulate_windows,
 )
+from trading_signals.analysis.trailing import (
+    MAIN_TRAILING,
+    TrailingParams,
+    trail_distance,
+)
 from trading_signals.db.models.features import FeatureSnapshot
 from trading_signals.db.models.prices import PriceDaily
+from trading_signals.db.models.technical_indicators import TechnicalIndicator
 from trading_signals.utils.logging import get_logger
 from trading_signals.utils.market_calendar import trading_days
 
@@ -67,8 +84,12 @@ TARGET_COLS = [name for name, _ in HORIZONS]
 MAX_HORIZON = max(h for _, h in HORIZONS)
 #: Barrier label columns (written together with the return targets).
 BARRIER_COLS = ["return_barrier_14d", "barrier_outcome", "barrier_ambiguous"]
+#: Trailing-stop label columns (written together with the return targets).
+TRAIL_COLS = ["return_trail_60d", "trail_exit_day", "trail_stopped"]
 #: A row is (re)processed while any of these is NULL.
-NULL_CHECK_COLS = [*TARGET_COLS, "return_barrier_14d"]
+NULL_CHECK_COLS = [*TARGET_COLS, "return_barrier_14d", "return_trail_60d"]
+#: Period of the ATR stored in ``technical_indicators.atr_14``.
+STORED_ATR_PERIOD = 14
 
 # Tickers per processing chunk (bounds memory and statement size)
 TICKER_CHUNK = 50
@@ -151,6 +172,37 @@ def compute_forward_returns(
     return out
 
 
+OHLC = ["open", "high", "low", "close"]
+
+
+def _real_ohlc_by_ticker(
+    prices: pd.DataFrame, sessions: list[date]
+) -> dict[str, pd.DataFrame]:
+    """Real OHLC rows on NYSE sessions per ticker (shared by the path labels).
+
+    Extrapolated (gap-filled) rows and rows outside ``sessions`` are dropped;
+    the result carries the session index in column ``sess``.
+    """
+    sess_idx = {d: i for i, d in enumerate(sessions)}
+    px = prices.copy()
+    px["is_extrapolated"] = px["is_extrapolated"].fillna(False).astype(bool)
+    px = px[~px["is_extrapolated"]]
+    for c in OHLC:
+        px[c] = pd.to_numeric(px[c], errors="coerce")
+    px["sess"] = px["trade_date"].map(sess_idx)
+    px = px[px["sess"].notna()]
+    return dict(tuple(px.groupby("ticker", sort=False)))
+
+
+def _session_grid(ticker_px: pd.DataFrame, n_sess: int) -> np.ndarray:
+    """``(n_sess, 4)`` OHLC array indexed by session, NaN where no real row."""
+    grid = np.full((n_sess, 4), np.nan)
+    grid[ticker_px["sess"].astype(int).to_numpy()] = ticker_px[OHLC].to_numpy(
+        dtype=float
+    )
+    return grid
+
+
 def compute_barrier_labels(
     snapshots: pd.DataFrame,
     prices: pd.DataFrame,
@@ -182,19 +234,10 @@ def compute_barrier_labels(
     if out.empty or prices.empty or not sessions:
         return out
 
-    ohlc = ["open", "high", "low", "close"]
     sess_idx = {d: i for i, d in enumerate(sessions)}
     n_sess = len(sessions)
     m = params.max_days
-
-    px = prices.copy()
-    px["is_extrapolated"] = px["is_extrapolated"].fillna(False).astype(bool)
-    px = px[~px["is_extrapolated"]]
-    for c in ohlc:
-        px[c] = pd.to_numeric(px[c], errors="coerce")
-    px["sess"] = px["trade_date"].map(sess_idx)
-    px = px[px["sess"].notna()]
-    px_by_ticker = dict(tuple(px.groupby("ticker", sort=False)))
+    px_by_ticker = _real_ohlc_by_ticker(prices, sessions)
 
     base_all = out["snapshot_date"].map(sess_idx)
     offsets = np.arange(1, m + 1)
@@ -202,8 +245,7 @@ def compute_barrier_labels(
         p = px_by_ticker.get(ticker)
         if p is None or p.empty:
             continue
-        grid = np.full((n_sess, 4), np.nan)
-        grid[p["sess"].astype(int).to_numpy()] = p[ohlc].to_numpy(dtype=float)
+        grid = _session_grid(p, n_sess)
 
         base = base_all.loc[g.index]
         ok = base.notna() & (base + m < n_sess)
@@ -229,6 +271,103 @@ def compute_barrier_labels(
     return out
 
 
+def compute_trailing_labels(
+    snapshots: pd.DataFrame,
+    prices: pd.DataFrame,
+    sessions: list[date],
+    atr: pd.DataFrame,
+    params: TrailingParams = MAIN_TRAILING,
+) -> pd.DataFrame:
+    """Trailing-stop trade label per snapshot (pure function).
+
+    Same window rules as :func:`compute_barrier_labels`: the window is the
+    ``params.max_days`` NYSE sessions after ``d`` (entry = open of d+1);
+    non-session snapshot dates, an incomplete window (future sessions, missing
+    or extrapolated price rows, non-positive prices) leave the label NULL - a
+    trade that already stopped out is NOT labelled before the whole window
+    exists. The trail distance is ``params.atr_mult * ATR`` with the stored
+    ATR(14) of the signal date ``d`` itself (data up to and including ``d``);
+    a missing, non-finite or non-positive ATR leaves the label NULL.
+
+    Args:
+        snapshots: columns ``ticker``, ``snapshot_date`` (python dates).
+        prices: columns ``ticker``, ``trade_date``, ``open``, ``high``,
+            ``low``, ``close``, ``is_extrapolated``.
+        sessions: sorted NYSE session dates (see compute_forward_returns).
+        atr: columns ``ticker``, ``trade_date``, ``atr_14`` (stored
+            ``technical_indicators`` values in price units).
+        params: trade definition (default :data:`MAIN_TRAILING`).
+
+    Returns:
+        ``snapshots`` keys plus ``return_trail_60d`` (float/NaN),
+        ``trail_exit_day`` (int/None) and ``trail_stopped`` (bool/None).
+    """
+    if params.atr_period != STORED_ATR_PERIOD:
+        raise ValueError(
+            f"only the stored ATR({STORED_ATR_PERIOD}) is available, "
+            f"got atr_period={params.atr_period}"
+        )
+    out = snapshots[["ticker", "snapshot_date"]].copy().reset_index(drop=True)
+    out["return_trail_60d"] = float("nan")
+    out["trail_exit_day"] = pd.Series([None] * len(out), dtype=object)
+    out["trail_stopped"] = pd.Series([None] * len(out), dtype=object)
+    if out.empty or prices.empty or atr.empty or not sessions:
+        return out
+
+    sess_idx = {d: i for i, d in enumerate(sessions)}
+    n_sess = len(sessions)
+    m = params.max_days
+    px_by_ticker = _real_ohlc_by_ticker(prices, sessions)
+
+    atr_px = atr[["ticker", "trade_date", "atr_14"]].copy()
+    atr_px["atr_14"] = pd.to_numeric(atr_px["atr_14"], errors="coerce")
+    atr_px["sess"] = atr_px["trade_date"].map(sess_idx)
+    atr_px = atr_px[atr_px["sess"].notna() & atr_px["atr_14"].notna()]
+    atr_by_ticker = dict(tuple(atr_px.groupby("ticker", sort=False)))
+
+    base_all = out["snapshot_date"].map(sess_idx)
+    offsets = np.arange(1, m + 1)
+    for ticker, g in out.groupby("ticker", sort=False):
+        p = px_by_ticker.get(ticker)
+        a = atr_by_ticker.get(ticker)
+        if p is None or p.empty or a is None or a.empty:
+            continue
+        grid = _session_grid(p, n_sess)
+        atr_grid = np.full(n_sess, np.nan)
+        atr_grid[a["sess"].astype(int).to_numpy()] = a["atr_14"].to_numpy(dtype=float)
+
+        base = base_all.loc[g.index]
+        ok = base.notna() & (base + m < n_sess)
+        if not ok.any():
+            continue
+        rows = g.index[ok.to_numpy()]
+        base_idx = base[ok].astype(int).to_numpy()
+        dist = trail_distance(atr_grid[base_idx], params)
+        win = grid[base_idx[:, None] + offsets[None, :]]
+        complete = (
+            ~np.isnan(win).any(axis=(1, 2))
+            & (win > 0).all(axis=(1, 2))
+            & np.isfinite(dist)
+            & (dist > 0)
+        )
+        if not complete.any():
+            continue
+        win = win[complete]
+        stopped, net, exit_day, _ = trailing.simulate_windows(
+            win[:, :, 0], win[:, :, 1], win[:, :, 2], win[:, :, 3],
+            dist[complete], params,
+        )
+        idx = rows[complete]
+        out.loc[idx, "return_trail_60d"] = np.round(net, 6)
+        out.loc[idx, "trail_exit_day"] = pd.Series(
+            [int(x) for x in exit_day], index=idx, dtype=object
+        )
+        out.loc[idx, "trail_stopped"] = pd.Series(
+            [bool(x) for x in stopped], index=idx, dtype=object
+        )
+    return out
+
+
 class TargetBackfillComputer:
     """Backfill forward returns into feature_snapshots."""
 
@@ -243,7 +382,9 @@ class TargetBackfillComputer:
         Returns:
             Total number of individual (non-NULL) return values written.
         """
-        null_any = or_(*[getattr(FeatureSnapshot, c).is_(None) for c in NULL_CHECK_COLS])
+        null_any = or_(
+            *[getattr(FeatureSnapshot, c).is_(None) for c in NULL_CHECK_COLS]
+        )
         tickers = [
             r[0]
             for r in self.session.execute(
@@ -317,16 +458,30 @@ class TargetBackfillComputer:
             columns=["ticker", "trade_date", "open", "high", "low", "close",
                      "is_extrapolated"],
         )
-        end = snaps["snapshot_date"].max() + timedelta(days=MAX_HORIZON * 2 + 10)
+        last_snapshot = snaps["snapshot_date"].max()
+        atr_rows = self.session.execute(
+            select(
+                TechnicalIndicator.ticker,
+                TechnicalIndicator.trade_date,
+                TechnicalIndicator.atr_14,
+            )
+            .where(TechnicalIndicator.ticker.in_(tickers))
+            .where(TechnicalIndicator.trade_date >= start)
+            .where(TechnicalIndicator.trade_date <= last_snapshot)
+            .where(TechnicalIndicator.atr_14.is_not(None))
+        ).all()
+        atr = pd.DataFrame(atr_rows, columns=["ticker", "trade_date", "atr_14"])
+        end = last_snapshot + timedelta(days=MAX_HORIZON * 2 + 10)
         sessions = trading_days(start, end)
 
         result = compute_forward_returns(snaps, prices, sessions)
-        labels = compute_barrier_labels(snaps, prices, sessions)
-        result = pd.concat([result, labels[BARRIER_COLS]], axis=1)
+        barrier = compute_barrier_labels(snaps, prices, sessions)
+        trail = compute_trailing_labels(snaps, prices, sessions, atr)
+        result = pd.concat([result, barrier[BARRIER_COLS], trail[TRAIL_COLS]], axis=1)
         return self._bulk_update(result)
 
     def _bulk_update(self, result: pd.DataFrame) -> int:
-        """Write all target + barrier columns (NaN → NULL) by primary key."""
+        """Write all target, barrier and trailing columns (NaN → NULL) by PK."""
         params = []
         filled = 0
         for row in result.to_dict("records"):
@@ -345,6 +500,13 @@ class TargetBackfillComputer:
                 p["barrier_outcome"] = int(row["barrier_outcome"]) if ok else None
                 p["barrier_ambiguous"] = bool(row["barrier_ambiguous"]) if ok else None
                 filled += int(ok)
+            if "return_trail_60d" in row:
+                v = row["return_trail_60d"]
+                ok = v is not None and not pd.isna(v)
+                p["return_trail_60d"] = float(v) if ok else None
+                p["trail_exit_day"] = int(row["trail_exit_day"]) if ok else None
+                p["trail_stopped"] = bool(row["trail_stopped"]) if ok else None
+                filled += int(ok)
             params.append(p)
         for i in range(0, len(params), UPDATE_BATCH):
             self.session.execute(update(FeatureSnapshot), params[i : i + UPDATE_BATCH])
@@ -354,7 +516,9 @@ class TargetBackfillComputer:
 __all__ = [
     "HORIZONS",
     "MAIN_BARRIER",
+    "MAIN_TRAILING",
     "TargetBackfillComputer",
     "compute_barrier_labels",
     "compute_forward_returns",
+    "compute_trailing_labels",
 ]
