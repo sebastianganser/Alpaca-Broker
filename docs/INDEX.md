@@ -22,8 +22,7 @@
 | What did we learn from the data / from bugs? | [LEARNINGS.md](LEARNINGS.md) |
 | What hypotheses do we want to test? | [LEARNINGS_HYPOTHESES.md](LEARNINGS_HYPOTHESES.md) |
 | Short-term candidate concept (barrier trades, K1–K5) | [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) |
-| Format of the stage-2 feedback file `decisions.yaml` | [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md) | Plan to make Alpaca-Broker strategy-neutral after Sebastian's scope clarification: context pack v2 for Claude's Wall-Street-style forecasts, `forecasts.yaml`, neutral screen, removal of the barrier label and stage-2 tables | Draft – awaiting Sebastian's approvals |
-| [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) |
+| Format of the stage-2 feedback file `decisions.yaml` | [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) |
 | S&P 500 survivorship gap: root cause, removal list, **repair runbook** (dry runs, `--apply`, rollback) | [reports/2026-10-16_sp500_survivorship_inventory.md](reports/2026-10-16_sp500_survivorship_inventory.md) |
 | GitHub overview / external audience | [README.md](../README.md) |
 
@@ -82,6 +81,7 @@
 |---|---|---|
 | [2026-08-18_Konzept_Datenerweiterung.md](2026-08-18_Konzept_Datenerweiterung.md) | Concept for data extension and candidate pipeline (basis of Sprint 9.5a–c); answers and decisions are in DECISIONS_*, ideas not yet implemented in the ROADMAP backlog | Status per item in ROADMAP (9.5a–c) |
 | [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) | Short-term candidates: barrier evaluation, pre-registered steps A–D, stage-1 risk pre-filter, stage-2 forward test (§7.7) | Active (K5 deferred until after the sprints) |
+| [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md) | Plan to make Alpaca-Broker strategy-neutral after Sebastian's scope clarification: context pack v2 for Claude's Wall-Street-style forecasts, `forecasts.yaml`, neutral screen, removal of the barrier label and stage-2 tables | Draft – awaiting Sebastian's approvals |
 | [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) | File format `decisions.yaml` written by the analysis skill, read by `stage2_review` | Active |
 
 ### Reports (`docs/reports/`, generated 2026-10-06, 2026-10-16 and 2026-10-17)
