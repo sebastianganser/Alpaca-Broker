@@ -165,51 +165,75 @@ class NewTickerOnboarder:
         """Quick yfinance quoteType check before committing to backfill.
 
         Returns only tickers confirmed as EQUITY. Non-equities are
-        added to the blacklist and never enter the universe.
+        added to the blacklist and never enter the universe -- except
+        current index members (S&P 500 / Nasdaq 100): membership proves an
+        equity, so a non-equity quoteType there is a wrong lookup and the
+        ticker passes as verified (see ``apply_sector_records``).
         """
         import yfinance as yf
 
+        from trading_signals.collectors.yfinance_client import to_yahoo_symbol
         from trading_signals.db.session import get_session
+        from trading_signals.scheduler.sector_enrichment import open_index_members
         from trading_signals.universe.blacklist import add_to_blacklist
 
-        verified: list[str] = []
-        blacklisted: list[tuple[str, str]] = []
+        verified: set[str] = set()
+        non_equity: list[tuple[str, str]] = []
 
         for ticker in tickers:
             try:
-                info = yf.Ticker(ticker.replace(".", "-")).info
+                info = yf.Ticker(to_yahoo_symbol(ticker)).info
                 qt = (info.get("quoteType", "UNKNOWN") if info else "UNKNOWN")
 
                 if qt.upper() == "EQUITY":
-                    verified.append(ticker)
+                    verified.add(ticker)
+                else:
+                    non_equity.append((ticker, qt))
+            except Exception as e:
+                # If yfinance fails, let the ticker through (benefit of the doubt)
+                verified.add(ticker)
+                logger.debug(
+                    f"[onboarder] quoteType check failed for {ticker}: {e}, "
+                    f"allowing through"
+                )
+
+        if non_equity:
+            # One membership query for all suspects (own session, read only)
+            with get_session() as own:
+                index_members = open_index_members(
+                    own, [ticker for ticker, _ in non_equity]
+                )
+
+            blacklisted: list[tuple[str, str]] = []
+            for ticker, qt in non_equity:
+                if ticker in index_members:
+                    verified.add(ticker)
+                    logger.warning(
+                        f"[onboarder] Pre-backfill check: {ticker} is {qt} for "
+                        f"Yahoo but a current index member → not blacklisted"
+                    )
                 else:
                     blacklisted.append((ticker, qt))
                     logger.warning(
                         f"[onboarder] Pre-backfill check: {ticker} is "
                         f"{qt}, not EQUITY → blacklisted"
                     )
-            except Exception as e:
-                # If yfinance fails, let the ticker through (benefit of the doubt)
-                verified.append(ticker)
-                logger.debug(
-                    f"[onboarder] quoteType check failed for {ticker}: {e}, "
-                    f"allowing through"
-                )
 
-        if blacklisted:
-            with get_session() as own:
-                for ticker, qt in blacklisted:
-                    add_to_blacklist(
-                        own, ticker,
-                        quote_type=qt,
-                        source="onboarder/quoteType_check",
-                    )
+            if blacklisted:
+                with get_session() as own:
+                    for ticker, qt in blacklisted:
+                        add_to_blacklist(
+                            own, ticker,
+                            quote_type=qt,
+                            source="onboarder/quoteType_check",
+                        )
             logger.info(
                 f"[onboarder] Pre-backfill filter: {len(blacklisted)} "
                 f"non-equities blocked, {len(verified)} equities verified"
             )
 
-        return verified
+        # Keep the caller's order
+        return [ticker for ticker in tickers if ticker in verified]
 
     def _backfill_prices(self, tickers: list[str]) -> None:
         """Fetch full price history (retention window) from Alpaca.
@@ -311,13 +335,17 @@ class NewTickerOnboarder:
         """Fetch sector/industry data for new tickers.
 
         Also acts as a secondary ETF filter: if yfinance reports
-        quoteType != 'EQUITY', the ticker is deactivated (learned filter).
+        quoteType != 'EQUITY', the ticker is blacklisted and deactivated
+        (learned filter) -- except current index members, which are equities
+        by definition. The filter and the sector write are the shared
+        ``apply_sector_records`` (same rules as the monthly index_sync job).
         """
         try:
-            from sqlalchemy import update
-
             from trading_signals.collectors.yfinance_client import YFinanceClient
             from trading_signals.db.session import get_session
+            from trading_signals.scheduler.sector_enrichment import (
+                apply_sector_records,
+            )
 
             client = YFinanceClient(
                 batch_size=50,
@@ -326,55 +354,19 @@ class NewTickerOnboarder:
             )
             results = client.fetch_sector_info(tickers)
 
-            enriched = 0
-            deactivated_etfs: list[str] = []
-
             with get_session() as session:
-                from trading_signals.universe.blacklist import add_to_blacklist
+                outcome = apply_sector_records(
+                    session, results, source="sector_enrichment"
+                )
 
-                for record in results:
-                    ticker = record["ticker"]
-                    quote_type = record.get("quote_type", "")
-
-                    # Learned ETF filter: add to blacklist + deactivate
-                    # (benchmark tickers like SPY are protected by add_to_blacklist)
-                    if quote_type and quote_type.upper() != "EQUITY":
-                        was_blacklisted = add_to_blacklist(
-                            session, ticker,
-                            quote_type=quote_type,
-                            source="sector_enrichment",
-                        )
-                        if was_blacklisted:
-                            session.execute(
-                                update(Universe)
-                                .where(Universe.ticker == ticker)
-                                .values(is_active=False)
-                            )
-                            deactivated_etfs.append(ticker)
-                            logger.warning(
-                                f"[onboarder] Blacklisted + deactivated {ticker}: "
-                                f"quoteType={quote_type}"
-                            )
-                        continue
-
-                    session.execute(
-                        update(Universe)
-                        .where(Universe.ticker == ticker)
-                        .values(
-                            sector=record.get("sector"),
-                            industry=record.get("industry"),
-                        )
-                    )
-                    enriched += 1
-
-            if deactivated_etfs:
+            if outcome.deactivated:
                 logger.info(
-                    f"[onboarder] Blacklisted {len(deactivated_etfs)} non-equity "
-                    f"tickers: {deactivated_etfs}"
+                    f"[onboarder] Blacklisted {len(outcome.deactivated)} non-equity "
+                    f"tickers: {outcome.deactivated}"
                 )
 
             logger.info(
-                f"[onboarder] Sector enrichment: {enriched}/{len(tickers)} "
+                f"[onboarder] Sector enrichment: {outcome.enriched}/{len(tickers)} "
                 f"tickers enriched"
             )
 

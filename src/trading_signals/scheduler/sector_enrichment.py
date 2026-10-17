@@ -61,11 +61,13 @@ def apply_sector_records(
     equity, so a non-equity ``quoteType`` is a wrong lookup (BF.B was
     blacklisted as MUTUALFUND on 2026-04-15 after a lookup with the wrong
     Yahoo symbol). Such a record is logged and takes the normal sector path.
+    The benchmark/sector ETFs (``BENCHMARK_TICKERS``) are kept the same way:
+    they cannot be blacklisted and must never be deactivated.
     """
     from sqlalchemy import update
 
     from trading_signals.db.models.universe import Universe
-    from trading_signals.universe.blacklist import add_to_blacklist
+    from trading_signals.universe.blacklist import BENCHMARK_TICKERS, add_to_blacklist
 
     def is_non_equity(record: dict) -> bool:
         quote_type = record.get("quote_type") or ""
@@ -82,7 +84,10 @@ def apply_sector_records(
         quote_type = record.get("quote_type") or ""
 
         if is_non_equity(record):
-            if ticker in index_members:
+            if ticker in BENCHMARK_TICKERS:
+                # Wanted ETF (SPY, QQQ, sector SPDRs): keep it active
+                logger.debug(f"[{source}] {ticker} is a protected benchmark ETF")
+            elif ticker in index_members:
                 # Wrong lookup, not a fund: keep the ticker and update its sector
                 logger.warning(
                     f"[{source}] quoteType={quote_type} for index member {ticker}"

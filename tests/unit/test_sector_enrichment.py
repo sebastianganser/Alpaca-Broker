@@ -104,6 +104,16 @@ class TestIndexMemberGuard:
             caplog.messages
         )
 
+    def test_benchmark_etf_is_never_deactivated(self):
+        session = FakeSession()
+        with patch(ADD) as add:
+            result = se.apply_sector_records(
+                session, [record("SPY", "ETF"), record("XLK", "ETF")], "index_sync"
+            )
+        add.assert_not_called()
+        assert result.deactivated == []
+        assert session.writes == []  # no is_active=False, no empty overwrite
+
     def test_mixed_batch(self):
         session = FakeSession(members={"BF.B", "AAPL"})
         records = [
