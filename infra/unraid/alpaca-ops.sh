@@ -28,6 +28,7 @@ CONTAINER=alpaca-broker
 API=http://localhost:8090/api/v1
 OPS_DIR=/mnt/user/Workfiles/AlpacaBroker/ops
 LOCK=/tmp/alpaca-deploy.lock
+BG_LOG="$OPS_DIR/bg-job.log"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
@@ -56,6 +57,31 @@ guard_no_running_jobs() {
     fi
 }
 
+# Project scripts running inside the container ("run" and "run-bg" both start
+# ".venv/bin/python -u scripts/…"). docker top reads the process list from the
+# host, so the image needs no procps.
+running_scripts() {
+    docker top "$CONTAINER" -eo pid,args 2>/dev/null | grep -E 'python -u scripts/' || true
+}
+
+# A deploy/restart kills a running script (a feature rebuild would stop halfway).
+guard_no_running_scripts() {
+    local procs
+    procs=$(running_scripts)
+    if [ -n "$procs" ]; then
+        echo "$procs"
+        die "a project script is running inside the container – wait for it (alpaca-ops run-log) or stop it (alpaca-ops run-stop)"
+    fi
+}
+
+validate_script_args() {
+    [[ "${1:-}" =~ ^scripts/[A-Za-z0-9_/]+\.py$ ]] || die "script must match scripts/…/*.py"
+    local a
+    for a in "${@:2}"; do
+        [[ "$a" =~ ^[A-Za-z0-9_.,:=/@+-]+$ ]] || die "invalid argument: $a"
+    done
+}
+
 deploy_worker() {
     exec 9>"$LOCK"
     flock -n 9 || die "another deploy is running"
@@ -70,7 +96,7 @@ deploy_worker() {
     # The guards were checked when "deploy" was started, but the build takes
     # ~7 min: the window may have opened or a job may have started meanwhile.
     # Re-check right before the recreate (in a subshell: die exits only that).
-    if ! (guard_window && guard_no_running_jobs); then
+    if ! (guard_window && guard_no_running_jobs && guard_no_running_scripts); then
         die "image built, recreate skipped – run deploy again later (old container keeps running)"
     fi
     compose up -d || die "compose up failed"
@@ -108,7 +134,10 @@ alpaca-ops – commands (argument of the "alpaca-ops" user script):
   deploy                     git pull + build + recreate (detached; blocked 22:15–05:15 Berlin time and while a job runs; guards re-checked before the recreate)
   deploy-log [N]             progress/result of the last deploy
   restart                    restart the container (same guards as deploy)
-  run <scripts/…py> [args]   run a project script inside the container (as app user 99:100; blocked 22:15–05:15 Berlin time)
+  run <scripts/…py> [args]   run a project script inside the container (as app user 99:100; blocked 22:15–05:15 Berlin time); ends when the popup is closed
+  run-bg <scripts/…py> [args] same, detached (survives closing the popup; for long runs such as features_rebuild.py); one at a time; output: ops/bg-job.log
+  run-log [N]                state of the scripts running in the container + last N lines of ops/bg-job.log
+  run-stop                   send SIGTERM to the project scripts running in the container
 Output of every run: /mnt/user/Workfiles/AlpacaBroker/ops/<command>.log
 EOF
         ;;
@@ -126,6 +155,8 @@ EOF
         echo "origin/main:  $(git -C "$APP_DIR" log -1 --format='%h %ad %s' --date=iso origin/main)"
         echo "## health"
         curl -sS -m 10 "$API/health"; echo
+        echo "## project scripts running in the container"
+        procs=$(running_scripts); echo "${procs:-(none)}"
         echo "## disk"
         df -h /mnt/user/appdata /mnt/user/Workfiles 2>/dev/null
         echo "## cron entries / user scripts that touch the alpaca DB (backup check)"
@@ -146,6 +177,7 @@ EOF
     deploy)
         guard_window
         guard_no_running_jobs
+        guard_no_running_scripts
         # Before cp and the log redirect below: a second deploy must neither
         # overwrite the script a running worker is reading nor truncate its log.
         flock -n "$LOCK" true || die "another deploy is running"
@@ -162,17 +194,43 @@ EOF
     restart)
         guard_window
         guard_no_running_jobs
+        guard_no_running_scripts
         docker restart "$CONTAINER"
         ;;
     run)
-        script="${ARGS[0]:-}"
-        [[ "$script" =~ ^scripts/[A-Za-z0-9_/]+\.py$ ]] || die "run: script must match scripts/…/*.py"
-        for a in "${ARGS[@]:1}"; do
-            [[ "$a" =~ ^[A-Za-z0-9_.,:=/@+-]+$ ]] || die "run: invalid argument: $a"
-        done
+        validate_script_args "${ARGS[@]}"
         # scripts may write feature_snapshots → deadlock risk during the nightly chain
         guard_window
-        docker exec "$CONTAINER" .venv/bin/python -u "$script" "${ARGS[@]:1}"
+        docker exec "$CONTAINER" .venv/bin/python -u "${ARGS[@]}"
+        ;;
+    run-bg)
+        validate_script_args "${ARGS[@]}"
+        guard_window
+        guard_no_running_scripts
+        # setsid/nohup: the run survives closing the User Script popup. The
+        # window guard only applies at the start – a long run must end before
+        # the nightly chain (04:30, Tue–Sat) or be stopped with run-stop.
+        setsid nohup bash -c 'docker exec "$1" .venv/bin/python -u "${@:2}"; rc=$?; echo "## $(date -Is) exit code $rc"' \
+            _ "$CONTAINER" "${ARGS[@]}" >"$BG_LOG" 2>&1 </dev/null &
+        sleep 3
+        echo "started in background: ${ARGS[*]}"
+        procs=$(running_scripts); echo "${procs:-WARN: no script process visible yet – check: alpaca-ops run-log}"
+        echo "output: ops/bg-job.log (alpaca-ops run-log [N]); it is NOT stopped at 22:15 – mind the nightly chain (04:30 Tue–Sat)"
+        ;;
+    run-log)
+        n="${ARGS[0]:-60}"
+        [[ "$n" =~ ^[0-9]+$ ]] || die "run-log: N must be a number"
+        procs=$(running_scripts)
+        if [ -n "$procs" ]; then echo "## state: running"; echo "$procs"; else echo "## state: not running"; fi
+        tail -n "$n" "$BG_LOG" 2>/dev/null || echo "(no background run yet)"
+        ;;
+    run-stop)
+        procs=$(running_scripts)
+        [ -n "$procs" ] || { echo "no project script running"; exit 0; }
+        echo "$procs"
+        # PIDs from docker top are host PIDs – signal them from the host.
+        echo "$procs" | awk '{print $1}' | xargs -r kill -TERM
+        echo "SIGTERM sent – check: alpaca-ops run-log"
         ;;
     *)
         die "unknown command: $CMD (try: help)"

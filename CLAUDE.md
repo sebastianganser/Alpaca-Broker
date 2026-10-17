@@ -106,9 +106,10 @@ Dev machine: Windows 11, working directory = project root. The Bash tool is Git 
 |---|---|
 | `status` | container state/health, deployed vs. fetched commit, disk, alpaca-related cron entries |
 | `logs [N] [SINCE]` | last N container log lines (default 500, max 5000), e.g. `logs 2000 12h` |
-| `deploy` / `deploy-log` | git pull → build → recreate, detached (guards: not 22:15–05:15, not while a job runs) / its progress |
+| `deploy` / `deploy-log` | git pull → build → recreate, detached (guards: not 22:15–05:15, not while a job or a project script runs) / its progress |
 | `restart` | container restart (same guards) |
-| `run scripts/…py [args]` | project script inside the container as `99:100` (e.g. repair scripts) |
+| `run scripts/…py [args]` | project script inside the container as `99:100` (e.g. repair dry runs); tied to the popup – closing it aborts the script |
+| `run-bg scripts/…py [args]` / `run-log [N]` / `run-stop` | same script detached (for long runs such as `features_rebuild.py`; one at a time, output `ops/bg-job.log`) / state + log tail / SIGTERM. Not stopped at 22:15 – a run must end before the nightly chain (04:30 Tue–Sat) |
 
 The wrapper fetches [infra/unraid/alpaca-ops.sh](infra/unraid/alpaca-ops.sh) from `origin/main` on every run – change the ops logic by pushing, never by editing the script in the WebGUI. Read results as text from `//HOMENAS/Workfiles/AlpacaBroker/ops/<command>.log` (Git Bash path), not from screenshots. Windows caches share files: a log that was rewritten in place (e.g. `deploy-worker.log`) can show stale content for minutes – trust `ops/deployed.txt`, file mtimes (`ls -la`) and the API over a stale log. The "Run Script" popup shows the live output (read it with a screenshot/zoom); during long runs check every ~30–60 s (popup, API `uptime_seconds`/`alembic_revision`/`is_running`/`last_status`) instead of blocking on one long wait loop (Sebastian, 2026-10-16). Deploy workflow: skill `/deploy`. Scope limits: see Safety rules.
 
