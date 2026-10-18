@@ -19,9 +19,9 @@ The screen is a **filter, not a forecast**: whether a bullish candidate is expec
 
 All inputs are the point-in-time `feature_snapshots` of the date itself (see the information cut-offs in [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md)); the screen adds no lookahead.
 
-## 3. Quality gate (liquidity threshold confirmed 2026-10-18; the other thresholds are still PROPOSED)
+## 3. Quality gate (liquidity threshold confirmed 2026-10-18; the other thresholds are technical defaults set on 2026-10-18)
 
-> **Confirmed by Sebastian (2026-10-18):** (1) the liquidity gate stays at **20-day mean dollar volume ≥ USD 5 m**; (2) on days with fewer qualifying bullish tickers the bullish list **stays shorter** – no top-up to `K_BULL` = 10 (`MIN_BREADTH_BULL` = 1 / `MAX_BREADTH_BEAR` = −1, §6). No behaviour change. Both are pinned by the tripwire test `test_confirmed_gate_liquidity_and_breadth_constants`; a change needs a new `SCREEN_VERSION`. **Still awaiting confirmation:** `MIN_PRICE_SESSIONS` = 60 and `MIN_GROUP_FRACTION` = 50 % (rows below).
+> **Confirmed by Sebastian (2026-10-18):** (1) the liquidity gate stays at **20-day mean dollar volume ≥ USD 5 m**; (2) on days with fewer qualifying bullish tickers the bullish list **stays shorter** – no top-up to `K_BULL` = 10 (`MIN_BREADTH_BULL` = 1 / `MAX_BREADTH_BEAR` = −1, §6). No behaviour change. Both are pinned by the tripwire test `test_confirmed_gate_liquidity_and_breadth_constants`; a change needs a new `SCREEN_VERSION`. **Technical defaults (set 2026-10-18, no longer awaiting confirmation):** `MIN_PRICE_SESSIONS` = 60 and `MIN_GROUP_FRACTION` = 50 % (rows below). They only decide whether a ticker has enough history and data to be ranked at all, not what is forecast; like the confirmed constants they are frozen with `SCREEN_VERSION` (a change needs a new version).
 
 | Check | Reason code | Rule |
 |---|---|---|

@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** October 2026 (migrations 001–038)
+**Last updated:** October 2026 (migrations 001–039; 039 is applied with the next deploy)
 
 ---
 
@@ -22,7 +22,7 @@ SET search_path TO signals, public;
 
 - The ORM (`src/trading_signals/db/base.py`) sets `MetaData(schema="signals")` with a naming convention (`ix_…`, `uq_…`, `ck_<table>_<name>`, `fk_…`, `pk_<table>`). Constraint names created by hand-written migrations are listed explicitly below.
 - `BIGSERIAL` below = `BigInteger` primary key with `autoincrement=True` in the migration.
-- `TIMESTAMP` = `timestamp without time zone`; `TIMESTAMPTZ` = `timestamp with time zone`. The `TIMESTAMPTZ` columns of `collection_log`, `news_articles`, `news_sentiment`, `ticker_blacklist` and `stage2_reviews` are mapped with the ORM type `TZDateTime`: naive datetimes written by the app are interpreted as Europe/Berlin wall clock, values are read back as naive Europe/Berlin wall clock (migration 031). `insider_trades.acceptance_datetime` and `cusip_map.resolved_at` use plain `DateTime(timezone=True)`.
+- `TIMESTAMP` = `timestamp without time zone`; `TIMESTAMPTZ` = `timestamp with time zone`. The `TIMESTAMPTZ` columns of `collection_log`, `news_articles`, `news_sentiment`, `ticker_blacklist` and the forecast tables (`forecast_reviews`, `forecasts`, `pack_candidates`, `forecast_criterion_samples`, migration 039) are mapped with the ORM type `TZDateTime`: naive datetimes written by the app are interpreted as Europe/Berlin wall clock, values are read back as naive Europe/Berlin wall clock (migration 031). `insider_trades.acceptance_datetime` and `cusip_map.resolved_at` use plain `DateTime(timezone=True)`.
 
 ---
 
@@ -800,38 +800,106 @@ CREATE TABLE signals.analysis_reports (
 CREATE INDEX idx_analysis_reports_date ON signals.analysis_reports(report_date);
 ```
 
-### `signals.stage2_reviews` / `signals.stage2_decisions` (Migration 035)
-Forward test of stage 2 (Claude broker skill), concept 2026-10-06 §7.7. Filled by the nightly step `stage2_review` from `context_packs/<date>/decisions.yaml` (format: [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md)). Trade results are **not** stored – the evaluation joins the barrier label of `feature_snapshots` (ticker, `session_date`).
+### Forecast tables (Migration 039)
+Forecast pipeline of the strategy-neutral rework ([FORECASTS.md](FORECASTS.md), plan [2026-10-17](2026-10-17_Plan_Strategieneutral.md) step 4). **Research results, not raw data:** no retention (not listed in `retention_statements()`), append-only, never rewritten by an evaluation. The stage-2 tables of migration 035 (`stage2_reviews`, `stage2_decisions`, barrier-trade `decisions.yaml`) never held a row and are dropped by 039 (`DROP TABLE IF EXISTS`; the downgrade recreates them exactly as 035 defined them).
 
 ```sql
-CREATE TABLE signals.stage2_reviews (
-  session_date    DATE PRIMARY KEY,         -- pack day d (as_of of the context pack)
-  decided_at      TIMESTAMPTZ NOT NULL,     -- from the file
-  file_mtime      TIMESTAMPTZ NOT NULL,     -- last write of decisions.yaml
-  on_time         BOOLEAN NOT NULL,         -- decided_at AND file_mtime < open of session d+1
-  n_buy           SMALLINT NOT NULL,
-  n_no_entry      SMALLINT NOT NULL,
-  content_sha256  VARCHAR(64) NOT NULL,     -- unchanged files are skipped
-  source_file     VARCHAR(300) NOT NULL,
-  ingested_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+-- one row per ingested forecasts.yaml; a changed file = a NEW review (append-only)
+CREATE TABLE signals.forecast_reviews (
+  id                 BIGSERIAL PRIMARY KEY,
+  session_date       DATE NOT NULL,            -- pack day d (folder name = `session`)
+  file_path          VARCHAR(300) NOT NULL,
+  file_sha256        VARCHAR(64) NOT NULL,     -- idempotent re-ingest
+  file_mtime         TIMESTAMPTZ NOT NULL,     -- last write of the file (on-time rule)
+  schema             VARCHAR(40),              -- 'forecasts/v1'; NULL for a rejected header
+  forecaster_version VARCHAR(64),              -- skill/prompt version + model; NULL if rejected
+  decided_at         TIMESTAMPTZ,              -- from the file; NULL if rejected
+  on_time            BOOLEAN NOT NULL,         -- decided_at AND file_mtime < open (09:30 NY) of session d+1; false for a rejected file
+  status             VARCHAR(10) NOT NULL,     -- ok | partial (some rows rejected) | rejected (header invalid or every row invalid)
+  n_forecasts        SMALLINT NOT NULL,        -- accepted rows
+  n_rejected         SMALLINT NOT NULL,        -- rejected rows (the reasons are in `errors`)
+  errors             JSONB,                    -- list of messages (at most 100)
+  ingested_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT ck_forecast_reviews_status CHECK (status IN ('ok', 'partial', 'rejected')),
+  CONSTRAINT uq_forecast_reviews_file_sha256 UNIQUE (file_sha256)
+);
+CREATE INDEX ix_forecast_reviews_session_date ON signals.forecast_reviews (session_date);
+
+-- append-only: one row per ticker x horizon of a review (denormalised from it)
+CREATE TABLE signals.forecasts (
+  id                 BIGSERIAL PRIMARY KEY,
+  review_id          BIGINT NOT NULL REFERENCES signals.forecast_reviews(id),   -- no cascade: a frozen sample must not vanish
+  session_date       DATE NOT NULL,
+  ticker             VARCHAR(20) NOT NULL,
+  horizon_days       SMALLINT NOT NULL,        -- 5 | 20 | 60
+  direction          VARCHAR(7) NOT NULL,      -- up | down | neutral
+  confidence         NUMERIC(4,3),             -- P(direction correct), 0.50 .. 0.95; NULL for neutral
+  conviction         SMALLINT,                 -- 1 .. 5; NULL for neutral
+  expected_pct       NUMERIC(8,3),             -- signed expected raw return in percent, optional
+  drivers            VARCHAR(20)[],            -- controlled vocabulary (12 screen groups + news, earnings, sector, macro, other)
+  reason             TEXT,
+  risks              TEXT,
+  forecaster_version VARCHAR(64) NOT NULL,     -- the criterion filters on ONE version
+  decided_at         TIMESTAMPTZ NOT NULL,
+  valid_from         TIMESTAMPTZ NOT NULL,     -- open of session d+1: the evaluated return starts here
+  on_time            BOOLEAN NOT NULL,         -- late forecasts are stored, evaluated descriptively, never decisive
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT ck_forecasts_horizon_days CHECK (horizon_days IN (5, 20, 60)),
+  CONSTRAINT ck_forecasts_direction CHECK (direction IN ('up', 'down', 'neutral')),
+  CONSTRAINT ck_forecasts_confidence CHECK (confidence IS NULL OR (confidence >= 0.5 AND confidence <= 0.95)),
+  CONSTRAINT ck_forecasts_conviction CHECK (conviction IS NULL OR (conviction >= 1 AND conviction <= 5)),
+  CONSTRAINT ck_forecasts_directional_scored CHECK (direction = 'neutral' OR (confidence IS NOT NULL AND conviction IS NOT NULL)),
+  CONSTRAINT uq_forecasts_review_ticker_horizon UNIQUE (review_id, ticker, horizon_days)
+);
+CREATE INDEX ix_forecasts_session_date_horizon_days ON signals.forecasts (session_date, horizon_days);
+CREATE INDEX ix_forecasts_forecaster_version_horizon_days ON signals.forecasts (forecaster_version, horizon_days);
+
+-- the screen candidates of a context pack (written by the pack generator, plan step 3)
+CREATE TABLE signals.pack_candidates (
+  session_date     DATE NOT NULL,
+  ticker           VARCHAR(20) NOT NULL,
+  bucket           VARCHAR(10) NOT NULL,       -- bull | bear | random | requested (SCREEN.md section 6)
+  bucket_rank      SMALLINT,                   -- rank inside the bucket (the pack files are alphabetical, the rank stays in the DB)
+  screen_version   VARCHAR(20) NOT NULL,       -- e.g. 'screen/v1'
+  gate_ok          BOOLEAN NOT NULL,
+  composite        NUMERIC(9,6),
+  evidence_breadth SMALLINT,
+  group_scores     JSONB,                      -- {group: score} of the groups with a score
+  flags            JSONB,                      -- event flags, group percentiles, bull/bear groups, gate reasons
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT pk_pack_candidates PRIMARY KEY (session_date, ticker, bucket),
+  CONSTRAINT ck_pack_candidates_bucket CHECK (bucket IN ('bull', 'bear', 'random', 'requested'))
 );
 
-CREATE TABLE signals.stage2_decisions (
-  id            BIGSERIAL PRIMARY KEY,
-  session_date  DATE NOT NULL REFERENCES signals.stage2_reviews(session_date) ON DELETE CASCADE,
-  ticker        VARCHAR(20) NOT NULL,
-  action        VARCHAR(10) NOT NULL,
-  pack_rank     SMALLINT,                   -- NN of NN_TICKER.md, NULL if not in the pack
-  reason        TEXT,
-  limit_price   NUMERIC(12,4),              -- informational only
-  target_pct    NUMERIC(8,4),               -- informational only
-  stop_pct      NUMERIC(8,4),               -- informational only
-  CONSTRAINT ck_stage2_decisions_action CHECK (action IN ('buy', 'no_entry')),
-  CONSTRAINT uq_stage2_session_ticker UNIQUE (session_date, ticker)
+-- the frozen decisive sample of the pre-registered criterion and its verdict, each written ONCE
+CREATE TABLE signals.forecast_criterion_samples (
+  sample_key         VARCHAR(64) PRIMARY KEY,  -- SHA-256 of horizon, version, sessions, forecast ids (forecast_eval.sample_key)
+  horizon            SMALLINT NOT NULL,        -- only 20 (the registered horizon) is persisted
+  forecaster_version VARCHAR(64) NOT NULL,
+  criterion_mode     VARCHAR(20) NOT NULL,     -- system | claude_value_add
+  min_sessions       SMALLINT NOT NULL,        -- registered constants in force at the freeze (300 / 100)
+  min_per_side       SMALLINT NOT NULL,
+  n_up               INTEGER NOT NULL,
+  n_down             INTEGER NOT NULL,
+  sessions           JSONB NOT NULL,           -- ISO dates of the frozen sessions
+  forecast_ids       JSONB NOT NULL,           -- forecasts.id of the frozen forecasts, as strings
+  frozen_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  verdict_values     JSONB,                    -- the per-forecast values the verdict is computed from (VALUE_COLUMNS)
+  verdict            JSONB,                    -- status passed|failed, both modes, intervals, n_missing, frozen meta
+  verdict_at         TIMESTAMPTZ,
+  CONSTRAINT ck_forecast_criterion_samples_criterion_mode CHECK (criterion_mode IN ('system', 'claude_value_add')),
+  CONSTRAINT ck_forecast_criterion_samples_verdict_complete CHECK ((verdict IS NULL) = (verdict_values IS NULL) AND (verdict IS NULL) = (verdict_at IS NULL)),
+  CONSTRAINT uq_forecast_criterion_samples_horizon_version UNIQUE (horizon, forecaster_version)
 );
 ```
 
-A changed `decisions.yaml` replaces the stored day (review + decisions); its new `file_mtime` decides `on_time`.
+How they are filled ([`derived/forecasts.py`](../src/trading_signals/derived/forecasts.py), [`analysis/forecast_review.py`](../src/trading_signals/analysis/forecast_review.py), nightly step `forecast_review`):
+
+- **Ingest:** `context_packs/<date>/forecasts.yaml` is read once per file hash. A header violation stores a `rejected` review (reported once, no forecasts); a row violation (forbidden / unknown field, enum, range, duplicate `(ticker, horizon_days)`, ticker without a feature snapshot on the session day) drops that row and makes the review `partial`. A changed file is a new review; the earlier rows stay.
+- **Evaluation frame:** per session and `on_time` flag only the rows of the latest `ok` / `partial` review count (`effective_forecasts`), so a re-written file is never counted twice.
+- **`forecast_criterion_samples`:** a sample is inserted (`ON CONFLICT DO NOTHING`, unique per horizon and forecaster version) as soon as a version has 300 sessions with at least 100 on-time `up` and `down` 20-day calls; it is never changed. The verdict (`UPDATE … WHERE verdict IS NULL`) is written once, together with `verdict_values`, when all windows are realised or the grace period (h + 10 sessions) has passed. Later reports show these rows and never recompute the verdict from live returns; `forecast_review.recompute_verdict` reproduces it from `verdict_values`.
+- **`pack_candidates`:** `derived/pack_candidates.py` (`pack_candidate_rows` + `replace_pack_candidates`, idempotent per session) turns the result of `analysis/screen.screen_cross_section` into rows; the context pack generator (plan step 3) calls it.
+- The CHECK constraint names are the short ORM names (`name="status"`) because the Alembic metadata expands them with the naming convention to `ck_<table>_<name>`; an explicit `ck_…` name in a migration is expanded a second time (live 035 table: `ck_stage2_decisions_ck_stage2_decisions_action`).
 
 ### `signals.collection_log`
 Audit log for all collector runs (one row per run).
@@ -894,7 +962,7 @@ Decision 2026-10-05: the system keeps exactly the last **20 calendar quarters** 
 - `collection_log` – own **`log_retention`** job, daily 03:30 Europe/Berlin: deletes rows with `started_at` older than 90 days (`LOG_RETENTION_DAYS`) and marks orphaned running rows as failed.
 - `universe`, `ticker_blacklist`, `index_membership` – excluded (reference data).
 - `cusip_map` – lookup table without a date dimension.
-- `stage2_reviews`, `stage2_decisions` – not listed in `retention_statements()` (no retention).
+- `forecast_reviews`, `forecasts`, `pack_candidates`, `forecast_criterion_samples` – research results of the forecast pipeline, not listed in `retention_statements()` (no retention).
 
 > [!NOTE]
 > Rows with a NULL value in the retention date column (e.g. `insider_trades.filing_date IS NULL`) are never matched by `< cutoff` and therefore never deleted by this job.
@@ -941,10 +1009,11 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 | 032 | Table `cusip_map` (CUSIP → ticker cache for 13F) + index `idx_13f_ticker_period` on `form13f_holdings(ticker, report_period)` |
 | 033 | Barrier trade label on `feature_snapshots`: `return_barrier_14d`, `barrier_outcome`, `barrier_ambiguous` |
 | 034 | Nine short-term price features `st_*` (NUMERIC(12,6)) on `feature_snapshots` (concept 2026-10-06 §7.1) |
-| 035 | Tables `stage2_reviews` + `stage2_decisions` (FK `ON DELETE CASCADE`, check `ck_stage2_decisions_action`, unique `uq_stage2_session_ticker`; stage-2 forward test, concept 2026-10-06 §7.7) |
+| 035 | Tables `stage2_reviews` + `stage2_decisions` (FK `ON DELETE CASCADE`, check `ck_stage2_decisions_action`, unique `uq_stage2_session_ticker`; stage-2 forward test, concept 2026-10-06 §7.7) – dropped again by 039 |
 | 036 | `feature_snapshots.short_interest_days_to_cover` + `short_interest_change_1m` (NUMERIC(10,4), FINRA settlement features; `FEATURE_VERSION` 2026.10-3). History: `scripts/repair/backfill_short_interest_features.py` (only these two columns) |
 | 037 | Trailing-stop trade label on `feature_snapshots`: `return_trail_60d` (NUMERIC(10,6)), `trail_exit_day` (SMALLINT), `trail_stopped` (BOOLEAN); `ADD COLUMN IF NOT EXISTS`, history via `target_backfill` (nightly chain or `features_rebuild.py --skip-ta --skip-clusters --skip-features`) |
 | 038 | Drops the 037 trailing-stop label columns again (`DROP COLUMN IF EXISTS` `return_trail_60d`, `trail_exit_day`, `trail_stopped`) – scope decision 2026-10-17: Alpaca-Broker forecasts, a separate bot trades; the downgrade re-adds the columns exactly as 037 defined them. 037 itself is unchanged. The model target of the monthly analysis is the strategy-neutral `return_60d` |
+| 039 | Forecast pipeline: tables `forecast_reviews`, `forecasts`, `pack_candidates`, `forecast_criterion_samples` (see "Forecast tables"); drops the empty stage-2 tables of 035 (`DROP TABLE IF EXISTS stage2_decisions`, `stage2_reviews`; the downgrade drops the new tables and recreates the stage-2 tables exactly as 035). Applied with the deploy after 2026-10-18. Tested on a fresh `postgres:18`: `upgrade head`, `alembic check` (clean), `downgrade 038` (stage-2 DDL identical to 035), `upgrade head` again |
 
 > [!NOTE]
 > Migration 024 was extended after production had applied it (commit `81446a4` added `sector_relative_return_20d` / `sector_relative_momentum`), so 025 (`32168a0`) created the two columns in production. On an empty database both added them and `alembic upgrade head` failed at 025. **Fixed 2026-10-16:** 025 uses `ADD COLUMN IF NOT EXISTS` and its downgrade is a no-op (024's downgrade drops the columns). Verified on a throwaway `postgres:18`: fresh `upgrade head` → 035, round trip `025 → 023 → head`, and the production history (old 024 without the columns → 025 creates them). No effect on databases already at 025 or later.

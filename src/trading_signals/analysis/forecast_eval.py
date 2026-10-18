@@ -1,7 +1,9 @@
 """Pre-registered evaluation of Claude's forecasts (``docs/FORECASTS.md``).
 
 Plan 2026-10-17 (strategy-neutral rework), step 2: pure evaluation functions;
-the ingest (``forecasts.yaml`` -> DB) and the nightly wiring come in step 4.
+the ingest (``forecasts.yaml`` -> DB, ``derived/forecasts.py``) and the nightly
+wiring with the one-time persistence of the frozen sample and the verdict
+(``analysis/forecast_review.py``) are step 4.
 
 A forecast is ``(session d, ticker, horizon h, direction, confidence,
 conviction)``. The realised value is the strategy-neutral forward return of the
@@ -46,8 +48,8 @@ Decisive criterion (pre-registered 2026-10-18 by Sebastian, like H14 - see
 afterwards): :func:`freeze_sample` fixes the sample from the forecasts alone
 (independent of any return), :func:`verdict_from_frozen` computes the one-look
 verdict once the windows are realised, and :func:`verdict_from_values`
-recomputes it from persisted values. Step 4 persists the frozen sample and the
-verdict once.
+recomputes it from persisted values. ``forecast_review`` persists the frozen
+sample and the verdict once.
 """
 
 from __future__ import annotations
@@ -1031,6 +1033,7 @@ def evaluate_forecasts(
     criterion_mode: str = DEFAULT_CRITERION_MODE,
     frozen: Mapping[int, Mapping[str, Any]] | None = None,
     verdicts: Mapping[int, Mapping[str, Any]] | None = None,
+    long_run: Mapping[int, tuple[float, float]] | None = None,
 ) -> dict[str, Any]:
     """Full pre-registered evaluation of a forecast set.
 
@@ -1040,7 +1043,10 @@ def evaluate_forecasts(
     open. The criterion of every horizon present is reported (only 20 days is
     pre-registered, ``registered`` marks it); ``frozen`` / ``verdicts`` pass
     state persisted by an earlier run (plan step 4) - a given verdict is
-    reported as it is, never recomputed.
+    reported as it is, never recomputed. ``long_run`` = ``{horizon: (share of
+    positive, share of negative returns)}`` is the reference of the absolute
+    block when the caller computed it over a longer history than
+    ``universe_returns`` holds (default: the shares of ``universe_returns``).
     """
     _check_mode(criterion_mode)
     joined = attach_outcomes(forecasts, universe_returns, spy_returns,
@@ -1057,7 +1063,8 @@ def evaluate_forecasts(
     for h in horizons:
         if not (joined["horizon_days"] == h).any():
             continue
-        lr = long_run_shares(universe_returns, h)
+        lr = long_run[h] if long_run and h in long_run else long_run_shares(
+            universe_returns, h)
         entry = evaluate_direction(on_time, h, long_run=lr)
         entry["pending"] = int(((on_time["horizon_days"] == h)
                                 & on_time["ret"].isna()).sum())
@@ -1086,8 +1093,15 @@ def _d(x: Any) -> str:
     return DASH if x is None else f"{pd.Timestamp(x):%Y-%m-%d}"
 
 
-def render_report(result: dict[str, Any], today: date | None = None) -> str:
-    """German Markdown report (``context_packs/forecast_auswertung.md``)."""
+def render_report(
+    result: dict[str, Any], today: date | None = None,
+    extra_sections: Sequence[str] = (),
+) -> str:
+    """German Markdown report (``context_packs/forecast_auswertung.md``).
+
+    ``extra_sections`` (Markdown blocks of the nightly step: files read,
+    persisted samples) are inserted before the footer.
+    """
     day = today or date.today()
     lines = [
         f"# Prognose-Auswertung – Stand {day.isoformat()}",
@@ -1101,8 +1115,10 @@ def render_report(result: dict[str, Any], today: date | None = None) -> str:
         "Bewertungsregeln: `docs/FORECASTS.md`.",
         "",
     ]
+    extra = [block for block in extra_sections if block]
     if not result["n_forecasts"]:
-        return "\n".join([*lines, "Noch keine `forecasts.yaml` eingelesen.", ""])
+        return "\n".join(
+            [*lines, "Noch keine `forecasts.yaml` eingelesen.", "", *extra])
     lines += [
         f"- Prognosen: {result['n_forecasts']} (rechtzeitig {result['n_on_time']}, "
         f"verspätet {result['n_late']}) · Sitzungen {_d(result['first_session'])} … "
@@ -1124,6 +1140,8 @@ def render_report(result: dict[str, Any], today: date | None = None) -> str:
                     f"(Basisrate {_pct(r.get('selection_base_rate'), 1, False)})"
                 )
         lines.append("")
+    for block in extra:
+        lines += [block, ""]
     lines += ["---", "*Automatisch erzeugt · Keine Anlageberatung*", ""]
     return "\n".join(lines)
 

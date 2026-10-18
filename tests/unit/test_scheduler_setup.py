@@ -54,6 +54,24 @@ class TestCreateScheduler:
         assert len(JOB_DEFINITIONS) == 26
         assert len(create_scheduler().get_jobs()) == 26
 
+    def test_forecast_review_replaces_stage2_review_in_the_chain(self):
+        from trading_signals.scheduler import jobs
+
+        # same position as the old step: after the target backfill, before the pack
+        assert CHAIN_STEP_JOB_IDS == (
+            "feature_pipeline", "target_backfill", "forecast_review",
+            "context_pack_generator",
+        )
+        ids = [d[0] for d in JOB_DEFINITIONS]
+        assert "forecast_review" in ids and "stage2_review" not in ids
+        assert "stage2_review" not in JOB_COLLECTOR_NAMES
+        definition = {d[0]: d for d in JOB_DEFINITIONS}["forecast_review"]
+        assert definition[1] is jobs.run_forecast_review
+        assert not hasattr(jobs, "run_stage2_review")
+        assert JOB_COLLECTOR_NAMES["forecast_review"] == "forecast_review"
+        sched = create_scheduler()
+        assert _hm(sched.get_job("forecast_review")) == ("4", "30")  # paused chain step
+
     def test_universe_validation_runs_weekly_sunday_13_berlin(self):
         job = create_scheduler().get_job("universe_validation")
         f = {x.name: str(x) for x in job.trigger.fields}

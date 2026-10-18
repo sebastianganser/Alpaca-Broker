@@ -32,7 +32,7 @@ Build a data-driven research platform that aggregates signals from multiple sour
 
 ## Current Status
 
-- **Sprint 9.5c** (Candidate Pipeline MVP), Phase 2 – short-term research K1–K4 done (no validated edge yet), stage-2 forward test (K5) running
+- **Sprint 9.5c** (Candidate Pipeline MVP), Phase 2 – short-term research K1–K4 done (no validated edge yet), forecast pipeline (`forecasts.yaml` ingest, pre-registered evaluation) implemented, deploy pending
 - **System running** on Unraid (192.168.1.93:8090)
 - **Next:** Sprint 10 (Signal Scoring) planned from mid-December 2026 – see [docs/ROADMAP.md](docs/ROADMAP.md)
 

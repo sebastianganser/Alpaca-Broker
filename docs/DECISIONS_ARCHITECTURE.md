@@ -161,7 +161,7 @@
 ### [2026-10-05] Nightly Chain Instead of Fixed-Time Derived Jobs
 
 **Context:** Feature pipeline, target backfill and context pack ran at fixed times and could start before upstream collectors had finished (or on the wrong date label).
-**Decision:** One `nightly_chain` job (04:30 Europe/Berlin) runs TA catch-up → `feature_pipeline` → `target_backfill` → `stage2_review` → `context_pack_generator` for the **last completed NYSE session**. It waits for running upstream collectors (`scheduler/registry.NIGHTLY_UPSTREAM`; prices are critical). The chain steps stay registered as **paused** jobs so they remain visible and manually triggerable. Job definitions live in `scheduler/setup.py`, job ↔ collector names in `scheduler/registry.py`.
+**Decision:** One `nightly_chain` job (04:30 Europe/Berlin) runs TA catch-up → `feature_pipeline` → `target_backfill` → `forecast_review` (until 2026-10-18 `stage2_review`, replaced by plan step 4 / migration 039) → `context_pack_generator` for the **last completed NYSE session**. It waits for running upstream collectors (`scheduler/registry.NIGHTLY_UPSTREAM`; prices are critical). The chain steps stay registered as **paused** jobs so they remain visible and manually triggerable. Job definitions live in `scheduler/setup.py`, job ↔ collector names in `scheduler/registry.py`.
 
 ### [2026-10-05] Market-Session Date Labels
 

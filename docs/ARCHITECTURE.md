@@ -37,7 +37,7 @@
 │                 │ bind mount                                         │
 │                 ▼                                                    │
 │  /mnt/user/Workfiles/AlpacaBroker/context_packs/  (Context Packs,    │
-│                                    decisions.yaml, stage-2 report)   │
+│                                    forecasts.yaml, forecast report)  │
 └──────────────────────────────────────────────────────────────────────┘
           │ HTTPS (outbound only)
           ▼
@@ -92,7 +92,7 @@ Claude Code reaches the production system through three channels (no SSH):
 | Channel | Access | Used for |
 |---------|--------|----------|
 | Production API | `http://192.168.1.93:8090/api/v1/…`, read-only `GET` via `curl`: `health`, `dashboard/summary` (collectors with `last_status`/`is_running`, `table_stats`, `system_health` incl. Alembic revision and job count), `logs` (filters `status`, `collector`, `page`, `limit`) | Health and log checks (agent `log-checker`, skill `log-check`) |
-| Context-pack share | `\\HOMENAS\Workfiles\AlpacaBroker\context_packs\` – read-only, by hostname (access via IP is denied) | Context packs, `decisions.yaml`, `stage2_auswertung.md` |
+| Context-pack share | `\\HOMENAS\Workfiles\AlpacaBroker\context_packs\` – read-only, by hostname (access via IP is denied) | Context packs, `forecasts.yaml`, `forecast_auswertung.md` |
 | Unraid WebGUI | `http://192.168.1.93` in Claude Code's built-in browser pane; Sebastian logs in himself. One User Script **`alpaca-ops`** (Settings → User Scripts → Run Script, argument = command: `status`, `logs [N] [SINCE]`, `deploy`, `deploy-log`, `restart`, `run scripts/…py [args]`, and for long runs `run-bg scripts/…py [args]` / `run-log [N]` / `run-stop` – detached, output in `ops/bg-job.log`). The wrapper fetches [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) from `origin/main` on every run (a push changes the ops logic, the deployed app only changes with `deploy`) and mirrors each run's output to `\\HOMENAS\Workfiles\AlpacaBroker\ops\<command>.log` | Deploy (skill `deploy`), container state, container logs, project scripts in the container |
 
 Scope and guard rules: in the WebGUI only the container `alpaca-broker`, its folders and its own User Scripts may be touched – never other containers (GynOrg, PostgreSQL), array, shares, users, network or security settings. Deploys/restarts are not allowed between 22:15 and 05:15 (collectors + nightly chain), while a job is running (`is_running` in `dashboard/summary`) or while a project script runs in the container (`docker top`; started via `run` or `run-bg`). `run` and `run-bg` are refused in the night window at the start; a detached `run-bg` is not stopped at 22:15, so it must end before the chain (04:30, Tue–Sat) or be stopped with `run-stop` (decision [2026-10-17](DECISIONS_ARCHITECTURE.md)). The shared Claude Code setup (permissions, subagents, skills) lives in `.claude/`; the working rules are in [CLAUDE.md](../CLAUDE.md).
@@ -109,7 +109,7 @@ Alpaca-Broker/
 │   ├── agents/                      # Subagents: log-checker (Haiku), doc-keeper (Sonnet), code-reviewer (Opus)
 │   └── skills/                      # Workflows: log-check, deploy, session-end
 ├── docs/                            # Documentation (INDEX.md = navigator)
-│   ├── STAGE2_DECISIONS.md          # decisions.yaml format (stage-2 forward test)
+│   ├── FORECASTS.md                 # forecasts.yaml format + pre-registered evaluation (STAGE2_DECISIONS.md = historical)
 │   ├── 2026-10-06_Konzept_Kurzfrist_Kandidaten.md  # short-term candidate concept
 │   └── reports/                     # Research reports (event studies, walk-forward, S&P 500 survivorship
 │                                    #   inventory incl. repair runbook, …)
@@ -196,7 +196,8 @@ trading_signals/
 │   ├── target_backfill.py        # Forward returns 1/5/20/60d + barrier label (return_barrier_14d, …)
 │   ├── recompute.py              # Recompute TA, targets, st_* after a price-history refresh
 │   ├── context_pack_generator.py # Stage-1 risk pre-filter + provisional ranking → Markdown packs
-│   └── stage2_decisions.py       # Reads/validates decisions.yaml → stage2_reviews / stage2_decisions
+│   ├── forecasts.py              # Parses/validates forecasts.yaml (forecasts/v1) → forecast_reviews / forecasts (append-only, idempotent by file hash)
+│   └── pack_candidates.py        # Screen candidates of a pack → pack_candidates (called by the pack generator, plan step 3)
 ├── analysis/
 │   ├── feature_report.py   # Monthly FeatureAnalysisEngine (daily rank IC, excess returns) → analysis_reports
 │   ├── stats.py / modeling.py / feature_groups.py  # Pure stats (Newey-West, rank IC, batch-jackknife intervals), leakage-safe RF+LASSO, feature grouping
@@ -209,7 +210,7 @@ trading_signals/
 │   ├── event_study.py      # Event studies: horizon mode (20/60-session raw and excess returns) + barrier mode (barrier mode removed in step 6)
 │   ├── barrier.py          # Barrier trade simulation (MAIN_BARRIER: +1 % / −2 % / 14 sessions) – removed in plan step 6
 │   ├── hit_model.py        # Walk-forward hit-probability model for the barrier label – removed in step 6
-│   └── stage2_eval.py      # Stage-2 forward-test evaluation + report (stage2_auswertung.md) – replaced by forecast_eval in step 4/6
+│   └── forecast_review.py  # Nightly step glue: loaders, freeze / verdict persisted ONCE (forecast_criterion_samples), report forecast_auswertung.md
 ├── scheduler/
 │   ├── setup.py            # JOB_DEFINITIONS (cron, Europe/Berlin) + create_scheduler()
 │   ├── registry.py         # job id ↔ collector_name, CHAIN_STEP_JOB_IDS, NIGHTLY_UPSTREAM, CATCHUP_JOBS
@@ -253,9 +254,9 @@ flowchart TD
     DER --> CHAIN["Nightly chain 04:30"]
     CHAIN --> FS["feature_snapshots (features incl. st_*)"]
     FS --> TGT["Targets: return_1d/5d/20d/60d + barrier label"]
-    TGT --> S2["stage2_review: decisions.yaml → stage2_reviews / stage2_decisions + stage2_auswertung.md"]
+    TGT --> S2["forecast_review: forecasts.yaml → forecast_reviews / forecasts, frozen sample + verdict (once), forecast_auswertung.md"]
     FS --> CP["Context Pack (risk pre-filter + provisional ranking) → Markdown on Unraid share"]
-    CP -. "Claude broker skill writes decisions.yaml" .-> S2
+    CP -. "Claude broker skill writes forecasts.yaml" .-> S2
     TGT --> FA["feature_analysis (monthly, 1st 07:00) → analysis_reports"]
 ```
 
@@ -276,7 +277,7 @@ flowchart TD
     D --> E["1. technical_indicators catch-up"]
     E --> F["2. feature_pipeline(target)"]
     F --> G["3. target_backfill (returns + barrier label)"]
-    G --> H["4. stage2_review"]
+    G --> H["4. forecast_review"]
     H --> I{"feature_pipeline SUCCESS or PARTIAL?"}
     I -- yes --> J["5. context_pack_generator(target)"]
     I -- no --> K["context pack SKIPPED"]
@@ -286,38 +287,38 @@ flowchart TD
 
 - **Target session** = `market_calendar.last_completed_session()` (not `today − 1`; the container runs in Berlin time).
 - **Upstream check** (`NIGHTLY_UPSTREAM`): `prices_alpaca`, `options_iv_collector`, `short_interest_collector`, `fred_collector`, `estimates_collector`, `analyst_ratings_collector`, `ark_holdings`, `form4_collector`, `news_alpaca`, `sentiment_computer`. A collector is fresh if it has a `success`/`partial` run that started after 16:00 ET of the target session. The chain only waits while stale collectors are still `running`; afterwards it proceeds and records them as `stale inputs`. (`prices_alpaca` is flagged critical in the registry, but the chain currently treats every stale input the same → `partial`.)
-- **Steps** each run through `run_logged_job(..., alert=False)` and get their own `collection_log` row. `feature_pipeline` writing 0 rows → `skipped`; `target_backfill` retries up to 3× on PostgreSQL deadlocks; `stage2_review` runs after the label update so newly closed trades are counted.
+- **Steps** each run through `run_logged_job(..., alert=False)` and get their own `collection_log` row. `feature_pipeline` writing 0 rows → `skipped`; `target_backfill` retries up to 3× on PostgreSQL deadlocks; `forecast_review` runs after the target update so newly realised returns are scored (two transactions: ingest first, then freeze / verdict and the report).
 - **Overall status:** `failed` if the feature pipeline failed; `partial` if inputs were stale or any step was not `success`; else `success`. Notes contain `session=YYYY-MM-DD; <step>=<status>, …`. Only the chain itself alerts.
-- **Chain step jobs** (`feature_pipeline`, `target_backfill`, `stage2_review`, `context_pack_generator`, see `CHAIN_STEP_JOB_IDS`) are registered **paused** (`next_run_time=None`): visible and manually triggerable in the UI, but never fire on their own. A per-`collector_name` lock in `run_logged_job` prevents a manual trigger and the chain from running the same step concurrently (→ `skipped`).
+- **Chain step jobs** (`feature_pipeline`, `target_backfill`, `forecast_review`, `context_pack_generator`, see `CHAIN_STEP_JOB_IDS`) are registered **paused** (`next_run_time=None`): visible and manually triggerable in the UI, but never fire on their own. A per-`collector_name` lock in `run_logged_job` prevents a manual trigger and the chain from running the same step concurrently (→ `skipped`).
 
 ---
 
 ## Context Pack Output (Unraid share)
 
-Written by [derived/context_pack_generator.py](../src/trading_signals/derived/context_pack_generator.py) and the `stage2_review` step below `CONTEXT_PACK_PATH` (default `/mnt/user/Workfiles/AlpacaBroker/context_packs`):
+Written by [derived/context_pack_generator.py](../src/trading_signals/derived/context_pack_generator.py) and the `forecast_review` step below `CONTEXT_PACK_PATH` (default `/mnt/user/Workfiles/AlpacaBroker/context_packs`):
 
 ```
 context_packs/
-├── stage2_auswertung.md          # Stage-2 forward-test report, rewritten on every stage2_review run
+├── forecast_auswertung.md        # Forecast evaluation report (German), rewritten on every forecast_review run
 └── 2026-10-14/                   # one folder per market session (target session, ISO date)
     ├── 00_uebersicht.md          # overview: ranking, market context, exclusions, data quality,
-    │                             #   decisions.yaml template
+    │                             #   decisions.yaml template (replaced by forecasts.yaml with plan step 3)
     ├── 01_<TICKER>.md            # top candidates (default top 5), rank-prefixed
     ├── 02_<TICKER>.md
     ├── …
-    └── decisions.yaml            # written by the Claude broker skill, read by stage2_review
+    └── forecasts.yaml            # written by the Claude broker skill (forecasts/v1, FORECASTS.md), read by forecast_review
 ```
 
 - **Selection:** stage-1 risk pre-filter (dollar volume > 0, `atr_14_pct` between 1 % and 3 %, no earnings within 21 calendar days, ≥ 3 contributing features), then sorted by a **provisional, unvalidated** rank-based score (`PRELIMINARY_WEIGHTS`).
 - **Candidate files:** YAML frontmatter (`ticker`, `as_of`, `rank`, `preliminary_score`, `universe_size`, `sector`, `industry`, optional `close`/`adv_20d_musd`/`earnings_in_days`/`atr_14_pct`/`index_added`, **`selection: risk_prefilter`**, **`ranking_validated: false`**, `data_completeness`) + Markdown body with feature values and percentiles.
-- **Encoding:** all files (packs and `stage2_auswertung.md`) are written as `utf-8-sig` (UTF-8 with BOM).
+- **Encoding:** all files (packs and `forecast_auswertung.md`) are written as `utf-8-sig` (UTF-8 with BOM).
 - **Re-runs:** old `NN_*.md` candidate files of the same day are deleted before writing; the overview is written even on days without eligible candidates.
-- **Stage 2:** `stage2_review` scans the session folders of the last 45 days (`LOOKBACK_DAYS`) for `decisions.yaml` (schema `stage2-decisions/v1`, format: [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md)), stores them in `stage2_reviews` / `stage2_decisions`, evaluates `buy` decisions with the barrier label and writes `stage2_auswertung.md`. Invalid files → run status `partial` (alert).
+- **Forecasts:** `forecast_review` scans all session folders for `forecasts.yaml` (schema `forecasts/v1`, format and pre-registered evaluation: [FORECASTS.md](FORECASTS.md)), stores each new file once (SHA-256) in `forecast_reviews` / `forecasts` (append-only; a changed file is a new review), freezes the decisive sample of a forecaster version when it is complete and computes its verdict once (`forecast_criterion_samples`), and writes `forecast_auswertung.md`. A rejected file or row → run status `partial` (alert). The pack generator still writes the old `decisions.yaml` template until plan step 3.
 
 > [!IMPORTANT]
 > **File permissions:** the container runs as `99:100`. The host directory must be owned by `99:100`:
 > `chown -R 99:100 /mnt/user/Workfiles/AlpacaBroker`.
-> Running scripts via `docker exec -u root …` creates root-owned files/folders that the app later cannot overwrite (e.g. a session folder or `stage2_auswertung.md`) – run scripts as the default container user, or re-`chown` afterwards. (The compose file contains a commented-out `user: "0:0"` fallback; fixing ownership is the preferred solution.)
+> Running scripts via `docker exec -u root …` creates root-owned files/folders that the app later cannot overwrite (e.g. a session folder or `forecast_auswertung.md`) – run scripts as the default container user, or re-`chown` afterwards. (The compose file contains a commented-out `user: "0:0"` fallback; fixing ownership is the preferred solution.)
 
 ---
 

@@ -435,7 +435,7 @@ class TestNightlyChain:
         "technical_indicators",
         "feature_pipeline",
         "target_backfill",
-        "stage2_review",
+        "forecast_review",
         "context_pack_generator",
     ]
     # collector name -> body function the chain hands to run_logged_job
@@ -443,7 +443,7 @@ class TestNightlyChain:
         "technical_indicators": "_technical_indicators_body",
         "feature_pipeline": "_feature_pipeline_body",
         "target_backfill": "_target_backfill_body",
-        "stage2_review": "_stage2_review_body",
+        "forecast_review": "_forecast_review_body",
         "context_pack_generator": "_context_pack_body",
     }
 
@@ -548,11 +548,11 @@ class TestNightlyChain:
         assert out.status == job_status.SUCCESS
         assert out.notes.startswith("session=2026-10-02")
 
-    def test_invalid_decisions_file_makes_partial(self):
-        out, calls = self._run({"stage2_review": job_status.PARTIAL})
+    def test_invalid_forecast_file_makes_partial(self):
+        out, calls = self._run({"forecast_review": job_status.PARTIAL})
         assert "context_pack_generator" in [c[0] for c in calls]
         assert out.status == job_status.PARTIAL
-        assert "stage2_review=partial" in out.notes
+        assert "forecast_review=partial" in out.notes
 
     def test_pipeline_failure_skips_context_pack(self):
         out, calls = self._run({"feature_pipeline": job_status.FAILED})
@@ -586,7 +586,7 @@ class TestNightlyChain:
         assert [c[0] for c in calls] == self.ALL_STEPS
         for name in ("feature_pipeline", "context_pack_generator"):
             self.bodies[name].assert_not_called()
-        for name in ("technical_indicators", "target_backfill", "stage2_review"):
+        for name in ("technical_indicators", "target_backfill", "forecast_review"):
             self.bodies[name].assert_called_once()
         assert all(alert is False for _, alert in calls)
         assert out.status == job_status.FAILED
@@ -633,7 +633,7 @@ class TestNightlyChain:
         self.bodies["feature_pipeline"].assert_not_called()
         self.bodies["context_pack_generator"].assert_not_called()
         self.bodies["target_backfill"].assert_called_once()
-        self.bodies["stage2_review"].assert_called_once()
+        self.bodies["forecast_review"].assert_called_once()
         assert out.status == job_status.FAILED
         assert (
             "critical inputs stale: prices_alpaca "
@@ -665,7 +665,7 @@ class TestNightlyChain:
         assert [c[0] for c in calls] == self.ALL_STEPS
         self.bodies["feature_pipeline"].assert_not_called()
         self.bodies["context_pack_generator"].assert_not_called()
-        for name in ("technical_indicators", "target_backfill", "stage2_review"):
+        for name in ("technical_indicators", "target_backfill", "forecast_review"):
             self.bodies[name].assert_called_once()
         assert self.logged["feature_pipeline"].status == job_status.SKIPPED
         assert self.logged["context_pack_generator"].status == job_status.SKIPPED
@@ -746,7 +746,7 @@ class TestNightlyChain:
             "feature_pipeline",  # gap session
             "feature_pipeline",  # target session
             "target_backfill",
-            "stage2_review",
+            "forecast_review",
             "context_pack_generator",
         ]
         assert all(alert is False for _, alert in calls)
@@ -759,7 +759,7 @@ class TestNightlyChain:
         assert out.notes == (
             "session=2026-10-02; technical_indicators=success, "
             "feature_pipeline=success, target_backfill=success, "
-            "stage2_review=success, context_pack=success; "
+            "forecast_review=success, context_pack=success; "
             "catch-up: 2026-09-30=success"
         )
 
@@ -809,7 +809,7 @@ class TestNightlyChain:
         assert self._fp_dates() == [self.GAP, self.TARGET]
         assert [c[0] for c in calls][-3:] == [
             "target_backfill",
-            "stage2_review",
+            "forecast_review",
             "context_pack_generator",
         ]
         assert out.status == job_status.PARTIAL
@@ -825,7 +825,7 @@ class TestNightlyChain:
         assert self._fp_dates() == [self.GAP, self.TARGET]
         assert [c[0] for c in calls][-3:] == [
             "target_backfill",
-            "stage2_review",
+            "forecast_review",
             "context_pack_generator",
         ]
         assert out.status == job_status.PARTIAL
@@ -862,7 +862,7 @@ class TestNightlyChain:
             "feature_pipeline",  # gap session (runs)
             "feature_pipeline",  # target session (skipped row)
             "target_backfill",
-            "stage2_review",
+            "forecast_review",
             "context_pack_generator",
         ]
         # the target's SKIPPED row stays the last feature_pipeline log entry
@@ -915,7 +915,7 @@ class TestNightlyChain:
         assert all(alert is False for _, alert in calls)
         # nothing for the already processed target; upstream is irrelevant
         assert self._fp_dates() == [self.GAP]
-        self.bodies["stage2_review"].assert_not_called()
+        self.bodies["forecast_review"].assert_not_called()
         self.bodies["context_pack_generator"].assert_not_called()
         self.wait_mock.assert_not_called()
         assert out.status == job_status.SUCCESS

@@ -22,7 +22,7 @@
 | What did we learn from the data / from bugs? | [LEARNINGS.md](LEARNINGS.md) |
 | What hypotheses do we want to test? | [LEARNINGS_HYPOTHESES.md](LEARNINGS_HYPOTHESES.md) |
 | Short-term candidate concept (barrier trades, K1–K5) | [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) |
-| Format of the stage-2 feedback file `decisions.yaml` (historical, valid until the forecast pipeline is deployed) | [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) |
+| Format of the old stage-2 feedback file `decisions.yaml` (historical; parser and tables removed in code, valid in the running container until migration 039 is deployed) | [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) |
 | Format of Claude's forecast file `forecasts.yaml` and the pre-registered evaluation of the forecasts | [FORECASTS.md](FORECASTS.md) |
 | Candidate screen: quality gate, evidence groups with literature signs, buckets, backtest | [SCREEN.md](SCREEN.md) |
 | S&P 500 survivorship gap: root cause, removal list, **repair runbook** (dry runs, `--apply`, rollback) | [reports/2026-10-16_sp500_survivorship_inventory.md](reports/2026-10-16_sp500_survivorship_inventory.md) |
@@ -84,8 +84,8 @@
 | [2026-08-18_Konzept_Datenerweiterung.md](2026-08-18_Konzept_Datenerweiterung.md) | Concept for data extension and candidate pipeline (basis of Sprint 9.5a–c); answers and decisions are in DECISIONS_*, ideas not yet implemented in the ROADMAP backlog | Status per item in ROADMAP (9.5a–c) |
 | [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) | Short-term candidates: barrier evaluation, pre-registered steps A–D, stage-1 risk pre-filter, stage-2 forward test (§7.7) | Historical – superseded by the strategy-neutral rework (valid until the forecast pipeline is deployed) |
 | [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md) | Plan to make Alpaca-Broker strategy-neutral after Sebastian's scope clarification: context pack v2 for Claude's Wall-Street-style forecasts, `forecasts.yaml`, neutral screen, removal of the barrier label and stage-2 tables | Approved 2026-10-17 – implementation running (steps 1–2 done, see ROADMAP) |
-| [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) | File format `decisions.yaml` written by the analysis skill, read by `stage2_review` | Historical – valid until the forecast pipeline is deployed |
-| [FORECASTS.md](FORECASTS.md) | File format `forecasts.yaml` (`forecasts/v1`, absolute direction per ticker and horizon), pre-registered evaluation (absolute and relative), decisive criterion (pre-registered 2026-10-18, 300 sessions) | Design 2026-10-17; ingest in plan step 4 |
+| [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) | File format `decisions.yaml` written by the analysis skill, formerly read by `stage2_review` | Historical – removed from the code 2026-10-18 (replaced by `forecast_review`), valid in the running container until the deploy of migration 039 |
+| [FORECASTS.md](FORECASTS.md) | File format `forecasts.yaml` (`forecasts/v1`, absolute direction per ticker and horizon), pre-registered evaluation (absolute and relative), decisive criterion (pre-registered 2026-10-18, 300 sessions) | Design 2026-10-17; ingest, persistence and nightly step implemented 2026-10-18 (plan step 4, deploy pending) |
 | [SCREEN.md](SCREEN.md) | Neutral candidate screen: quality gate, 12 evidence groups with a-priori literature signs, event triggers, buckets (option D), historical validation | Implemented 2026-10-17 (`analysis/screen.py`); used by the context pack in plan step 3 |
 
 ### Reports (`docs/reports/`, generated 2026-10-06, 2026-10-16 and 2026-10-17)

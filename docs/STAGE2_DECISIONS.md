@@ -1,6 +1,6 @@
 # Stufe 2 – Rückmeldung per `decisions.yaml`
 
-> **Historisch – abgelöst durch den strategieneutralen Umbau (Plan [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md), Entscheidung Sebastian 17.10.2026).** Das Nachfolgeformat ist `forecasts.yaml` (Schema `forecasts/v1`, absolute Richtung statt Kaufentscheidung mit Barrier-Regel), siehe [FORECASTS.md](FORECASTS.md). Dieses Dokument bleibt gültig, bis die Prognose-Pipeline deployt ist (Plan Schritt 5); `decisions.yaml` wird dann nicht mehr eingelesen.
+> **Historisch – abgelöst durch den strategieneutralen Umbau (Plan [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md), Entscheidung Sebastian 17.10.2026).** Das Nachfolgeformat ist `forecasts.yaml` (Schema `forecasts/v1`, absolute Richtung statt Kaufentscheidung mit Barrier-Regel), siehe [FORECASTS.md](FORECASTS.md). **Aus dem Code entfernt (18.10.2026, Plan Schritt 4):** Parser `derived/stage2_decisions.py`, Auswertung `analysis/stage2_eval.py`, ORM `stage2_*` und der Chain-Schritt `stage2_review` sind durch `derived/forecasts.py`, `analysis/forecast_review.py` und den Chain-Schritt `forecast_review` ersetzt; Migration 039 löscht die leeren Tabellen `stage2_reviews` / `stage2_decisions`. Dieses Dokument beschreibt nur noch das alte Format und gilt für den laufenden Container bis zum Deploy von Migration 039 (danach wird `decisions.yaml` nicht mehr eingelesen); `docs/FORECASTS.md` ist maßgeblich.
 
 Stand 2026-10-07 · Konzept: [§7.7](2026-10-06_Konzept_Kurzfrist_Kandidaten.md)
 

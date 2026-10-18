@@ -27,7 +27,7 @@ JOB_COLLECTOR_NAMES: dict[str, str] = {
     "feature_pipeline": "feature_pipeline",
     "target_backfill": "target_backfill",
     "context_pack_generator": "context_pack_generator",
-    "stage2_review": "stage2_review",
+    "forecast_review": "forecast_review",
     "form13f_collector": "form13f_collector",
     "politician_trades_collector": "politician_trades_collector",
     "short_interest_positions_collector": "short_interest_positions",
@@ -45,7 +45,7 @@ JOB_COLLECTOR_NAMES: dict[str, str] = {
 CHAIN_STEP_JOB_IDS: tuple[str, ...] = (
     "feature_pipeline",
     "target_backfill",
-    "stage2_review",
+    "forecast_review",
     "context_pack_generator",
 )
 

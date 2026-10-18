@@ -429,37 +429,39 @@ def _context_pack_body(target_date: date) -> JobOutcome:
     )
 
 
-def _stage2_review_body() -> JobOutcome:
-    """Read ``decisions.yaml`` of the skill and update the forward-test report.
+def _forecast_review_body() -> JobOutcome:
+    """Read ``forecasts.yaml`` of the skill, update the criterion and the report.
 
-    Concept §7.7: invalid files → PARTIAL (alert), the report
-    ``context_packs/stage2_auswertung.md`` is rewritten on every run.
+    ``docs/FORECASTS.md``: phase 1 stores new files append-only (own
+    transaction), phase 2 freezes a decisive sample / computes its verdict --
+    each written once -- and rewrites ``context_packs/forecast_auswertung.md``.
+    Rejected files or rows → PARTIAL (alert); an evaluation error fails the run
+    but keeps the ingested forecasts.
     """
     from pathlib import Path
 
-    from trading_signals.analysis.stage2_eval import (
+    from trading_signals.analysis.forecast_review import (
         REPORT_FILE,
-        evaluate_stage2,
-        load_stage2_frames,
-        render_report,
+        evaluate_and_persist,
+        ingest_new_files,
     )
     from trading_signals.config import get_settings
-    from trading_signals.db.session import get_session
-    from trading_signals.derived.stage2_decisions import ingest_decisions
 
     root = Path(get_settings().CONTEXT_PACK_PATH)
-    with get_session() as session:
-        result = ingest_decisions(session, root)
-        session.flush()
-        frames = load_stage2_frames(session)
-    report = render_report(evaluate_stage2(*frames), now_local().date())
+    ingest = ingest_new_files(root)
+    review = evaluate_and_persist(ingest, now_local().date(), now_local())
     if root.is_dir():
-        (root / REPORT_FILE).write_text(report, encoding="utf-8-sig")
+        (root / REPORT_FILE).write_text(review.report, encoding="utf-8-sig")
+    notes = ingest.notes()
+    update_notes = review.update.notes()
+    if update_notes:
+        notes += f"; criterion: {update_notes}"
+    problems = bool(ingest.errors or review.update.problems)
     return JobOutcome(
-        status=job_status.PARTIAL if result.errors else job_status.SUCCESS,
-        records_written=result.ingested,
-        records_fetched=result.files,
-        notes=result.notes(),
+        status=job_status.PARTIAL if problems else job_status.SUCCESS,
+        records_written=ingest.forecasts,
+        records_fetched=ingest.files,
+        notes=notes,
     )
 
 
@@ -493,13 +495,13 @@ def run_target_backfill() -> None:
     run_logged_job("target_backfill", "target_backfill", _target_backfill_body)
 
 
-def run_stage2_review() -> None:
-    """Stage-2 forward test: read ``decisions.yaml`` files, write the report.
+def run_forecast_review() -> None:
+    """Forecast review: read ``forecasts.yaml`` files, update the criterion, report.
 
     Normally executed as step 4 of :func:`run_nightly_chain` (manual
-    trigger otherwise). Concept §7.7, format ``docs/STAGE2_DECISIONS.md``.
+    trigger otherwise). Format and evaluation: ``docs/FORECASTS.md``.
     """
-    run_logged_job("stage2_review", "stage2_review", _stage2_review_body)
+    run_logged_job("forecast_review", "forecast_review", _forecast_review_body)
 
 
 def run_context_pack_generator() -> None:
@@ -661,7 +663,7 @@ def _critical_stale(target: date, stale: list[str]) -> list[str]:
     coverage check: the prices run may count as fresh (SUCCESS/PARTIAL) while
     the target session is still mostly missing. If the coverage query itself
     fails the inputs cannot be vouched for, so that counts as critical too
-    (the chain must not crash before TA/target backfill/stage-2 review run).
+    (the chain must not crash before TA/target backfill/forecast review run).
     """
     critical = [n for n in stale if NIGHTLY_UPSTREAM.get(n)]
     if "prices_alpaca" not in critical:
@@ -829,7 +831,7 @@ def _catchup_only_chain(
     """Chain run for a session that is already processed: gaps only.
 
     TA catch-up, feature catch-up of earlier sessions and target backfill; no
-    feature pipeline, stage-2 review or context pack for the target.
+    feature pipeline, forecast review or context pack for the target.
     """
     d = target.isoformat()
     if not candidates:
@@ -918,9 +920,9 @@ def _nightly_chain_body() -> JobOutcome:
     tb = run_logged_job(
         "target_backfill", "target_backfill", _target_backfill_body, alert=False
     )
-    # after the label update, so newly closed trades are counted
-    s2 = run_logged_job(
-        "stage2_review", "stage2_review", _stage2_review_body, alert=False
+    # after the target update, so newly realised returns are scored
+    fr = run_logged_job(
+        "forecast_review", "forecast_review", _forecast_review_body, alert=False
     )
     if critical:
         cp = _skipped_step(
@@ -942,7 +944,7 @@ def _nightly_chain_body() -> JobOutcome:
         "technical_indicators": ta,
         "feature_pipeline": fp,
         "target_backfill": tb,
-        "stage2_review": s2,
+        "forecast_review": fr,
         "context_pack": cp,
     }
     if critical or fp.status == job_status.FAILED:
@@ -984,7 +986,7 @@ def _nightly_chain_body() -> JobOutcome:
 
 
 def run_nightly_chain() -> None:
-    """Nightly orchestrator: TA → features → targets → stage-2 review → context pack.
+    """Nightly orchestrator: TA → features → targets → forecast review → context pack.
 
     Scheduled for 04:30 Europe/Berlin (after FRED at 04:15; options IV,
     short interest, estimates etc. ran earlier in the night).

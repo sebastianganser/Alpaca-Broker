@@ -17,7 +17,7 @@ which only makes the interval more cautious:
 * :func:`passes_criterion_horizon` - decision rule (same shape as D1).
 
 **Barrier mode (older trade concept, deprecated)** - kept until the barrier
-label is deleted (plan step 6, together with ``hit_model`` / ``stage2_eval``);
+label is deleted (plan step 6, together with ``hit_model``);
 everything below the marked section can be removed with it:
 :func:`label_meta`, :func:`evaluate_events`, :func:`passes_criterion`.
 

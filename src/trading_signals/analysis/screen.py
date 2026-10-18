@@ -68,7 +68,7 @@ K_RANDOM = 5
 RANDOM_SEED = 20261017
 
 # ── Quality gate (liquidity confirmed by Sebastian 2026-10-18; the price-history
-# and coverage thresholds are still PROPOSED) ──
+# and coverage thresholds are technical defaults set on 2026-10-18) ──
 
 #: Minimum 20-session mean daily dollar volume (USD) - CONFIRMED 2026-10-18. A
 #: forecast list for a downstream bot should be tradable; USD 5 m only removes
