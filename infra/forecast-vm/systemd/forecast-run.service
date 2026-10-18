@@ -1,0 +1,11 @@
+# systemd USER unit - one headless forecast run (see ../run-forecast.sh).
+# A non-zero exit shows up in 'systemctl --user --failed' and the journal.
+[Unit]
+Description=Alpaca forecast VM - Claude Code forecast run
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/bash %h/alpaca/repo/infra/forecast-vm/run-forecast.sh
+# longer than RUN_TIMEOUT_MIN (150 min) + sync/checks
+TimeoutStartSec=4h

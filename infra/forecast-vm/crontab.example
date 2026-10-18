@@ -1,0 +1,11 @@
+# Alternative to the systemd timers: crontab -e (as user "forecast").
+# Needs the VM time zone = Europe/Berlin (timedatectl set-timezone Europe/Berlin).
+# Pick EITHER systemd timers OR cron, not both.
+SHELL=/bin/bash
+PATH=/home/forecast/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+# sync with the Unraid share every 5 minutes (PACK_MODE=rsync only; harmless otherwise)
+*/5 * * * *  /usr/bin/bash /home/forecast/alpaca/repo/infra/forecast-vm/sync.sh >/dev/null 2>&1
+
+# forecast run Tue-Sat 07:30 (main) and 09:30 / 11:30 (retries; no-ops once forecasts.yaml exists)
+30 7,9,11 * * 2-6  /usr/bin/bash /home/forecast/alpaca/repo/infra/forecast-vm/run-forecast.sh >/dev/null 2>&1

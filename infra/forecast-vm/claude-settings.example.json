@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "WebFetch",
+      "Skill",
+      "Bash(date)",
+      "Bash(date *)",
+      "Read(~/alpaca/context_packs/**)",
+      "Read(~/alpaca/repo/**)",
+      "Edit(~/alpaca/context_packs/*/forecasts.yaml)",
+      "Edit(~/alpaca/context_packs/*/trade_ideas.yaml)",
+      "Edit(~/alpaca/context_packs/*/prognosen.md)",
+      "Edit(~/alpaca/context_packs/*/research_sources.md)"
+    ],
+    "deny": [
+      "Read(~/.claude/**)",
+      "Read(~/.claude.json)",
+      "Read(~/.ssh/**)",
+      "Read(~/.config/forecast-vm/**)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Bash(sudo *)",
+      "WebFetch(domain:tradingview.com)",
+      "WebFetch(domain:*.tradingview.com)",
+      "WebFetch(domain:stockcharts.com)",
+      "WebFetch(domain:*.stockcharts.com)",
+      "WebFetch(domain:barchart.com)",
+      "WebFetch(domain:*.barchart.com)",
+      "WebFetch(domain:investing.com)",
+      "WebFetch(domain:*.investing.com)",
+      "WebFetch(domain:yahoo.com)",
+      "WebFetch(domain:*.yahoo.com)",
+      "WebFetch(domain:seekingalpha.com)",
+      "WebFetch(domain:*.seekingalpha.com)",
+      "WebFetch(domain:marketbeat.com)",
+      "WebFetch(domain:*.marketbeat.com)",
+      "WebFetch(domain:zacks.com)",
+      "WebFetch(domain:*.zacks.com)",
+      "WebFetch(domain:fool.com)",
+      "WebFetch(domain:*.fool.com)"
+    ]
+  },
+  "autoUpdatesChannel": "stable",
+  "cleanupPeriodDays": 90
+}

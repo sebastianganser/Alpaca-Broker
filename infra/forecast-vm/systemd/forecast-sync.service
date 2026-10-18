@@ -1,0 +1,11 @@
+# systemd USER unit - pull/push the context packs between the Unraid share and
+# the VM (only does something with PACK_MODE=rsync).
+# Install: cp *.service *.timer ~/.config/systemd/user/ ; see ../README.md
+[Unit]
+Description=Alpaca forecast VM - sync context packs with the Unraid share
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/bash %h/alpaca/repo/infra/forecast-vm/sync.sh
+TimeoutStartSec=10min

@@ -1,0 +1,17 @@
+# 07:30 is the main run; 09:30 and 11:30 are retries that do nothing once
+# forecasts.yaml exists (and are limited by MAX_ATTEMPTS). The nightly chain
+# writes the pack Tue-Sat at ~04:30-05:00, so Tue..Sat covers Mon..Fri packs.
+# Verify the syntax with: systemd-analyze calendar "Tue..Sat 07:30 Europe/Berlin"
+[Unit]
+Description=Alpaca forecast VM - forecast run Tue-Sat morning (Berlin time)
+
+[Timer]
+OnCalendar=Tue..Sat 07:30 Europe/Berlin
+OnCalendar=Tue..Sat 09:30 Europe/Berlin
+OnCalendar=Tue..Sat 11:30 Europe/Berlin
+# VM was off at the time: run once after boot (the script's deadline guard protects)
+Persistent=true
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
