@@ -89,7 +89,7 @@ Dev machine: Windows 11, working directory = project root. The Bash tool is Git 
 | Lint | `uv run ruff check src tests` – ≈154 pre-existing findings (mostly E501): do not mass-fix, keep new code clean |
 | Frontend | `cd frontend && npm run dev` · `npm run build` (`tsc -b` + vite) · `npm run lint` |
 | Run the app | `uv run python -m trading_signals.main` – needs the DB from `.env`. The local `.env` points at the **production** DB and the app starts the scheduler + startup catch-up → do not start it locally without Sebastian's OK |
-| Migrations | `src/alembic/versions/` (001–040), applied by the container entrypoint on every start (fails hard). Do not run `alembic upgrade` against the local `.env`. Production is at 039 (040 pending deploy); a new migration is a new file `041_<name>.py` with `down_revision = "040"` ([DATABASE.md](docs/DATABASE.md)) |
+| Migrations | `src/alembic/versions/` (001–040), applied by the container entrypoint on every start (fails hard). Do not run `alembic upgrade` against the local `.env`. Production is at 040; a new migration is a new file `041_<name>.py` with `down_revision = "040"` ([DATABASE.md](docs/DATABASE.md)) |
 | Test migrations on a fresh DB | Docker Desktop: `docker run -d --rm --name alpaca-migtest -e POSTGRES_USER=migtest -e POSTGRES_PASSWORD=migtest -e POSTGRES_DB=broker_data -p 127.0.0.1:55435:5432 postgres:18`, then with `DB_HOST=127.0.0.1 DB_PORT=55435 DB_NAME=broker_data DB_USER=migtest DB_PASSWORD=migtest` (set **all** `DB_*` – `.env` points at production): `.venv/Scripts/alembic.exe upgrade head` and `.venv/Scripts/alembic.exe check` (must print "No new upgrade operations detected."), finally `docker rm -f alpaca-migtest` |
 
 **Production checks (read-only – the primary text channels):**
