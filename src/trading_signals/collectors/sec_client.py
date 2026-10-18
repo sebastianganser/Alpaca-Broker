@@ -189,6 +189,107 @@ def iter_sgml_documents(
             return
 
 
+# ── SEC header: the parties of a filing ───────────────────────────────────
+
+#: Header sections that name the company a filing is ABOUT.
+_SUBJECT_SECTIONS = frozenset({"SUBJECT COMPANY", "ISSUER"})
+
+#: Largest header read from a full-submission text (fallback of the header fetch).
+MAX_HEADER_BYTES = 262_144
+
+# Tagged header (``<accession>.hdr.sgml``): <SUBJECT-COMPANY> ... </SUBJECT-COMPANY>
+# with ``<CIK>0000320193`` inside. Only OUTERMOST containers are matched (the
+# scan is left to right and non-overlapping); leaf tags have no closing tag.
+_HDR_SECTION = re.compile(
+    r"<(?!SEC-HEADER>)(?P<name>[A-Z][A-Z0-9-]*)>[ \t]*\r?\n(?P<body>.*?)</(?P=name)>",
+    re.DOTALL,
+)
+_HDR_CIK = re.compile(r"<CIK>[ \t]*(\d+)")
+# Text header (top of ``<accession>.txt``): a value-less line at column 0
+# (``SUBJECT COMPANY:``, ``FILED BY:``) opens a section; the CIK is on an
+# indented ``CENTRAL INDEX KEY:`` line inside it.
+_TXT_SECTION = re.compile(r"^([A-Z][A-Z -]*[A-Z]):[ \t]*\r?$", re.MULTILINE)
+_TXT_CIK = re.compile(r"CENTRAL INDEX KEY:[ \t]*(\d+)")
+
+
+def _pad_cik(raw: str) -> str:
+    return str(int(raw)).zfill(10)
+
+
+@dataclass(frozen=True)
+class HeaderParties:
+    """The parties named in the SEC header of a filing (10-digit CIKs).
+
+    ``subjects`` - the ``SUBJECT COMPANY`` block(s): the company the filing is
+    ABOUT (the issuer of a Schedule 13D/13G or of a Form 144).
+    ``others`` - everyone else (``FILED BY``, ``FILER``, ``REPORTING-OWNER`` ...):
+    the holders / sellers / filers.
+    """
+
+    subjects: tuple[str, ...] = ()
+    others: frozenset[str] = frozenset()
+
+    @property
+    def empty(self) -> bool:
+        """The header named no party at all (not a SEC header / unparseable)."""
+        return not self.subjects and not self.others
+
+    def is_subject(self, cik: str) -> bool:
+        """Is the company with ``cik`` the one the filing is about?
+
+        With a ``SUBJECT COMPANY`` block this is a plain membership test.
+        Without one the company counts as the subject only by elimination: it
+        is not named as a filer / owner (and the header names someone at all).
+        """
+        padded = _pad_cik(cik)
+        if self.subjects:
+            return padded in self.subjects
+        return not self.empty and padded not in self.others
+
+
+def parse_header_parties(header_text: str) -> HeaderParties:
+    """Parse the parties out of a SEC header.
+
+    Understands both renderings of the header: the tagged one of
+    ``<accession>.hdr.sgml`` (``<SUBJECT-COMPANY>`` ... ``<CIK>0000320193``) and the
+    one at the top of ``<accession>.txt`` (``SUBJECT COMPANY:`` ...
+    ``CENTRAL INDEX KEY: 0000320193``). Returns empty parties for anything else.
+    """
+    sections: list[tuple[str, list[str]]] = []
+    for m in _HDR_SECTION.finditer(header_text):
+        ciks = [_pad_cik(c) for c in _HDR_CIK.findall(m.group("body"))]
+        if ciks:
+            sections.append((m.group("name").replace("-", " "), ciks))
+    marks = list(_TXT_SECTION.finditer(header_text))
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(header_text)
+        ciks = [_pad_cik(c) for c in _TXT_CIK.findall(header_text[m.end() : end])]
+        if ciks:
+            sections.append((m.group(1).replace("-", " "), ciks))
+    subjects: list[str] = []
+    others: list[str] = []
+    for name, ciks in sections:
+        (subjects if name in _SUBJECT_SECTIONS else others).extend(ciks)
+    return HeaderParties(tuple(dict.fromkeys(subjects)), frozenset(others))
+
+
+def parse_subject_ciks(header_text: str) -> list[str]:
+    """CIKs of the ``SUBJECT COMPANY`` block(s) of a SEC header (10 digits)."""
+    return list(parse_header_parties(header_text).subjects)
+
+
+def parse_subject_cik(header_text: str) -> str | None:
+    """CIK of the subject company of a filing (10 digits), ``None`` if there is none.
+
+    The subject is the company a Schedule 13D/13G or a Form 144 is ABOUT - EDGAR
+    lists such a filing in the submissions of the subject AND of the filer (the
+    holder / seller). With several subject blocks the first one is returned
+    (:func:`parse_subject_ciks` returns all).
+    """
+    subjects = parse_header_parties(header_text).subjects
+    return subjects[0] if subjects else None
+
+
 class SECClient:
     """SEC EDGAR API client with rate limiting and CIK mapping."""
 
@@ -394,6 +495,39 @@ class SECClient:
             )
         finally:
             response.close()
+
+    def fetch_filing_header(self, cik: str, accession_number: str) -> str:
+        """SGML header of a filing: who its parties are (subject company, filer ...).
+
+        One small request (``<accession>.hdr.sgml``, 1-5 KB). If EDGAR has no such
+        file (HTTP 404) the head of the full-submission text is streamed instead
+        (closed after ``</SEC-HEADER>``, at most ``MAX_HEADER_BYTES``). ``cik`` may
+        be any party of the filing - EDGAR serves a filing under all of them.
+        Feed the result to :func:`parse_header_parties`.
+        """
+        folder = (
+            f"{self.ARCHIVES_BASE}/{int(cik)}/{accession_number.replace('-', '')}"
+        )
+        try:
+            return self._get_text(f"{folder}/{accession_number}.hdr.sgml")
+        except requests.exceptions.HTTPError as e:
+            if e.response is None or e.response.status_code != 404:
+                raise
+        response = self._open_stream(f"{folder}/{accession_number}.txt")
+        try:
+            buffer = bytearray()
+            for chunk in response.iter_content(chunk_size=8192):
+                buffer.extend(chunk)
+                end = buffer.find(b"</SEC-HEADER>")
+                if end >= 0:
+                    return bytes(buffer[: end + len(b"</SEC-HEADER>")]).decode(
+                        "ascii", errors="replace"
+                    )
+                if len(buffer) > MAX_HEADER_BYTES:
+                    break
+        finally:
+            response.close()
+        raise ValueError(f"no SEC header found at the start of {accession_number}.txt")
 
     @staticmethod
     def _extract_filings(

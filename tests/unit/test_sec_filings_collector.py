@@ -287,7 +287,26 @@ class TestBuildTexts:
         assert row["excerpt"].endswith("…")
 
 
-def _client(ciks, submissions=None, pages=None):
+def _header(subject: str | None, *others: str) -> str:
+    """A tagged SEC header (``.hdr.sgml``) with the given subject / other parties."""
+    parts = ["<SEC-HEADER>0000000000-26-000001.hdr.sgml : 20261016"]
+    if subject:
+        parts.append(
+            f"<SUBJECT-COMPANY>\n<COMPANY-DATA>\n<CONFORMED-NAME>S\n<CIK>{subject}\n"
+            f"</COMPANY-DATA>\n</SUBJECT-COMPANY>"
+        )
+    for other in others:
+        parts.append(
+            f"<FILED-BY>\n<COMPANY-DATA>\n<CONFORMED-NAME>F\n<CIK>{other}\n"
+            f"</COMPANY-DATA>\n</FILED-BY>"
+        )
+    parts.append("</SEC-HEADER>")
+    return "\n".join(parts) + "\n"
+
+
+def _client(ciks, submissions=None, pages=None, headers=None):
+    """Mock SECClient. ``headers`` maps accession -> header text; any accession
+    that is not listed has the LISTING company as its subject."""
     client = MagicMock()
     client.get_cik.side_effect = lambda t: ciks.get(t)
     client.fetch_submissions.side_effect = lambda cik: copy.deepcopy(
@@ -295,6 +314,9 @@ def _client(ciks, submissions=None, pages=None):
     )
     client.get_submissions_page.side_effect = lambda name: (pages or {})[name]
     client.iter_filing_documents.side_effect = lambda cik, acc: iter(_documents())
+    client.fetch_filing_header.side_effect = lambda cik, acc: (
+        headers[acc] if headers and acc in headers else _header(cik)
+    )
     return client
 
 
@@ -326,8 +348,8 @@ class TestFetch:
         assert "texts_fetched_at" not in filing
         client.iter_filing_documents.assert_called_once_with(AAPL, ACC_8K_RESULTS)
         client.load_cik_mapping.assert_called_once()
-        # 1 submissions request + 1 text request
-        assert (collector._attempts, collector._errors) == (2, 0)
+        # 1 submissions request + 1 text request + 1 header (the Form 144)
+        assert (collector._attempts, collector._errors) == (3, 0)
 
     def test_share_classes_share_one_download(self):
         client = _client({"GOOG": "0001652044", "GOOGL": "0001652044"})
@@ -441,13 +463,229 @@ class TestFetch:
         )
         # the 144 of `recent` is also on the page: one row per accession
         assert [e["filing"]["form"] for e in entries] == ["8-K", "10-Q", "8-K/A", "144"]
-        assert collector._errors == 0 and collector._attempts == 2 + 1  # + 1 text
+        # recent + page + 1 text + 1 header (the 144 is on both, resolved once)
+        assert collector._errors == 0 and collector._attempts == 2 + 1 + 1
 
     def test_older_pages_are_not_read_when_recent_reaches_back(self):
         client = _client({"AAPL": AAPL})
         collector = SecFilingsCollector(lookback_days=120, client=client)
         _fetch(collector, ["AAPL"])
         client.get_submissions_page.assert_not_called()
+
+
+BLK = "0002012383"  # a filer (holder) in the universe
+ACC_144 = "0001950047-26-010286"  # the Form 144 of the AAPL fixture
+JPM_HDR = (FIXTURES / "sec_hdr_13g_filed_by_jpm.sgml").read_text()
+WMT_144_HDR = (FIXTURES / "sec_hdr_144_walmart_self_submitted.sgml").read_text()
+
+
+def _13g_submissions(accession: str, form: str = "SCHEDULE 13G/A") -> dict:
+    """A submissions JSON that lists one multi-party filing (filed 2026-10-16)."""
+    return {
+        "filings": {
+            "recent": {
+                "accessionNumber": [accession],
+                "filingDate": ["2026-10-16"],
+                "reportDate": [""],
+                "acceptanceDateTime": ["2026-10-17T00:29:07.000Z"],
+                "form": [form],
+                "items": [""],
+                "primaryDocument": ["xslSCHEDULE_13G_X02/primary_doc.xml"],
+            }
+        }
+    }
+
+
+class TestMultiPartyFilings:
+    """13D / 13G / 144 belong to the SUBJECT company, not to the filer."""
+
+    ACC = "0001086364-26-000123"
+
+    def test_the_multi_party_forms_are_whitelisted_forms(self):
+        assert mod.MULTI_PARTY_FORMS <= FORMS
+        assert "144" in mod.MULTI_PARTY_FORMS
+        assert {"SC 13D", "SC 13G/A", "SCHEDULE 13D/A", "SCHEDULE 13G"} <= (
+            mod.MULTI_PARTY_FORMS
+        )
+        assert not mod.MULTI_PARTY_FORMS & {"8-K", "10-K", "DEF 14A", "S-3"}
+
+    def _run(self, tickers, headers, ciks=None, lookback=120, **kw):
+        ciks = ciks or {"BLK": BLK, "AAPL": AAPL}
+        subs = {BLK: _13g_submissions(self.ACC), AAPL: _13g_submissions(self.ACC)}
+        client = _client(ciks, subs, headers=headers)
+        collector = SecFilingsCollector(lookback_days=lookback, client=client, **kw)
+        return collector, client, _fetch(collector, tickers)
+
+    def test_the_subject_copy_is_stored_under_the_subject_whatever_the_order(self):
+        headers = {self.ACC: _header(AAPL, BLK)}
+        for tickers in (["BLK", "AAPL"], ["AAPL", "BLK"]):  # filer first / last
+            collector, client, entries = self._run(tickers, headers)
+            assert len(entries) == 1
+            filing = entries[0]["filing"]
+            assert (filing["cik"], filing["ticker"]) == (AAPL, "AAPL")
+            assert filing["tickers"] == ["AAPL"]
+            assert filing["url"].startswith(
+                "https://www.sec.gov/Archives/edgar/data/320193/000108636426000123/"
+            )
+            # one header request for the accession, shared by both copies
+            assert client.fetch_filing_header.call_count == 1
+            assert (collector._attempts, collector._errors) == (2 + 1, 0)
+
+    def test_the_header_is_read_under_the_cik_of_the_first_listing_company(self):
+        _, client, _ = self._run(["BLK", "AAPL"], {self.ACC: _header(AAPL, BLK)})
+        client.fetch_filing_header.assert_called_once_with(BLK, self.ACC)
+
+    def test_a_filer_copy_whose_subject_is_not_in_the_universe_is_not_stored(self):
+        headers = {self.ACC: _header("0001582961", BLK)}  # DigitalOcean, not covered
+        collector, client, entries = self._run(["BLK"], headers, ciks={"BLK": BLK})
+        assert entries == []
+        assert client.fetch_filing_header.call_count == 1
+        assert collector._errors == 0
+
+    def test_the_subject_outside_the_selected_tickers_is_not_stored(self):
+        # only_tickers restricts the run: BLK's copy is the filer's, AAPL is not run
+        headers = {self.ACC: _header(AAPL, BLK)}
+        _, _, entries = self._run(["BLK", "AAPL"], headers, only_tickers=["BLK"])
+        assert entries == []
+
+    def test_a_real_13g_filed_by_jpm_is_not_stored_under_jpm(self):
+        acc = "0000019617-26-000392"
+        jpm = "0000019617"
+        client = _client(
+            {"JPM": jpm},
+            {jpm: _13g_submissions(acc)},
+            headers={acc: JPM_HDR},
+        )
+        collector = SecFilingsCollector(lookback_days=120, client=client)
+        assert _fetch(collector, ["JPM"]) == []  # subject: DigitalOcean
+
+    def test_a_form_144_self_submitted_by_the_issuer_is_stored_under_the_issuer(self):
+        # Walmart's 144s carry Walmart's own accession prefix and Walmart is the
+        # issuer (the subject): an accession-prefix shortcut would drop them.
+        acc = "0000104169-26-000119"
+        wmt = "0000104169"
+        client = _client(
+            {"WMT": wmt},
+            {wmt: _13g_submissions(acc, form="144")},
+            headers={acc: WMT_144_HDR},
+        )
+        collector = SecFilingsCollector(lookback_days=120, client=client)
+        entries = _fetch(collector, ["WMT"])
+        assert [e["filing"]["cik"] for e in entries] == [wmt]
+        assert entries[0]["filing"]["form"] == "144"
+
+    def test_a_header_error_stores_nothing_counts_an_error_and_is_retried(self):
+        client = _client(
+            {"BLK": BLK, "AAPL": AAPL},
+            {BLK: _13g_submissions(self.ACC), AAPL: _13g_submissions(self.ACC)},
+        )
+        client.fetch_filing_header.side_effect = RuntimeError("HTTP 503")
+        collector = SecFilingsCollector(lookback_days=120, client=client)
+        entries = _fetch(collector, ["BLK", "AAPL"])
+        assert entries == []
+        # one failed lookup for the accession; the second copy does not retry it
+        assert client.fetch_filing_header.call_count == 1
+        assert collector._errors == 1
+        # the next run (header available again) stores the filing
+        client.fetch_filing_header.side_effect = lambda cik, acc: _header(AAPL, BLK)
+        collector = SecFilingsCollector(lookback_days=120, client=client)
+        entries = _fetch(collector, ["BLK", "AAPL"])
+        assert [e["filing"]["cik"] for e in entries] == [AAPL]
+
+    @staticmethod
+    def _many_13g(n: int) -> tuple[list[str], dict]:
+        accs = [f"0001086364-26-{i:06d}" for i in range(1, n + 1)]
+        one = _13g_submissions(accs[0])["filings"]["recent"]
+        recent = {k: v * n for k, v in one.items()}
+        recent["accessionNumber"] = accs
+        return accs, {"filings": {"recent": recent}}
+
+    def _run_with_failures(self, n: int, failing: int):
+        accs, subs = self._many_13g(n)
+        bad = set(accs[:failing])
+
+        def header(cik, acc):
+            if acc in bad:
+                raise RuntimeError("HTTP 403")
+            return _header(cik)
+
+        client = _client({"AAPL": AAPL}, {AAPL: subs})
+        client.fetch_filing_header.side_effect = header
+        collector = SecFilingsCollector(lookback_days=120, client=client)
+        entries = _fetch(collector, ["AAPL"])
+        return collector, entries
+
+    def test_a_single_failed_lookup_among_many_only_warns(self):
+        collector, entries = self._run_with_failures(10, 1)
+        assert len(entries) == 9 and collector._errors == 1
+        assert collector._partial_reasons == ()
+
+    def test_many_failed_lookups_mark_the_run_partial(self):
+        collector, entries = self._run_with_failures(30, mod.HEADER_FAILURES_PARTIAL)
+        assert len(entries) == 30 - mod.HEADER_FAILURES_PARTIAL
+        assert any("SEC header lookups failed" in r for r in collector._partial_reasons)
+
+    def test_a_high_failure_share_marks_the_run_partial(self):
+        collector, _ = self._run_with_failures(4, 1)  # 25 % > 20 %
+        assert collector._partial_reasons
+
+    def test_an_unparseable_header_is_an_error_not_a_crash(self):
+        headers = {self.ACC: "<html>Rate limit exceeded</html>"}
+        collector, _, entries = self._run(["BLK", "AAPL"], headers)
+        assert entries == [] and collector._errors == 1
+
+    def test_other_filings_of_the_company_survive_a_header_error(self):
+        subs = copy.deepcopy(SUBMISSIONS)  # AAPL fixture: 8-K, 10-Q, 8-K/A, 144
+        client = _client({"AAPL": AAPL}, {AAPL: subs})
+        client.fetch_filing_header.side_effect = RuntimeError("boom")
+        collector = SecFilingsCollector(lookback_days=120, client=client)
+        entries = _fetch(collector, ["AAPL"])
+        assert [e["filing"]["form"] for e in entries] == ["8-K", "10-Q", "8-K/A"]
+        assert collector._errors == 1
+
+    def test_stored_multi_party_filings_cause_no_header_request(self):
+        client = _client({"AAPL": AAPL})
+        collector = SecFilingsCollector(lookback_days=120, client=client)
+        _fetch(collector, ["AAPL"], stored={ACC_144: True})
+        client.fetch_filing_header.assert_not_called()
+
+    def test_other_forms_cause_no_header_request(self):
+        subs = {AAPL: copy.deepcopy(SUBMISSIONS)}
+        subs[AAPL]["filings"]["recent"]["form"] = [
+            "8-K" if f == "144" else f for f in subs[AAPL]["filings"]["recent"]["form"]
+        ]
+        client = _client({"AAPL": AAPL}, subs)
+        collector = SecFilingsCollector(lookback_days=120, client=client)
+        _fetch(collector, ["AAPL"])
+        client.fetch_filing_header.assert_not_called()
+
+    def test_a_header_without_subject_block_counts_the_listing_company_by_elimination(
+        self,
+    ):
+        headers = {self.ACC: _header(None, BLK)}  # BLK is a named filer
+        _, _, entries = self._run(["BLK", "AAPL"], headers)
+        # AAPL's copy is not a filer -> the only party left is the issuer role
+        assert [e["filing"]["cik"] for e in entries] == [AAPL]
+
+    def test_two_subject_blocks_store_the_filing_once(self):
+        both = _header(AAPL).replace(
+            "</SUBJECT-COMPANY>",
+            "</SUBJECT-COMPANY>\n<SUBJECT-COMPANY>\n<COMPANY-DATA>\n"
+            "<CIK>0000789019\n</COMPANY-DATA>\n</SUBJECT-COMPANY>",
+        )
+        ciks = {"AAPL": AAPL, "MSFT": "0000789019"}
+        subs = {c: _13g_submissions(self.ACC) for c in (AAPL, "0000789019")}
+        client = _client(ciks, subs, headers={self.ACC: both})
+        collector = SecFilingsCollector(lookback_days=120, client=client)
+        entries = _fetch(collector, ["AAPL", "MSFT"])
+        assert [e["filing"]["cik"] for e in entries] == [AAPL]  # first listing wins
+        assert client.fetch_filing_header.call_count == 1
+
+    def test_group_by_cik_groups_share_classes_and_counts_missing_ciks(self):
+        client = _client({"GOOG": "0001652044", "GOOGL": "0001652044", "AAPL": AAPL})
+        groups, no_cik = mod.group_by_cik(client, ["GOOGL", "AAPL", "SPY", "GOOG"])
+        assert groups == {"0001652044": ["GOOG", "GOOGL"], AAPL: ["AAPL"]}
+        assert no_cik == 1
 
 
 class TestStoredFilings:

@@ -36,9 +36,49 @@ the submissions JSON labels Eastern wall clock + 8/10 h as ``Z``); a filing is
 public from then on. Share classes that share a CIK (GOOG/GOOGL) are fetched
 once; ``tickers`` lists all of them.
 
+Multi-party forms (:data:`MULTI_PARTY_FORMS`: ``144`` and every 13D / 13G
+variant) belong to the SUBJECT company. EDGAR lists such a filing in the
+submissions of every party - the filer / holder (BlackRock, JPMorgan, ...
+filing a 13G about another company; the insider of a 144) AND the subject
+company (the issuer the stake or sale is about). The submissions JSON does not
+say which role the listing company has, so for a filing that is not yet stored
+the collector reads its SGML header (``SECClient.fetch_filing_header``, one
+~1-5 KB request, parsed by ``parse_header_parties``) and stores the filing
+only under the CIK of the ``SUBJECT COMPANY`` block - with that CIK's tickers
+and URL. A filing whose subject is not a (selected) universe company is not
+stored. Rules and edge cases:
+
+* **No shortcut by accession prefix.** The first 10 digits of an accession
+  number are the CIK that SUBMITTED the filing, not the filer of record. It
+  looks like "prefix == listing company -> the company is the filer", but that
+  is false for Form 144 (Walmart submits the 144s of its own executives under
+  its own login, 17 of 158 listed 144s, and is the issuer) and cannot be ruled
+  out for 13D/G (a company can submit a plan trust's or a founder's schedule
+  about itself). Every not-yet-stored multi-party filing is therefore resolved
+  through its header.
+* One lookup per accession and run, shared by all companies: the result is
+  cached in the run, so the filer's copy and the subject's copy cost one
+  request together and the subject's copy wins whichever list is read first.
+  With several subject blocks the first listing company wins.
+* A header without a ``SUBJECT COMPANY`` block: the listing company counts as
+  the subject only if it is not named as filer / owner in the header (by
+  elimination); a header that names nobody is an error.
+* A failed header request stores nothing in this run (``record_error``, a
+  warning with the accession); the filing is retried by the next runs for as
+  long as it is inside the lookback, like a failed text fetch. The run's last
+  log line counts lookups, errors and skipped copies.
+* Stored accessions are skipped before any lookup, so a filing is resolved at
+  most once in its life (apart from the 14-day retry of copies that are not
+  stored: filer copies of universe filers).
+
 Request volume per run: 1 (``company_tickers.json``) + ~650 submissions (one per
 CIK, ~0.1-1 MB each) + 1 per filing text (typically 10-60 on a normal day, up
-to ~150 in peak earnings weeks) at <= 9 requests/s (SECClient).
+to ~150 in peak earnings weeks) + 1 header per distinct not-yet-stored
+multi-party accession (new filings: ~45 on a normal day = 17 13D/G + 30 Form
+144 at the 120-day averages of production; plus the copies of universe filers
+that are never stored, e.g. BlackRock's, re-read on each of the 14 lookback
+days: ~100 more on a normal day, a few hundred around the quarterly 13G
+amendment deadlines) at <= 9 requests/s (SECClient).
 """
 
 from __future__ import annotations
@@ -57,8 +97,10 @@ from trading_signals.collectors._db import release_transaction
 from trading_signals.collectors._parsing import parse_date
 from trading_signals.collectors.base import BaseCollector
 from trading_signals.collectors.sec_client import (
+    HeaderParties,
     SECClient,
     SgmlDocument,
+    parse_header_parties,
     submission_acceptance_utc,
 )
 from trading_signals.db.models.sec import SecFiling, SecFilingText
@@ -79,6 +121,16 @@ FORMS: frozenset[str] = frozenset(
         "SCHEDULE 13D", "SCHEDULE 13D/A", "SCHEDULE 13G", "SCHEDULE 13G/A",
         "S-1", "S-1/A", "S-3", "S-3/A", "S-3ASR",
         "DEF 14A", "DEFM14A",
+    }
+)  # fmt: skip
+
+#: Forms that EDGAR lists under every party (filer / holder AND subject company);
+#: they are stored under the subject company only (see module docstring).
+MULTI_PARTY_FORMS: frozenset[str] = frozenset(
+    {
+        "144",
+        "SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A",
+        "SCHEDULE 13D", "SCHEDULE 13D/A", "SCHEDULE 13G", "SCHEDULE 13G/A",
     }
 )  # fmt: skip
 
@@ -104,6 +156,12 @@ BODY_ITEMS: frozenset[str] = frozenset(
 
 #: Forms for which texts are fetched.
 TEXT_FORMS: frozenset[str] = frozenset({"8-K"})
+
+#: A run is marked ``partial`` when at least this many multi-party header
+#: lookups failed, or more than this share of them (single transient
+#: failures only log a warning; they are retried by the next runs).
+HEADER_FAILURES_PARTIAL = 5
+HEADER_FAILURE_SHARE_PARTIAL = 0.2
 
 #: Length of the stored excerpt (characters of cleaned text).
 EXCERPT_CHARS = 3000
@@ -141,6 +199,40 @@ def filing_url(cik: str, accession_number: str, primary_document: str | None) ->
         f"{accession_number.replace('-', '')}"
     )
     return f"{folder}/{primary_document}" if primary_document else f"{folder}/"
+
+
+def group_by_cik(
+    client: SECClient, tickers: Iterable[str]
+) -> tuple[dict[str, list[str]], int]:
+    """``{cik: sorted tickers}`` of the tickers that have a CIK, and the number
+    of tickers without one (ETFs, renamed / delisted symbols).
+
+    Share classes that share a CIK (GOOG/GOOGL) end up in one group. The
+    ``client`` must have its CIK mapping loaded (or loads it on first use).
+    """
+    groups: dict[str, list[str]] = {}
+    no_cik = 0
+    for ticker in tickers:
+        cik = client.get_cik(ticker)
+        if cik:
+            groups.setdefault(cik, []).append(ticker)
+        else:
+            no_cik += 1
+    return {cik: sorted(group) for cik, group in groups.items()}, no_cik
+
+
+def header_parties(
+    client: SECClient, cik: str, accession_number: str
+) -> HeaderParties:
+    """Parties of a filing from its SEC header (one request).
+
+    Raises ``ValueError`` if the header names nobody (not a SEC header);
+    request errors propagate.
+    """
+    parties = parse_header_parties(client.fetch_filing_header(cik, accession_number))
+    if parties.empty:
+        raise ValueError("the SEC header names no party")
+    return parties
 
 
 def extract_filing_rows(
@@ -368,19 +460,16 @@ class SecFilingsCollector(BaseCollector):
             tickers = [t for t in tickers if t in self.only_tickers]
 
         self.sec_client.load_cik_mapping()
-        groups: dict[str, list[str]] = {}
-        no_cik = 0
-        for ticker in tickers:
-            cik = self.sec_client.get_cik(ticker)
-            if cik:
-                groups.setdefault(cik, []).append(ticker)
-            else:
-                no_cik += 1
+        groups, no_cik = group_by_cik(self.sec_client, tickers)
 
         results: list[dict] = []
         new_filings = text_retries = text_requests = 0
+        # Multi-party filings (see module docstring): parties by accession for
+        # the whole run (None = the lookup failed), accessions already emitted.
+        parties_cache: dict[str, HeaderParties | None] = {}
+        emitted: set[str] = set()
+        stats = {"lookups": 0, "failed": 0, "other_party": 0}
         for cik, cik_tickers in groups.items():
-            cik_tickers = sorted(cik_tickers)
             try:
                 filings = self._filings_of(cik, since)
                 self.record_success()
@@ -397,6 +486,12 @@ class SecFilingsCollector(BaseCollector):
             ):
                 accession = filing["accession_number"]
                 is_new = accession not in stored
+                if is_new and filing["form"] in MULTI_PARTY_FORMS:
+                    if accession in emitted or not self._is_subject_copy(
+                        cik, accession, parties_cache, stats
+                    ):
+                        continue  # filer / holder copy, or lookup failed
+                    emitted.add(accession)
                 want_release, want_body = text_plan(filing["form"], filing["items"])
                 wants_text = want_release or want_body
                 texts_done = not wants_text or (not is_new and stored[accession])
@@ -445,9 +540,66 @@ class SecFilingsCollector(BaseCollector):
         logger.info(
             f"[{self.name}] {len(groups)} companies ({no_cik} tickers without CIK), "
             f"since {since}: {new_filings} new filings, {text_retries} text retries, "
-            f"{text_requests} text requests"
+            f"{text_requests} text requests; multi-party filings (13D/13G/144): "
+            f"{stats['lookups']} header requests, {stats['other_party']} copies of "
+            f"other companies skipped (filer / holder, subject elsewhere)"
         )
+        if stats["failed"]:
+            logger.warning(
+                f"[{self.name}] {stats['failed']} multi-party header lookups failed "
+                f"(not stored, retried by the next runs)"
+            )
+            # A systematic failure (e.g. EDGAR blocking the header files) would
+            # stay below PARTIAL_ERROR_SHARE of all requests and silently drop
+            # every 13D/13G/144 - make it visible as `partial`.
+            if stats["failed"] >= HEADER_FAILURES_PARTIAL or (
+                stats["failed"] > HEADER_FAILURE_SHARE_PARTIAL * stats["lookups"]
+            ):
+                self.mark_partial(
+                    f"{stats['failed']} of {stats['lookups']} SEC header lookups "
+                    f"failed (multi-party filings not stored)"
+                )
         return results
+
+    def _is_subject_copy(
+        self,
+        cik: str,
+        accession: str,
+        parties_cache: dict[str, HeaderParties | None],
+        stats: dict[str, int],
+    ) -> bool:
+        """Is the company ``cik`` the subject of the multi-party filing?
+
+        The header is read once per accession and run (``parties_cache``,
+        ``None`` = the lookup failed); a failed lookup counts as one error and
+        answers ``False`` (the filing is retried by the next runs).
+        """
+        if accession not in parties_cache:
+            stats["lookups"] += 1
+            try:
+                parties_cache[accession] = header_parties(
+                    self.sec_client, cik, accession
+                )
+                self.record_success()
+            except Exception as e:
+                parties_cache[accession] = None
+                stats["failed"] += 1
+                logger.warning(
+                    f"[{self.name}] {accession}: SEC header lookup error "
+                    f"(filing skipped, retried by the next runs): {e}"
+                )
+                self.record_error()
+        parties = parties_cache[accession]
+        if parties is None:
+            return False
+        try:
+            if parties.is_subject(cik):
+                return True
+        except Exception as e:  # never break the run for one filing
+            logger.warning(f"[{self.name}] {accession}: cannot attribute ({e})")
+            return False
+        stats["other_party"] += 1
+        return False
 
     def _filings_of(self, cik: str, since: date) -> list[dict]:
         """Whitelisted filings of one company since ``since`` (incl. older pages)."""

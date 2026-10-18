@@ -7,7 +7,9 @@ company, whitelisted forms (``collectors/sec_filings_collector.FORMS``), press
 release / 8-K body excerpts for 8-Ks with results or event items.
 
 **Dry run (default):** read-only database session, SEC GET requests for the
-submissions only (no filing text downloads, nothing is written). Prints the new
+submissions and, for the multi-party forms (13D/13G/144, stored under the subject
+company only, see the collector docstring), one small SEC header request per
+not-yet-stored accession (no filing text downloads, nothing is written). Prints the new
 filings per form, the 8-K items, how many text requests an ``--apply`` run
 would make and a time estimate.
 

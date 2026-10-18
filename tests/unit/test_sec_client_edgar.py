@@ -12,6 +12,9 @@ from trading_signals.collectors.sec_client import (
     SECClient,
     SgmlDocument,
     iter_sgml_documents,
+    parse_header_parties,
+    parse_subject_cik,
+    parse_subject_ciks,
     submission_acceptance_utc,
 )
 
@@ -219,4 +222,170 @@ class TestClientEndpoints:
             with pytest.raises(requests.exceptions.HTTPError):
                 client._open_stream("https://example.test/missing.txt")
         assert get.call_count == 1
+        response.close.assert_called_once()
+
+
+FIXTURES = Path(__file__).parent.parent / "fixtures"
+
+
+def _hdr(name: str) -> str:
+    return (FIXTURES / name).read_text()
+
+
+#: The header at the top of ``<accession>.txt`` (Apple as subject of a 13G/A).
+TEXT_HEADER = """<SEC-HEADER>0001193125-24-036431.hdr.sgml : 20240214
+<ACCEPTANCE-DATETIME>20240214164705
+ACCESSION NUMBER:\t\t0001193125-24-036431
+CONFORMED SUBMISSION TYPE:\tSC 13G/A
+PUBLIC DOCUMENT COUNT:\t\t3
+FILED AS OF DATE:\t\t20240214
+GROUP MEMBERS:\t\tGEICO CORP
+
+SUBJECT COMPANY:\t
+
+\tCOMPANY DATA:\t
+\t\tCOMPANY CONFORMED NAME:\t\t\tApple Inc.
+\t\tCENTRAL INDEX KEY:\t\t\t0000320193
+\t\tSTANDARD INDUSTRIAL CLASSIFICATION:\tELECTRONIC COMPUTERS [3571]
+
+\tFILING VALUES:
+\t\tFORM TYPE:\t\tSC 13G/A
+\t\tSEC FILE NUMBER:\t005-34104
+
+\tBUSINESS ADDRESS:\t
+\t\tSTREET 1:\t\tONE APPLE PARK WAY
+
+FILED BY:\t\t
+
+\tCOMPANY DATA:\t
+\t\tCOMPANY CONFORMED NAME:\t\t\tBERKSHIRE HATHAWAY INC
+\t\tCENTRAL INDEX KEY:\t\t\t0001067983
+
+\tFILING VALUES:
+\t\tFORM TYPE:\t\tSC 13G/A
+</SEC-HEADER>"""
+
+
+def _subject_block(cik: str) -> str:
+    return (
+        f"<SUBJECT-COMPANY>\n<COMPANY-DATA>\n<CIK>{cik}\n</COMPANY-DATA>\n"
+        "</SUBJECT-COMPANY>\n"
+    )
+
+
+class TestHeaderParties:
+    def test_a_13g_filed_by_a_bank_has_the_issuer_as_subject(self):
+        header = _hdr("sec_hdr_13g_filed_by_jpm.sgml")
+        assert parse_subject_cik(header) == "0001582961"  # DigitalOcean, not JPM
+        parties = parse_header_parties(header)
+        assert parties.subjects == ("0001582961",)
+        assert parties.others == frozenset({"0000019617"})  # JPMorgan = filer
+        assert parties.is_subject("0001582961") and not parties.is_subject("19617")
+
+    def test_a_13d_filed_by_a_company_names_the_target_as_subject(self):
+        header = _hdr("sec_hdr_13d_filed_by_walmart.sgml")
+        assert parse_subject_ciks(header) == ["0001837240"]  # Symbotic
+        assert not parse_header_parties(header).is_subject("0000104169")  # Walmart
+
+    def test_a_form_144_has_the_issuer_as_subject_and_the_seller_as_owner(self):
+        header = _hdr("sec_hdr_144_apple.sgml")
+        parties = parse_header_parties(header)
+        assert parties.subjects == ("0000320193",)
+        assert parties.others == frozenset({"0002050912"})
+        # an issuer that submits the 144 of its own insider is still the subject
+        wmt = parse_header_parties(_hdr("sec_hdr_144_walmart_self_submitted.sgml"))
+        assert wmt.is_subject("0000104169") and wmt.others == frozenset({"0001335782"})
+
+    def test_the_text_rendering_of_the_header_is_understood_too(self):
+        parties = parse_header_parties(TEXT_HEADER)
+        assert parties.subjects == ("0000320193",)
+        assert parties.others == frozenset({"0001067983"})
+        assert parse_subject_cik(TEXT_HEADER) == "0000320193"
+
+    def test_ciks_are_zero_padded_to_ten_digits(self):
+        assert parse_subject_cik(_subject_block("320193")) == "0000320193"
+
+    def test_several_subject_blocks_are_all_returned_the_first_is_the_subject(self):
+        header = _subject_block("0000000001") + _subject_block("0000000002")
+        assert parse_subject_ciks(header) == ["0000000001", "0000000002"]
+        assert parse_subject_cik(header) == "0000000001"
+
+    def test_without_a_subject_block_the_subject_is_found_by_elimination(self):
+        header = (
+            "<FILED-BY>\n<COMPANY-DATA>\n<CIK>0000000009\n</COMPANY-DATA>\n</FILED-BY>\n"
+        )
+        assert parse_subject_cik(header) is None
+        parties = parse_header_parties(header)
+        assert not parties.is_subject("0000000009")  # a named filer
+        assert parties.is_subject("0000000005")  # not named: only the issuer role left
+
+    @pytest.mark.parametrize(
+        "text",
+        ["", "<html>Rate Threshold Exceeded</html>", "<SEC-HEADER>x\n</SEC-HEADER>"],
+    )
+    def test_garbage_gives_no_party(self, text):
+        parties = parse_header_parties(text)
+        assert parties.empty and parse_subject_cik(text) is None
+        assert not parties.is_subject("0000000001")  # nobody named -> no verdict
+
+    def test_a_sec_header_wrapper_is_not_taken_for_a_section(self):
+        header = "<SEC-HEADER>\n<CIK>0000000001\n</SEC-HEADER>\n"
+        assert parse_subject_cik(header) is None
+
+
+class TestFetchFilingHeader:
+    def _client(self):
+        return SECClient(user_agent="TestAgent/1.0 (test@example.com)")
+
+    def test_the_tagged_header_file_is_read_with_one_request(self):
+        client = self._client()
+        with patch.object(client, "_get_text", return_value="HDR") as get:
+            header = client.fetch_filing_header("0000019617", "0000019617-26-000392")
+        assert header == "HDR"
+        get.assert_called_once_with(
+            "https://www.sec.gov/Archives/edgar/data/19617/000001961726000392/"
+            "0000019617-26-000392.hdr.sgml"
+        )
+
+    def test_a_404_falls_back_to_the_head_of_the_full_submission(self):
+        client = self._client()
+        not_found = requests.exceptions.HTTPError(response=MagicMock(status_code=404))
+        response = MagicMock()
+        body = TEXT_HEADER.encode() + b"\n<DOCUMENT>\n<TYPE>SC 13G/A\n" + b"x" * 50_000
+        response.iter_content.return_value = _chunks(body, 8192)
+        with (
+            patch.object(client, "_get_text", side_effect=not_found),
+            patch.object(client, "_open_stream", return_value=response) as opened,
+        ):
+            header = client.fetch_filing_header("320193", "0001193125-24-036431")
+        assert header.endswith("</SEC-HEADER>") and "<DOCUMENT>" not in header
+        assert parse_subject_cik(header) == "0000320193"
+        opened.assert_called_once_with(
+            "https://www.sec.gov/Archives/edgar/data/320193/000119312524036431/"
+            "0001193125-24-036431.txt"
+        )
+        response.close.assert_called_once()
+
+    def test_other_http_errors_are_raised_not_hidden_by_the_fallback(self):
+        client = self._client()
+        error = requests.exceptions.HTTPError(response=MagicMock(status_code=503))
+        with (
+            patch.object(client, "_get_text", side_effect=error),
+            patch.object(client, "_open_stream") as opened,
+        ):
+            with pytest.raises(requests.exceptions.HTTPError):
+                client.fetch_filing_header("1", "0000000001-26-000001")
+        opened.assert_not_called()
+
+    def test_a_text_without_header_end_is_an_error_and_the_stream_is_closed(self):
+        client = self._client()
+        not_found = requests.exceptions.HTTPError(response=MagicMock(status_code=404))
+        response = MagicMock()
+        response.iter_content.return_value = _chunks(b"y" * 300_000, 8192)
+        with (
+            patch.object(client, "_get_text", side_effect=not_found),
+            patch.object(client, "_open_stream", return_value=response),
+        ):
+            with pytest.raises(ValueError, match="no SEC header"):
+                client.fetch_filing_header("1", "0000000001-26-000001")
         response.close.assert_called_once()
