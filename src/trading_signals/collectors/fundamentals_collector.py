@@ -30,6 +30,11 @@ _UPSERT_COLUMNS = [
     "debt_to_equity", "current_ratio", "dividend_yield", "beta",
     "target_price_low", "target_price_mean", "target_price_median",
     "target_price_high", "most_recent_quarter",
+    # migration 040 (same yfinance info call)
+    "shares_outstanding", "float_shares", "held_percent_institutions",
+    "held_percent_insiders", "short_percent_of_float", "free_cashflow",
+    "total_cash", "total_debt", "gross_margins", "recommendation_mean",
+    "recommendation_key", "number_of_analyst_opinions",
 ]
 
 

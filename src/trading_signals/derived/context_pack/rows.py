@@ -26,6 +26,8 @@ class InsiderTradeRow:
     shares: float | None
     price: float | None
     value: float | None
+    #: Holding after the transaction as reported on the Form 4 (None = not given).
+    shares_owned_after: float | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,8 @@ class RatingRow:
     rating_new: str | None
     target_old: float | None
     target_new: float | None
+    #: Yahoo ``priceTargetAction`` (Raises / Lowers / Maintains ...), only in raw_data.
+    target_action: str | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +106,14 @@ class EstimateRow:
     rev_down_30d: int | None = None
     revenue_avg: float | None = None
     revenue_growth: float | None = None
+    eps_low: float | None = None
+    eps_high: float | None = None
+    eps_year_ago: float | None = None
+    eps_growth: float | None = None
+    revenue_low: float | None = None
+    revenue_high: float | None = None
+    revenue_n_analysts: int | None = None
+    revenue_year_ago: float | None = None
 
 
 @dataclass(frozen=True)
@@ -181,6 +193,22 @@ class Holders13F:
     prev_n_filers: int | None = None
     prev_shares_total: float | None = None
     top: tuple[HolderRow, ...] = ()
+    #: Distinct 13F filers of the whole tracked set that filed for the period
+    #: (the "N" of "x of N tracked funds"); None = not loaded.
+    n_tracked: int | None = None
+    prev_n_tracked: int | None = None
+
+
+@dataclass(frozen=True)
+class BarRow:
+    """A real (not gap-filled) daily price bar."""
+
+    trade_date: date
+    open: float | None
+    high: float | None
+    low: float | None
+    close: float | None
+    volume: float | None
 
 
 @dataclass(frozen=True)
@@ -190,6 +218,31 @@ class SourceStat:
     first: date | None = None
     last: date | None = None
     n_obs: int = 0
+
+
+@dataclass(frozen=True)
+class PeerRow:
+    """One line of the peer table (values of the pack session; None = no coverage)."""
+
+    ticker: str
+    company: str | None
+    market_cap: float | None
+    ret_60d: float | None
+    forward_pe: float | None
+    eps_revision_30d: float | None
+
+
+@dataclass(frozen=True)
+class PeerTable:
+    """The peer section of one ticker: the ticker itself and its peers."""
+
+    industry: str | None
+    sector: str | None
+    n_industry_pool: int  # other gate tickers in the same industry
+    n_from_industry: int
+    n_from_sector: int
+    own: PeerRow
+    peers: tuple[PeerRow, ...]
 
 
 @dataclass
@@ -208,6 +261,9 @@ class TickerRaw:
     technical: TechnicalRow | None = None
     memberships: list[MembershipRow] = field(default_factory=list)
     holders: Holders13F | None = None
+    #: Real daily bars, ascending, up to the pack session (chart, ranges,
+    #: volatility, earnings reactions).
+    bars: list[BarRow] = field(default_factory=list)
     stats: dict[str, SourceStat] = field(default_factory=dict)
 
 

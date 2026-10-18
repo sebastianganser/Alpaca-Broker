@@ -9,7 +9,8 @@ point of the nightly chain step ``context_pack_generator``. It
    (``forecast_review.gate_flags``), so ``screen.csv`` and the evaluation
    agree,
 3. writes ``screen.csv`` (all gate tickers), the overview and one file per
-   selected ticker (alphabetical, bucket NOT shown anywhere),
+   selected ticker (alphabetical, bucket NOT shown anywhere) plus its chart
+   ``TICKER.png`` (``chart.py``),
 4. stores the buckets in ``signals.pack_candidates`` (the evaluation compares
    Claude's forecasts with them; the caller commits).
 
@@ -38,7 +39,14 @@ from trading_signals.analysis.screen import (
 )
 from trading_signals.analysis.stats import to_float as series_to_float
 from trading_signals.config import get_settings
+from trading_signals.derived.context_pack.chart import (
+    CHART_SUFFIX,
+    chart_file_name,
+    is_generated_chart,
+    render_chart_png,
+)
 from trading_signals.derived.context_pack.constants import (
+    BARS_LOOKBACK_DAYS,
     FORECASTS_FILE,
     MAX_REQUESTED,
     OVERVIEW_FILE,
@@ -60,8 +68,11 @@ from trading_signals.derived.context_pack.overview import (
     OverviewData,
     render_overview,
 )
+from trading_signals.derived.context_pack.peers import select_peers
 from trading_signals.derived.context_pack.pit import apply_pit
+from trading_signals.derived.context_pack.rows import PeerRow, PeerTable
 from trading_signals.derived.context_pack.screen_csv import screen_csv_text
+from trading_signals.derived.context_pack.technicals import analyse_prices
 from trading_signals.derived.context_pack.ticker_file import render_ticker_file
 from trading_signals.derived.pack_candidates import (
     pack_candidate_rows,
@@ -78,8 +89,27 @@ _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 #: shape): see :func:`_is_generated_ticker_file`.
 _TICKER_FILE_RE = re.compile(r"^(?P<ticker>[A-Z][A-Z0-9.\-]{0,9})\.md$")
 _LEGACY_FILE_RE = re.compile(r"^\d\d_(?P<ticker>[A-Z0-9.\-]+)\.md$")
+#: ``TICKER.png`` - whether it is ours is decided by the marker inside the PNG
+#: (``chart.is_generated_chart``).
+_CHART_FILE_RE = re.compile(r"^(?P<ticker>[A-Z][A-Z0-9.\-]{0,9})\.png$")
 #: Encoding of every file on the share (UTF-8 with BOM, as before).
 ENCODING = "utf-8-sig"
+
+#: Pack folders are group-writable with the setgid bit: the forecast VM writes
+#: forecasts.yaml & co. as a member of the share's group (gid 100 "users",
+#: infra/forecast-vm/setup-vm-root.sh) while the container runs as 99:100.
+PACK_DIR_MODE = 0o2775
+
+
+def _make_group_writable(path: Path) -> None:
+    """Set :data:`PACK_DIR_MODE` on a pack folder the process owns (best effort)."""
+    try:
+        if (path.stat().st_mode & 0o7777) != PACK_DIR_MODE:
+            path.chmod(PACK_DIR_MODE)
+    except OSError as exc:  # not the owner (e.g. a root-created folder) - keep going
+        logger.warning(
+            f"[context_pack] cannot set mode {PACK_DIR_MODE:o} on {path}: {exc}"
+        )
 
 
 def parse_requested(text: str) -> list[str]:
@@ -310,9 +340,23 @@ class ContextPackGenerator:
 
         by_ticker = screened.set_index("ticker")
         snap_rows = snap.set_index("ticker", drop=False)
+        sessions = trading_days(
+            target_date - timedelta(days=BARS_LOOKBACK_DAYS + 10), target_date
+        )
+        gate_tickers = set(gated[gated].index)
+        caps = _column_values(table, "fund_market_cap")
         files: dict[str, str] = {}
+        charts: dict[str, bytes] = {}
+        chart_seconds = 0.0
         for ticker in selected:
             fund_row = fund.loc[ticker].to_dict() if ticker in fund.index else {}
+            raw_t = apply_pit(raw.get(ticker), target_date)
+            price = analyse_prices(raw_t.bars, sessions, target_date)
+            started_chart = time.monotonic()
+            png = self._chart(ticker, info, target_date, raw_t, price)
+            chart_seconds += time.monotonic() - started_chart
+            if png is not None:
+                charts[ticker] = png
             ctx = TickerContext(
                 ticker=ticker,
                 session=target_date,
@@ -326,11 +370,15 @@ class ContextPackGenerator:
                 close=_none(close_d.get(ticker)) if len(close_d) else None,
                 returns={h: _ret(returns, ticker, h) for h in RETURN_HORIZONS},
                 spy_returns=spy,
-                raw=apply_pit(raw.get(ticker), target_date),
+                raw=raw_t,
                 market=market,
                 coverage={
                     g: (int(cov.loc[ticker, g]), sizes[g][0]) for g in GROUP_NAMES
                 },
+                sessions=sessions,
+                price=price,
+                chart_file=chart_file_name(ticker) if png is not None else None,
+                peer_table=_peer_table(ticker, info, gate_tickers, caps, table),
             )
             files[ticker] = render_ticker_file(ctx)
 
@@ -347,6 +395,7 @@ class ContextPackGenerator:
                 info,
                 missing_requested,
                 req_ignored,
+                len(charts),
             )
         )
         csv_text = screen_csv_text(
@@ -358,15 +407,34 @@ class ContextPackGenerator:
         replace_pack_candidates(
             self.session, target_date, pack_candidate_rows(screened, target_date)
         )
-        self._write(target_date, files, overview, csv_text)
+        self._write(target_date, files, overview, csv_text, charts)
         logger.info(
             f"[context_pack] {target_date}: {len(files)} ticker files, "
+            f"{len(charts)} charts ({chart_seconds:.1f} s), "
             f"{int(gated.sum())} gate tickers in {SCREEN_FILE} "
             f"({time.monotonic() - started:.1f} s)"
         )
         return len(files)
 
     # ── helpers ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _chart(ticker, info, target_date, raw_t, price) -> bytes | None:
+        """The chart of one ticker; a failure is logged and costs only the image."""
+        try:
+            return render_chart_png(
+                ticker,
+                info.get(ticker, UniverseInfo()).company_name,
+                target_date,
+                raw_t.bars,
+                price,
+            )
+        except Exception as e:  # never let a drawing problem fail the whole pack
+            logger.warning(
+                f"[context_pack] {target_date}: no chart for {ticker}: "
+                f"{type(e).__name__}: {e}"
+            )
+            return None
 
     def _assessed_reason(self, target_date: date) -> str | None:
         """Why the pack of ``target_date`` must not be regenerated (or ``None``)."""
@@ -389,6 +457,7 @@ class ContextPackGenerator:
         info,
         missing_requested,
         ignored_requested,
+        n_charts=0,
     ) -> OverviewData:
         gate_ok = screened["gate_ok"].to_numpy()
         gate_failures: dict[str, int] = {}
@@ -419,6 +488,7 @@ class ContextPackGenerator:
             ],
             missing_requested=missing_requested,
             ignored_requested=ignored_requested,
+            n_charts=n_charts,
         )
 
     @staticmethod
@@ -440,15 +510,28 @@ class ContextPackGenerator:
         return extra
 
     def _write(
-        self, target_date: date, files: Mapping[str, str], overview: str, csv_text: str
+        self,
+        target_date: date,
+        files: Mapping[str, str],
+        overview: str,
+        csv_text: str,
+        charts: Mapping[str, bytes] | None = None,
     ) -> None:
         day_dir = self.output_dir / target_date.isoformat()
         day_dir.mkdir(parents=True, exist_ok=True)
-        # drop the ticker files of an earlier, unpublished run - only files this
-        # generator wrote (never forecasts.yaml, README.md or any other file)
+        _make_group_writable(self.output_dir)
+        _make_group_writable(day_dir)
+        # drop the ticker files and charts of an earlier, unpublished run - only
+        # files this generator wrote (never forecasts.yaml, README.md, a
+        # hand-made image or any other file)
         for old in day_dir.glob("*.md"):
             if old.name != OVERVIEW_FILE and _is_generated_ticker_file(old):
                 old.unlink()
+        for old in day_dir.glob(f"*{CHART_SUFFIX}"):
+            if _is_generated_chart_file(old):
+                old.unlink()
+        for ticker, png in (charts or {}).items():
+            (day_dir / chart_file_name(ticker)).write_bytes(png)
         for ticker, text in files.items():
             (day_dir / f"{ticker}.md").write_text(text, encoding=ENCODING)
         (day_dir / SCREEN_FILE).write_text(csv_text, encoding=ENCODING)
@@ -480,6 +563,59 @@ def _is_generated_ticker_file(path: Path) -> bool:
     if match is not None:
         return head[1].startswith("pack_format:") and f"ticker: {ticker}" in head
     return any(line.startswith("rank:") for line in head)
+
+
+def _is_generated_chart_file(path: Path) -> bool:
+    """True if ``path`` is a ``TICKER.png`` written by the pack generator.
+
+    Name pattern AND the ownership marker inside the PNG (``chart.py``): a
+    hand-made image, even one named like a chart, is kept.
+    """
+    match = _CHART_FILE_RE.match(path.name)
+    return match is not None and is_generated_chart(path, match.group("ticker"))
+
+
+def _column_values(table: pd.DataFrame, column: str) -> dict[str, float | None]:
+    """``{ticker: value}`` of a numeric column (NaN -> None)."""
+    if column not in table.columns:
+        return {}
+    return {t: _none(v) for t, v in table[column].items()}
+
+
+def _peer_table(
+    ticker: str,
+    info: Mapping[str, UniverseInfo],
+    gate: set[str],
+    caps: Mapping[str, float | None],
+    table: pd.DataFrame,
+) -> PeerTable:
+    """The peer section data of ``ticker`` (``peers.select_peers``)."""
+    selection = select_peers(ticker, info, gate, caps)
+
+    def row(t: str) -> PeerRow:
+        def value(col: str) -> float | None:
+            if col not in table.columns or t not in table.index:
+                return None
+            return _none(table.at[t, col])
+
+        return PeerRow(
+            ticker=t,
+            company=info.get(t, UniverseInfo()).company_name,
+            market_cap=caps.get(t),
+            ret_60d=value("ret_60d"),
+            forward_pe=value("forward_pe"),
+            eps_revision_30d=value("eps_revision_pct_30d"),
+        )
+
+    return PeerTable(
+        industry=selection.industry,
+        sector=selection.sector,
+        n_industry_pool=selection.n_industry_pool,
+        n_from_industry=len(selection.industry_peers),
+        n_from_sector=len(selection.sector_peers),
+        own=row(ticker),
+        peers=tuple(row(t) for t in selection.tickers),
+    )
 
 
 def _ret(returns: pd.DataFrame, ticker: str, h: int) -> float | None:

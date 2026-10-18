@@ -15,7 +15,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from tests.unit.pack_data import SESSION, make_loader, make_raw
+from tests.unit.pack_data import SESSION, make_loader, make_raw, stub_chart
 from trading_signals.analysis.screen import (
     EVENT_RULES,
     GROUP_NAMES,
@@ -75,6 +75,14 @@ from trading_signals.derived.forecasts import (
 )
 
 NY = "America/New_York"
+
+
+@pytest.fixture(autouse=True)
+def fast_charts(monkeypatch):
+    """Tiny stand-in charts: the real renderer costs about 0.3 s per ticker."""
+    monkeypatch.setattr(
+        "trading_signals.derived.context_pack.generator.render_chart_png", stub_chart
+    )
 
 
 def render(tmp_path, ticker="T003", mutate=None, raw=None, n=120):
@@ -439,7 +447,7 @@ def test_clean_text_flattens_and_neutralises_markup():
 def test_every_section_is_present_in_order(tmp_path):
     text = render(tmp_path)
     headings = re.findall(r"^## (\d+)\. ", text, re.M)
-    assert headings == [str(i) for i in range(1, 14)]
+    assert headings == [str(i) for i in range(1, 15)]
     for needle in (
         "Trend und Momentum",
         "Bewertung (relativ zum Sektor)",
@@ -453,6 +461,7 @@ def test_every_section_is_present_in_order(tmp_path):
         "Liquidität",
         "Datenqualität und Frische",
         "Marktregime",
+        "Peers (gleiche Branche)",
     ):
         assert needle in text
     for sub in (
@@ -492,7 +501,12 @@ def test_earnings_next_date_is_information_and_absence_is_stated(tmp_path):
     text = render(tmp_path)
     nxt = "Nächster Termin (Information, kein Ausschlusskriterium):** "
     assert nxt + "2026-11-15 (AMC), in 30 Tagen, EPS-Schätzung 1.50" in text
-    assert "| 2026-08-17 | 1.20 | 1.30 | +8.3 % |" in text  # last reported quarters
+    # last reported quarters, with the report time and the price reaction
+    assert re.search(
+        r"\| 2026-08-17 \| AMC \| 1\.20 \| 1\.30 \| \+8\.3 % \| [+-]\d\.\d % \|", text
+    )
+    quarters = re.findall(r"^\| 20\d\d-\d\d-\d\d \| (BMO|AMC|DMH|–) \|", text, re.M)
+    assert len(quarters) == 8
     none = render(tmp_path / "x", raw=lambda t: setattr(t, "earnings", []))
     assert "kein Termin in den nächsten 90 Tagen bekannt" in none
     assert "Berichtete Quartale: keine Abdeckung" in none
@@ -718,6 +732,7 @@ def test_a_ticker_without_any_data_renders_without_errors_or_placeholders(tmp_pa
         t.insider, t.ratings, t.politicians, t.headlines = [], [], [], []
         t.earnings, t.estimates, t.short_interest, t.ark, t.iv = [], [], [], [], []
         t.technical, t.memberships, t.holders, t.stats = None, [], None, {}
+        t.bars = []
 
     text = render(tmp_path, mutate=mutate, raw=empty)
     assert text.startswith("---\npack_format: 2")
@@ -729,8 +744,10 @@ def test_a_ticker_without_any_data_renders_without_errors_or_placeholders(tmp_pa
     assert "Kurs (Schluss):** keine Abdeckung" in text
     assert "Nächster Termin:** kein Termin in den nächsten 90 Tagen bekannt" in text
     assert [h for h in re.findall(r"^## (\d+)\. ", text, re.M)] == [
-        str(i) for i in range(1, 14)
+        str(i) for i in range(1, 15)
     ]
+    assert "Peers: keine Abdeckung (Branche und Sektor unbekannt)" in text
+    assert "52-Wochen-Spanne: keine Abdeckung" in text
 
 
 def test_make_raw_fixture_contains_the_leaky_rows_the_tests_rely_on():

@@ -20,6 +20,7 @@ from trading_signals.db.models.features import FEATURE_COLUMNS, TARGET_COLUMNS
 from trading_signals.derived.context_pack import pit
 from trading_signals.derived.context_pack.loader import SqlPackLoader
 from trading_signals.derived.context_pack.rows import (
+    BarRow,
     EarningsRow,
     EstimateRow,
     HeadlineRow,
@@ -192,6 +193,10 @@ def test_apply_pit_filters_every_source():
             MembershipRow("AAA", "nasdaq100", D + timedelta(days=1)),  # joins later
         ],
         holders=Holders13F(date(2026, 6, 30), D + timedelta(days=1), 1, 1.0),
+        bars=[
+            BarRow(D, 1, 2, 0.5, 1.5, 10),
+            BarRow(D + timedelta(days=3), 9, 99, 0.1, 50, 10),  # the next session
+        ],
         technical=TechnicalRow("AAA", D + timedelta(days=1)),
         stats={
             "prices": SourceStat(date(2021, 1, 1), D, 10),
@@ -205,9 +210,10 @@ def test_apply_pit_filters_every_source():
     assert [s.settlement_date for s in out.short_interest] == [cutoff]
     assert [m.index_name for m in out.memberships] == ["sp500"]
     assert out.holders is None and out.technical is None
+    assert [b.trade_date for b in out.bars] == [D]  # no bar after the session
     assert set(out.stats) == {"prices"}
     # the input is not mutated
-    assert len(raw.insider) == 2 and raw.holders is not None
+    assert len(raw.insider) == 2 and raw.holders is not None and len(raw.bars) == 2
 
 
 # ── loader: SQL shape (mock session) ──────────────────────────────────

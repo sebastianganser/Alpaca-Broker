@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     Index,
     Numeric,
+    SmallInteger,
     String,
     UniqueConstraint,
     func,
@@ -59,6 +60,22 @@ class FundamentalsSnapshot(Base):
     target_price_high: Mapped[float | None] = mapped_column(Numeric(16, 4))
     # Fiscal quarter end the TTM figures refer to (yfinance mostRecentQuarter)
     most_recent_quarter: Mapped[date | None] = mapped_column(Date)
+    # Further fields of the same yfinance ``info`` call (migration 040). Ratios
+    # are decimal fractions (0.65 = 65 %); amounts are in the reporting
+    # currency of the listing (USD for US companies, local currency for ADRs).
+    shares_outstanding: Mapped[float | None] = mapped_column(Numeric(20, 2))
+    float_shares: Mapped[float | None] = mapped_column(Numeric(20, 2))
+    held_percent_institutions: Mapped[float | None] = mapped_column(Numeric(10, 6))
+    held_percent_insiders: Mapped[float | None] = mapped_column(Numeric(10, 6))
+    short_percent_of_float: Mapped[float | None] = mapped_column(Numeric(10, 6))
+    free_cashflow: Mapped[float | None] = mapped_column(Numeric(24, 2))
+    total_cash: Mapped[float | None] = mapped_column(Numeric(24, 2))
+    total_debt: Mapped[float | None] = mapped_column(Numeric(24, 2))
+    gross_margins: Mapped[float | None] = mapped_column(Numeric(10, 6))
+    # analyst consensus: 1 = strong buy ... 5 = strong sell, Yahoo key e.g. 'buy'
+    recommendation_mean: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    recommendation_key: Mapped[str | None] = mapped_column(String(20))
+    number_of_analyst_opinions: Mapped[int | None] = mapped_column(SmallInteger)
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=True, server_default=func.now()
     )

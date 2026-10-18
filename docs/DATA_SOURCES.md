@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** 16 October 2026
+**Last updated:** 18 October 2026
 
 ---
 
@@ -29,6 +29,8 @@
 | **Massive (ex Polygon)** | Short Volume (daily) + FINRA Short Interest (twice a month) | Free | Daily (volume) / weekly run (interest) | T+1 (volume) / ~7 business days after settlement date (interest) | 9.5c | ✅ Active |
 | **Wikipedia – index change tables** | Index membership history (S&P 500, Nasdaq 100) | Free | Monthly (`index_sync`) | Effective date of the change (editor lag not measured) | 9.5a | ✅ Active (source page changed, parser fixed 2026-10-16) |
 | **Alpaca Corporate Actions** | Renames, mergers (explains disappeared tickers) | Free | Weekly (`universe_validation`) + monthly (`index_sync`) | Process date of the action | 9.5c | 🟡 Code committed 2026-10-16, deploy pending |
+| **SEC EDGAR – Filings** (submissions API) | 8-K (+ item codes, press release / report excerpts), 10-Q/10-K, 144, 13D/13G, S-1/S-3, DEF 14A, NT 10-K/Q, 6-K | Free | Daily 04:00 CET | Minutes after acceptance (collected the same night, 22:00 ET cut-off) | 18.10.2026 | 🟡 Code ready 2026-10-18, deploy + backfill pending |
+| **SEC EDGAR – XBRL financials** (companyfacts API) | Quarterly revenue, profit, EPS, cash flow, FCF, cash, debt, shares | Free | Weekly (Sunday 14:00) | With the 10-Q/10-K filing | 18.10.2026 | 🟡 Code ready 2026-10-18, deploy + backfill pending |
 
 ---
 
@@ -76,6 +78,7 @@ Multi-symbol batch endpoint with daily OHLCV data:
 - `enterpriseToEbitda`, `profitMargins`, `operatingMargins`, `returnOnEquity`
 - `totalRevenue`, `revenueGrowth`, `trailingEps`, `debtToEquity`, `currentRatio`
 - `dividendYield`, `beta`
+- Since 2026-10-18 (migration 040, same `info` call - no extra requests): `sharesOutstanding`, `floatShares`, `heldPercentInstitutions`, `heldPercentInsiders`, `shortPercentOfFloat`, `freeCashflow`, `totalCash`, `totalDebt`, `grossMargins`, `recommendationMean`, `recommendationKey`, `numberOfAnalystOpinions` (ratios are decimal fractions; `recommendationKey` `'none'` is stored as NULL; amounts are in the listing currency; the plausibility guards in `yfinance_client._PLAUSIBILITY_RULES` null format breaks such as percent instead of fraction)
 
 **Analyst Ratings (via `ticker.upgrades_downgrades`):**
 - `Firm`, `ToGrade`, `FromGrade`, `Action` (up/down/main/init)
@@ -356,7 +359,90 @@ The maintained file is `S&P 500 Historical Components & Changes (Updated).csv` (
 
 ---
 
-## 13. Not Yet Implemented – Ideas for Later
+## 13. SEC EDGAR – Filings and Press Releases (since 2026-10-18, code ready, deploy pending)
+
+**Category:** Company filings (metadata + text excerpts), point-in-time
+**API:** `https://data.sec.gov/submissions/CIK##########.json` (filing list per company), `https://www.sec.gov/Archives/edgar/data/<cik>/<accession>/<accession>.txt` (full-submission text, streamed for the press release)
+**Auth / fair access:** none; `User-Agent` with contact (`SEC_USER_AGENT`), <= 10 requests/s (`SECClient`: 9/s)
+**Collector:** `SecFilingsCollector` (`collectors/sec_filings_collector.py`), job `sec_filings_collector`, daily 04:00 Berlin, collector name `sec_filings`
+**Tables:** `sec_filings`, `sec_filing_texts` ([DATABASE.md](DATABASE.md))
+
+### What It Delivers
+
+One row per filing of every active universe company that has a CIK (share classes such as GOOG/GOOGL share one CIK and are fetched once; `tickers` lists all of them):
+
+| Form | Why it is collected |
+|---|---|
+| `8-K`, `8-K/A` | Current reports with **item codes** (`2.02` results, `7.01`/`8.01` Reg FD / other events, `5.02` officer changes, `1.01`/`2.01` agreements/acquisitions, `4.02` non-reliance on financial statements, `1.05` cyber incident, `3.01` delisting notice, ...) |
+| `10-Q`, `10-K` (+ `/A`), `6-K`, `20-F`, `40-F` | Periodic reports; the foreign-private-issuer forms of the few ADRs in the universe |
+| `NT 10-K`, `NT 10-Q` | Late-filing notices - a red flag |
+| `144` | Notice of a planned insider sale |
+| `SC 13D/G` (+ `/A`) and, since the structured-data switch of Dec 2024, `SCHEDULE 13D/G` (+ `/A`) | Stakes >= 5 %: activists, passive holders |
+| `S-1`, `S-3`, `S-3ASR` (+ `/A`) | Registration of securities: dilution / shelf offerings |
+| `DEF 14A`, `DEFM14A` | Proxy statements: pay, votes, mergers |
+
+**Not collected:** Forms 3/4/5 (`form4_collector`), 13F (`form13f_collector`), `424B*` prospectus supplements (thousands of structured-note supplements per day from the banks), `425` / `SC TO` merger communications, exhibits of 10-K/10-Q.
+
+**Texts (`sec_filing_texts`):** an 8-K with item `2.02`, `7.01` or `8.01` gets the press release (`EX-99.1`, then `EX-99`, then the lowest other `EX-99.x`; if the report has none, the report body) and an 8-K with one of the event items `1.01 1.02 1.03 1.05 2.01 2.05 2.06 3.01 4.01 4.02 5.02` gets the report body without its cover page - each as a cleaned plain-text excerpt of the first ≈ 3,000 characters (`full_length` = length before the cut). HTML / inline-XBRL markup, the hidden XBRL header, scripts and styles are removed. One streamed request per filing (the download stops after the wanted document). A failed text request leaves `texts_fetched_at` NULL and is retried by the next runs for as long as the filing is inside the 14-day lookback.
+
+### Point-in-time
+
+`acceptance_datetime` is the instant EDGAR accepted the filing (UTC); a filing is public from then on, `NULL` means "from the end of `filing_date`". **Finding of 2026-10-18:** the `acceptanceDateTime` strings of the submissions JSON are labelled `Z` but are the Eastern wall clock **plus 8 hours (summer) / 10 hours (winter)** - checked on ten filings of six filers (2016-2026) against the "Accepted" time of the filing index page and the `<ACCEPTANCE-DATETIME>` of the full-submission text (Apple 8-K: JSON `2026-07-31T00:30:28.000Z`, index page `2026-07-30 16:30:28`). The collector stores the corrected instant and the raw string (`acceptance_raw`). `SECClient.parse_acceptance_datetime` (Form 4 / 13F) reads the same string as Eastern wall clock, i.e. 8-10 hours too late - conservative (never early) but it delays most intraday insider filings by a session in "public before 16:00 ET" rules; not changed here.
+
+### Schedule and Request Volume
+
+- **Daily 04:00 Berlin = 22:00 ET**, EDGAR's cut-off for same-day 8-Ks: the run sees the complete US day including after-the-close earnings releases (16:00-17:30 ET), lies outside the 22:30-03:00 collector load and 30 minutes before the nightly chain. 14-day lookback (robust against missed days).
+- Per run: 1 (`company_tickers.json`) + ≈ 650 submissions requests (one per CIK, 0.1-1 MB) + one request per filing text (≈ 10-60 on a normal day, up to ≈ 150 in peak earnings weeks) at 9 requests/s ≈ 5-10 minutes. `filings.recent` of the submissions JSON holds the newest ≈ 1,000 filings (at least one year); older pages are read when the lookback needs them.
+- **Initial backfill:** `scripts/repair/backfill_sec_filings.py` (dry run by default, `--apply`, `--days 120`, `--tickers`): 120 days ≈ 650 + 2,000-4,000 text requests ≈ 15-40 minutes. **Needs Sebastian's OK on production.**
+- Not yet an input of the nightly chain or the context pack: wiring is a separate step (add `sec_filings: False` to `NIGHTLY_UPSTREAM` then).
+
+### Limitations
+
+- A company that re-incorporated under a new CIK (holding-company reorganisation, e.g. **ExxonMobil Holdings** 2026, new CIK 2115436 for ticker XOM) only shows the filings of its new registrant in the lookback; older filings sit under the old CIK.
+- Item codes only exist for 8-Ks; 6-K filings have none and get no text.
+- The excerpt is the start of the document: a press release's headline paragraph, not its tables.
+- Tickers without a CIK in `company_tickers.json` (ETFs, delisted/renamed symbols) are skipped.
+
+---
+
+## 14. SEC EDGAR – XBRL Quarterly Financials (since 2026-10-18, code ready, deploy pending)
+
+**Category:** Standardised fundamentals from the company's own filings, point-in-time
+**API:** `https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json` (all us-gaap/dei facts of a company since its first XBRL filing, 0.3-0.5 MB gzip)
+**Auth / fair access:** as §13
+**Collector:** `SecFinancialsCollector` (`collectors/sec_financials_collector.py`, parsing in `collectors/sec_xbrl.py`), job `sec_financials_collector`, weekly Sunday 14:00 Berlin, collector name `sec_financials`
+**Table:** `financials_quarterly` ([DATABASE.md](DATABASE.md))
+
+### What It Delivers
+
+One row per ticker and fiscal quarter inside the retention window (`data_start_date()`): revenue, gross profit, operating income, net income, diluted EPS, operating cash flow, capex, free cash flow (= operating cash flow − capex), cash and equivalents, total debt, shares outstanding, plus `raw_tags` (the us-gaap tag of every figure and the figures that were derived). Yahoo's `fundamentals_snapshot` only has TTM ratios; this table has the quarterly series (growth, margin trend, cash conversion) with the date each quarter became public.
+
+### How the Quarters Are Built (`collectors/sec_xbrl.py`)
+
+- **Facts used:** us-gaap/dei facts in USD (EPS in USD/shares) of 10-Q, 10-K and their amendments; IFRS filers (20-F/40-F) yield no rows.
+- **As first reported:** if several filings report the same period (the original 10-Q, next year's comparative column, a restating 10-K/A) the earliest-filed fact wins; `filed` is the date the row's income-statement and cash-flow figures became public (point-in-time key). Restatements are ignored.
+- **Quarters:** a direct 3-month fact is used as is. Cumulative facts are differenced: Q2 = 6M − 3M, Q3 = 9M − 6M, **Q4 = fiscal year − 9M** (a difference must span 80-105 days). Cash-flow items are year-to-date only in the 10-Q, so their quarters are always differences. EPS is differenced the same way (approximation, flagged in `raw_tags.derived`); weighted-average shares are never differenced.
+- **Tags:** candidate tags per figure in a fixed priority order (e.g. revenue: `Revenues`, `RevenueFromContractWithCustomerExcludingAssessedTax`, ...). The base tag is the one with the most recent quarter among the well-covered ones; other tags fill missing quarters only if they agree with the base within 1 % on all common quarters (so a taxonomy hand-over such as Alphabet's is stitched, while XOM's `Revenues` and `RevenueFromContract...` or JPM's `Revenues` and `RevenuesNetOfInterestExpense` - different measures - are never mixed).
+- **Balance sheet:** cash, debt and shares are instant facts at the quarter end; `total_debt` = non-current + current long-term debt (+ commercial paper / short-term borrowings when the current portion is tagged separately), otherwise the combined tags; `shares_outstanding` falls back to the cover-page share count of the same filing. Figures first reported in a later filing than the quarter's main filing are NULL (point-in-time).
+- **Gross profit** falls back to revenue − cost of revenue (flagged), operating income / capex are NULL for banks.
+- Verified 2026-10-18 against the published numbers (Apple Q3 FY2026: revenue 109.417 bn, diluted EPS 2.02; Q4 FY2025 derived 102.466 bn) and on MSFT, WMT, JPM, GOOGL, BRK.B, TSLA.
+
+### Schedule and Request Volume
+
+- **Weekly, Sunday 14:00 Berlin** (after the other Sunday collectors, daytime, away from the nightly load and the seal runs). The full fact history is re-read every week; a new 10-Q/10-K adds a quarter, nothing else changes - the weekly job is its own backfill.
+- Per run: 1 + ≈ 650 `companyfacts` requests (one per CIK, share classes once) ≈ 250 MB ≈ 5-10 minutes.
+- **Initial run:** `scripts/repair/backfill_sec_financials.py` (dry run by default, `--apply`, `--tickers`) or simply the first scheduled run. **Needs Sebastian's OK on production.**
+- Not yet read by the context pack or the features: separate wiring step.
+
+### Limitations
+
+- Companies that re-incorporated under a new CIK only have the quarters of the new registrant (XOM: 2 quarters).
+- Banks and insurers have no gross profit / operating income / capex; Berkshire's class-dependent EPS and share counts are not in `companyfacts` (dimensional facts).
+- Values are as first reported - a later restatement does not update the row.
+
+---
+
+## 15. Not Yet Implemented – Ideas for Later
 
 - **OpenInsider** – Aggregated Form 4 data with pre-filtered cluster buys
 - **Finviz** – Insider screener, news aggregation (scraping gray area)
@@ -389,6 +475,8 @@ All data in the system is bounded by `DATA_START_DATE = 2021-01-01` (defined in 
 | `scripts/sprint9_readiness.py` | Feature snapshot + target fill readiness check | Periodic during wait phase |
 | `scripts/diag_insider.py` | Quick insider trade diagnostics | Ad-hoc debugging |
 | `scripts/backfill_party_mapping.py` | Backfill party affiliation for politician_trades | One-time after C3 deploy |
+| `scripts/repair/backfill_sec_filings.py` | Dry run (default) / `--apply` of the SEC filings + press release backfill (120 days) | Once after the deploy of migration 040 (needs Sebastian's OK) |
+| `scripts/repair/backfill_sec_financials.py` | Dry run (default) / `--apply` of the SEC XBRL quarterly financials | Once after the deploy of migration 040 (needs Sebastian's OK) |
 
 ---
 

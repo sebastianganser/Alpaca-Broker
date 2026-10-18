@@ -5,11 +5,11 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** 18 October 2026 (verified against `scheduler/setup.py` + `scheduler/registry.py`; production `job_count` is 26 until the next deploy, then 27 with `forecast_seal`)
+**Last updated:** 18 October 2026 (verified against `scheduler/setup.py` + `scheduler/registry.py`; production `job_count` is 27 until migration 040 is deployed, then 29 with `sec_filings_collector` and `sec_financials_collector`)
 
-**27 registered jobs:** 13 daily (11 upstream jobs, `log_retention`, `nightly_chain`), 1 weekday job in New York time (`forecast_seal`), 7 weekly (Sunday, incl. `data_retention`, `universe_validation`), 2 monthly, 4 paused chain steps. All times Europe/Berlin except `forecast_seal` (America/New_York). (Production reports `job_count` 26 until `forecast_seal` is deployed together with migration 039 and the pack v2; `universe_validation` has been live since the deploy of 2026-10-17.)
+**29 registered jobs:** 14 daily (12 upstream jobs incl. `sec_filings_collector`, `log_retention`, `nightly_chain`), 1 weekday job in New York time (`forecast_seal`), 8 weekly (Sunday, incl. `data_retention`, `universe_validation`, `sec_financials_collector`), 2 monthly, 4 paused chain steps. All times Europe/Berlin except `forecast_seal` (America/New_York). (Production reports `job_count` 27 until the SEC jobs are deployed together with migration 040; `forecast_seal` and migration 039 have been live since the deploy of 2026-10-18.)
 
-**Log names:** `collection_log.collector_name` differs from the job id for some jobs (`scheduler/registry.JOB_COLLECTOR_NAMES`), e.g. `price_collector` → `prices_alpaca`, `news_collector` → `news_alpaca`, `fundamentals_collector` → `fundamentals_yf`, `short_interest_positions_collector` → `short_interest_positions`. The jobs `ark_holdings` and `form4_collector` additionally write the follow-up runs `ark_deltas` and `insider_clusters`.
+**Log names:** `collection_log.collector_name` differs from the job id for some jobs (`scheduler/registry.JOB_COLLECTOR_NAMES`), e.g. `price_collector` → `prices_alpaca`, `news_collector` → `news_alpaca`, `fundamentals_collector` → `fundamentals_yf`, `short_interest_positions_collector` → `short_interest_positions`. `sec_filings_collector` → `sec_filings`, `sec_financials_collector` → `sec_financials`. The jobs `ark_holdings` and `form4_collector` additionally write the follow-up runs `ark_deltas` and `insider_clusters`.
 
 ---
 
@@ -29,6 +29,7 @@ All collectors label their data with the **last completed NYSE session** (`utils
 | 00:30 | `sentiment_computer` | FinBERT scoring |
 | 01:00 | `analyst_ratings_collector` | Analyst upgrades/downgrades |
 | 01:30 | `estimates_collector` | EPS/revenue consensus + revisions (rolling 90-day window – critical, startup catch-up) |
+| 04:00 | `sec_filings_collector` (`sec_filings`) | SEC EDGAR filings of all universe companies (`collectors/sec_filings_collector.py`): submissions JSON per CIK (≈ 650 requests, share classes once), whitelisted forms (8-K, 10-Q/K, 6-K, NT 10-K/Q, 144, 13D/13G, S-1/S-3, DEF 14A), 14-day lookback, accession-based dedup; for 8-Ks with item 2.02 / 7.01 / 8.01 the press release (EX-99.x) and for event items (1.01-1.05, 2.01, 2.05, 2.06, 3.01, 4.01, 4.02, 5.02) the 8-K body as a ≈ 3,000-character excerpt, one streamed request per filing (≈ 10-60 per normal day, up to ≈ 150 in peak earnings weeks); a failed text fetch is retried by the next runs. **Why 04:00:** 04:00 Berlin = 22:00 ET, EDGAR's cut-off for same-day 8-Ks - the run sees the complete US day including after-the-close earnings releases, lies outside the 22:30-03:00 collector load and 30 minutes before the chain (≈ 5-10 minutes). Not in `NIGHTLY_UPSTREAM` yet (no pack section reads the table; add `sec_filings: False` with the pack wiring so the chain waits for it) |
 | 04:15 | `fred_collector` | FRED macro series |
 
 ## Weekdays – Forecast Seal (America/New_York)
@@ -61,7 +62,7 @@ Before starting, the chain waits up to 2 h for upstream collectors (`registry.NI
 | Time | Job | Description |
 |---|---|---|
 | daily 03:30 | `log_retention` | Delete collection_logs older than 90 days; mark stale `running` rows (> 6 h) as `failed` |
-| Sun 03:00 | `data_retention` | Rolling **20-quarter** retention (decision 2026-10-05, no backups). Savepoint per table; insider by `filing_date`, politicians by `disclosure_date`, news sentiment via cascade. Excluded: `earnings_calendar`, `collection_log`, `universe` / `ticker_blacklist` / `index_membership` and the forecast evaluation records `forecast_reviews`, `forecasts`, `forecast_criterion_samples`, `forecast_file_seals`, `pack_candidates` (pinned by a unit test) |
+| Sun 03:00 | `data_retention` | Rolling **20-quarter** retention (decision 2026-10-05, no backups). Savepoint per table; insider by `filing_date`, politicians by `disclosure_date`, news sentiment via cascade, `sec_filings` by `filing_date` (their `sec_filing_texts` first), `financials_quarterly` by `period_end`. Excluded: `earnings_calendar`, `collection_log`, `universe` / `ticker_blacklist` / `index_membership` and the forecast evaluation records `forecast_reviews`, `forecasts`, `forecast_criterion_samples`, `forecast_file_seals`, `pack_candidates` (pinned by a unit test) |
 
 ## Weekly (Sunday)
 
@@ -73,6 +74,7 @@ Before starting, the chain waits up to 2 h for upstream collectors (`registry.NI
 | 11:00 | `politician_trades_collector` | Senate eFD PTRs (skips known source URLs) + auto-onboarding |
 | 12:00 | `short_interest_positions_collector` (`short_interest_positions`) | FINRA short interest (settlement-date positions, twice a month) via Massive `GET /stocks/v1/short-interest`: 1 reference request (AAPL) for the settlement-date list + 1 bulk request per date to fetch (dates not stored yet, the 2 most recent for revisions, dates with < 50 % of the median row count; never before `data_start_date()`), 12 s pause, ~3 requests per run. Not part of `NIGHTLY_UPSTREAM` (features apply a 9-session publication lag). Initial history: `scripts/repair/collect_short_interest.py` (~120 requests, ~25 min) |
 | 13:00 | `universe_validation` | Checks the active universe against Alpaca assets (`universe/validation.py`): tickers not found / not tradable are deactivated (`is_active = FALSE`, never deleted) – **except** tickers with an open `index_membership` interval, which stay active and produce a warning (run status `partial`; the monthly `index_sync` closes or re-keys the interval). For every such ticker Alpaca corporate actions of the last 365 days are written to the run notes (`OLD->NEW (rename)`, `OLD->ACQ (merger)`); a rename whose new symbol is not in `universe` is a warning. `partial` with warnings is expected while renames or index intervals are pending. Safety nets: fewer than 1,000 Alpaca assets or more than 10 % of the active universe to deactivate → the run fails without changing anything. Not part of `NIGHTLY_UPSTREAM`. Manual counterpart: `scripts/validate_universe.py` (before the job existed, 10 delisted/renamed tickers stayed active for months) |
+| 14:00 | `sec_financials_collector` (`sec_financials`) | SEC XBRL quarterly financials (`collectors/sec_financials_collector.py`, `collectors/sec_xbrl.py`): `companyfacts` JSON per CIK (≈ 650 requests of 0.3-0.5 MB, share classes once, ≈ 5-10 minutes) → standalone fiscal quarters (revenue, gross profit, operating income, net income, diluted EPS, operating cash flow, capex, free cash flow, cash, debt, shares; Q4 = FY − 9M, cash flow by differences of year-to-date values, values as first reported) for the retention window, upsert on (ticker, period_end), `filed` = point-in-time key. The full fact history is re-read every week, so the weekly job is also its own backfill. After the other Sunday collectors, daytime, away from the nightly load and the seal runs. Not part of `NIGHTLY_UPSTREAM` |
 
 ## Monthly (1st of month)
 

@@ -66,14 +66,14 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 | **Backend API** | FastAPI (same process as APScheduler) |
 | **Frontend** | Vite + React SPA (Stitch "Precision Architect" Design) |
 | **ORM** | SQLAlchemy 2.0 |
-| **Migrations** | Alembic (001–039) |
+| **Migrations** | Alembic (001–040; **040 pending deploy**: SEC filings / filing texts / quarterly financials tables + 12 yfinance fundamentals columns) |
 | **Database** | PostgreSQL 18 (`postgresql18-alpaca`, 192.168.1.93:5435, DB: `broker_data`, schema: `signals`) |
 | **Package managers** | uv (Python), npm (frontend) |
-| **Scheduler** | APScheduler, 27 jobs (`scheduler/setup.py`): 13 daily (collectors, `log_retention`, `nightly_chain` 04:30), 1 weekday job in New York time (`forecast_seal`, 09:00/09:15/09:25 ET: seals `forecasts.yaml` before the open), 7 weekly (incl. `data_retention`, FINRA `short_interest_positions_collector`, `universe_validation`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps run by `nightly_chain` |
+| **Scheduler** | APScheduler, 29 jobs (`scheduler/setup.py`; production reports 27 until the deploy of 040): 14 daily (collectors incl. `sec_filings_collector` 04:00 = 22:00 ET, `log_retention`, `nightly_chain` 04:30), 1 weekday job in New York time (`forecast_seal`, 09:00/09:15/09:25 ET: seals `forecasts.yaml` before the open), 8 weekly (incl. `data_retention`, FINRA `short_interest_positions_collector`, `universe_validation`, `sec_financials_collector` Sun 14:00), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps run by `nightly_chain` |
 | **Price data** | Alpaca Market Data API, **SIP feed** (`ALPACA_DATA_FEED`, default `sip`; production logs show `feed=sip`), automatic IEX fallback marks the run `partial` |
 | **News sentiment** | Alpaca News API + ProsusAI/finbert (local CPU inference) |
 | **Universe** | 760 active tickers (2026-10-17, incl. reactivated BF.B and the onboarded current members SKYD/TWLO/VYLR; S&P 500 + Nasdaq 100 + ARK + benchmark/sector ETFs, other ETFs filtered via blacklist, never a current index member); features use the point-in-time universe |
-| **Tests** | 1755 tests, none needs a database (2026-10-18); run with `uv run pytest` |
+| **Tests** | 2062 tests, none needs a database (2026-10-18); run with `uv run pytest` |
 | **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090, runs as `99:100`) |
 | **Broker (later)** | Alpaca Paper Trading (NEVER live!) |
 | **Version control** | Git, [GitHub](https://github.com/sebastianganser/Alpaca-Broker) |
@@ -89,7 +89,7 @@ Dev machine: Windows 11, working directory = project root. The Bash tool is Git 
 | Lint | `uv run ruff check src tests` – ≈154 pre-existing findings (mostly E501): do not mass-fix, keep new code clean |
 | Frontend | `cd frontend && npm run dev` · `npm run build` (`tsc -b` + vite) · `npm run lint` |
 | Run the app | `uv run python -m trading_signals.main` – needs the DB from `.env`. The local `.env` points at the **production** DB and the app starts the scheduler + startup catch-up → do not start it locally without Sebastian's OK |
-| Migrations | `src/alembic/versions/` (001–039), applied by the container entrypoint on every start (fails hard). Do not run `alembic upgrade` against the local `.env`. Production is at 039; a new migration is a new file `040_<name>.py` with `down_revision = "039"` ([DATABASE.md](docs/DATABASE.md)) |
+| Migrations | `src/alembic/versions/` (001–040), applied by the container entrypoint on every start (fails hard). Do not run `alembic upgrade` against the local `.env`. Production is at 039 (040 pending deploy); a new migration is a new file `041_<name>.py` with `down_revision = "040"` ([DATABASE.md](docs/DATABASE.md)) |
 | Test migrations on a fresh DB | Docker Desktop: `docker run -d --rm --name alpaca-migtest -e POSTGRES_USER=migtest -e POSTGRES_PASSWORD=migtest -e POSTGRES_DB=broker_data -p 127.0.0.1:55435:5432 postgres:18`, then with `DB_HOST=127.0.0.1 DB_PORT=55435 DB_NAME=broker_data DB_USER=migtest DB_PASSWORD=migtest` (set **all** `DB_*` – `.env` points at production): `.venv/Scripts/alembic.exe upgrade head` and `.venv/Scripts/alembic.exe check` (must print "No new upgrade operations detected."), finally `docker rm -f alpaca-migtest` |
 
 **Production checks (read-only – the primary text channels):**
@@ -149,7 +149,7 @@ Each item is backed by `docs/DECISIONS_*.md`, `docs/LEARNINGS.md` or the code.
 - **Unit tests never open a DB session** (DECISIONS_ARCHITECTURE 2026-10-15). Code that calls `get_session()` internally – e.g. `NewTickerOnboarder` inside `PoliticianTradesCollector.store()` – must be patched (`patch("trading_signals.universe.onboarder.NewTickerOnboarder")`), otherwise the test talks to the production DB. Prove isolation with the unreachable-DB run above.
 
 **Operations**
-- **Migrations:** never change what an applied migration does (production is at 039) – schema changes go into a new migration. The only allowed edit of an applied migration (001–039) is making a migration idempotent so a fresh DB replays cleanly (precedent: 025, 2026-10-16 – 024 had been extended after production applied it). Test every migration on a fresh DB (command above) before deploying – a failing migration sends the container into a restart loop. The ORM must mirror the migrated schema: every schema change = new migration + matching ORM change in one commit, `alembic check` clean.
+- **Migrations:** never change what an applied migration does (production is at 039, 040 is pending deploy) – schema changes go into a new migration. The only allowed edit of an applied migration (001–040) is making a migration idempotent so a fresh DB replays cleanly (precedent: 025, 2026-10-16 – 024 had been extended after production applied it). Test every migration on a fresh DB (command above) before deploying – a failing migration sends the container into a restart loop. The ORM must mirror the migrated schema: every schema change = new migration + matching ORM change in one commit, `alembic check` clean.
 - **Container user `99:100`:** never `docker exec -u root` (root-owned files in `context_packs/` cannot be overwritten → `PermissionError`, LEARNINGS 2026-10-15); `/mnt/user/Workfiles/AlpacaBroker` must be owned by `99:100`.
 - **Night window:** collectors 22:30–~03:00, `nightly_chain` 04:30 ([SCHEDULER.md](docs/SCHEDULER.md)). No deploy/restart between 22:15 and 05:15 or while any job has `is_running: true` (a restart kills runs; they are marked stale on the next start). **Seal window (from 039 on):** also no deploy/restart between 14:55 and 15:35 Berlin time (13:55–14:35 in the weeks of the clock change): `forecast_seal` runs 09:00/09:15/09:25 New York, and a forecast file without a seal is late for good. No manual writes to `feature_snapshots` during the chain (04:30–05:00, deadlock risk).
 - **Expected states:** weekend/holiday → `nightly_chain` `skipped` ("no new session"); IEX fallback or stale non-critical chain inputs → `partial`; critical input (prices stale, or < 80 % price coverage of the session vs. the max of the last 5 sessions) → chain `failed`, features + context pack skipped, notes carry the repair hint; earlier sessions with missing snapshots are rebuilt automatically by the next chain runs once their prices are complete (`catch-up: <date>=success|pending|failed`, runs on already processed targets are `catch-up only`); `row_count = -1` in `table_stats` is a bug sentinel. After a deploy hard-reload the browser (Ctrl+F5) before debugging the UI.
@@ -202,7 +202,7 @@ Full catalog: [docs/INDEX.md](docs/INDEX.md).
 
 ### Unraid WebGUI scope
 
-In the WebGUI only the container `alpaca-broker`, its folders (`/mnt/user/appdata/alpaca-broker`, `/mnt/user/Workfiles/AlpacaBroker`) and its own User Scripts may be touched. **Never** other containers (GynOrg! – this includes the PostgreSQL container), and never array, shares, users, network or security settings. Sebastian logs in himself; Claude never types credentials.
+In the WebGUI only the container `alpaca-broker`, its folders (`/mnt/user/appdata/alpaca-broker`, `/mnt/user/Workfiles/AlpacaBroker`) and its own User Scripts may be touched, plus – approved by Sebastian on 2026-10-18 – the one VM `forecast-vm` (create/configure/start/stop it in the VMS tab; Ubuntu Server for the headless forecast runs, `infra/forecast-vm/`). Never other VMs. Inside a VM Claude never creates users, enters passwords or logs in – Sebastian does the OS installation's user setup and the Claude CLI login. **Never** other containers (GynOrg! – this includes the PostgreSQL container), and never array, shares, users, network or security settings. Sebastian logs in himself; Claude never types credentials.
 
 ### Responsibility
 

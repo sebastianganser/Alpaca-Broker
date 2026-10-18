@@ -68,6 +68,22 @@ class TestRetentionStatements:
         sentiment = _sql(stmts["news_sentiment"])
         assert "article_id IN" in sentiment and "published_at <" in sentiment
 
+    def test_sec_tables_are_purged_by_the_date_they_became_public(self):
+        stmts = dict(jobs.retention_statements(date(2021, 7, 1)))
+        labels = list(stmts)
+        # text excerpts first (child of the filing), then the filings
+        assert labels.index("sec_filing_texts") < labels.index("sec_filings")
+        texts = _sql(stmts["sec_filing_texts"])
+        assert texts.startswith("DELETE FROM signals.sec_filing_texts")
+        assert "IN (SELECT signals.sec_filings.accession_number" in texts
+        assert "signals.sec_filings.filing_date <" in texts
+        filings = _sql(stmts["sec_filings"])
+        assert filings.startswith("DELETE FROM signals.sec_filings WHERE")
+        assert "filing_date <" in filings
+        financials = _sql(stmts["financials_quarterly"])
+        assert financials.startswith("DELETE FROM signals.financials_quarterly WHERE")
+        assert "period_end <" in financials
+
     def test_bulk_delete_without_session_sync(self):
         for _, stmt in jobs.retention_statements(date(2021, 7, 1)):
             assert stmt.get_execution_options()["synchronize_session"] is False

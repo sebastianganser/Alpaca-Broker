@@ -23,6 +23,7 @@ from trading_signals.derived.context_pack.sections.fundamentals import (
 )
 from trading_signals.derived.context_pack.sections.head import render_head
 from trading_signals.derived.context_pack.sections.news import render_news
+from trading_signals.derived.context_pack.sections.peers import render_peers
 from trading_signals.derived.context_pack.sections.price import (
     render_liquidity,
     render_sector,
@@ -35,7 +36,9 @@ from trading_signals.derived.context_pack.sections.quality import (
 
 Section = Callable[[TickerContext], list[str]]
 
-#: Order = section numbers 1 ... 13 (the headings carry the numbers).
+#: Order = section numbers 1 ... 14 (the headings carry the numbers). The peer
+#: section was added last (additive change of pack format 2): sections 1-13
+#: keep their numbers.
 SECTIONS: tuple[Section, ...] = (
     render_head,
     render_trend,
@@ -50,6 +53,7 @@ SECTIONS: tuple[Section, ...] = (
     render_liquidity,
     render_quality,
     render_regime,
+    render_peers,
 )
 
 __all__ = ["SECTIONS", "Section"]

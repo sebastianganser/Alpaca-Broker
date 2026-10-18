@@ -6,6 +6,7 @@ from trading_signals.derived.context_pack.constants import RETURN_HORIZONS
 from trading_signals.derived.context_pack.fmt import (
     NA,
     age_text,
+    day,
     md_table,
     money,
     num,
@@ -66,9 +67,62 @@ def render_trend(ctx: TickerContext) -> list[str]:
             ]
         ),
         f"- MACD: {macd}",
+        *_range_and_levels(ctx),
         "",
     ]
     return lines
+
+
+def _range_and_levels(ctx: TickerContext) -> list[str]:
+    """52-week range, support / resistance levels and the chart reference."""
+    price = ctx.price
+    rng = price.range52 if price else None
+    if rng is None:
+        lines = [
+            f"- 52-Wochen-Spanne: {NA} "
+            "(zu wenig Kurshistorie oder kein Kurs am Pack-Tag)"
+        ]
+    else:
+        pos = rng.position
+        lines = [
+            f"- 52-Wochen-Spanne: Tief {num(rng.low)} "
+            f"({day(rng.low_date)}) – Hoch {num(rng.high)} ({day(rng.high_date)}); "
+            f"Abstand zum Tief {signed_percent(rng.dist_to_low)}, zum Hoch "
+            f"{signed_percent(rng.dist_to_high)}; Position "
+            f"{'n/a (flache Spanne)' if pos is None else percent(pos, 0)} "
+            "(0 % = Tief, 100 % = Hoch)"
+        ]
+    if price is None:
+        lines.append(f"- Unterstützung / Widerstand: {NA}")
+    else:
+        lines.append(
+            "- Unterstützung (252 Sitzungen; Preis, Abstand, Berührungen = "
+            "Swing-Punkte im selben Preisband, letzte Berührung): "
+            + _levels_text(price.supports, "keine bestätigte Ebene unter dem Kurs")
+        )
+        lines.append(
+            "- Widerstand (über dem Kurs): "
+            + _levels_text(price.resistances, "keine bestätigte Ebene über dem Kurs")
+        )
+    if ctx.chart_file:
+        lines += [
+            "",
+            f"![Chart {ctx.ticker}]({ctx.chart_file})",
+            "",
+            f"Chart `{ctx.chart_file}` im selben Ordner: Tageskerzen eines Jahres, "
+            "SMA50 / SMA200, 52-Wochen-Spanne, S / R, Volumen.",
+        ]
+    return lines
+
+
+def _levels_text(levels, empty: str) -> str:
+    if not levels:
+        return empty
+    return " · ".join(
+        f"{lv.price:.2f} ({signed_percent(lv.distance)}, {lv.touches}×, "
+        f"zuletzt {day(lv.last_touch)})"
+        for lv in levels
+    )
 
 
 def render_sector(ctx: TickerContext) -> list[str]:

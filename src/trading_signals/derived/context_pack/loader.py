@@ -32,6 +32,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session
 
 from trading_signals.derived.context_pack.constants import (
+    BARS_LOOKBACK_DAYS,
+    EARNINGS_LOOKBACK_DAYS,
     HEADLINE_WINDOW_DAYS,
     HOLDER_ROWS,
     INSIDER_WINDOW_DAYS,
@@ -46,6 +48,7 @@ from trading_signals.derived.context_pack.pit import (
 )
 from trading_signals.derived.context_pack.rows import (
     ArkRow,
+    BarRow,
     EarningsRow,
     EstimateRow,
     HeadlineRow,
@@ -68,6 +71,13 @@ from trading_signals.derived.feature_pipeline import (
 )
 from trading_signals.derived.short_interest_features import publication_cutoff
 from trading_signals.utils.logging import get_logger
+from trading_signals.utils.price_targets import (
+    KEY_ACTION,
+    KEY_NEW,
+    KEY_OLD,
+    parse_price_target,
+    parse_target_action,
+)
 
 logger = get_logger(__name__)
 
@@ -77,7 +87,6 @@ HEADLINE_FETCH_PER_TICKER = 15
 IV_LOOKBACK_DAYS = 370
 ARK_LOOKBACK_DAYS = 30
 SHORT_INTEREST_LOOKBACK_DAYS = 85
-EARNINGS_LOOKBACK_DAYS = 500
 
 
 class PackLoader(Protocol):
@@ -104,6 +113,12 @@ class PackLoader(Protocol):
 
 def _f(x: Any) -> float | None:
     return None if x is None else float(x)
+
+
+def _first_target(column: Any, raw_text: Any) -> float | None:
+    """A price target: the column if it holds one, else the ``raw_data`` text."""
+    value = parse_price_target(column)
+    return value if value is not None else parse_price_target(raw_text)
 
 
 def _frame(rows: Iterable[Any], columns: Sequence[str], table) -> pd.DataFrame:
@@ -227,6 +242,7 @@ class SqlPackLoader:
             self._technical,
             self._memberships,
             self._holders,
+            self._bars,
             self._stats,
         ):
             loader(d, tickers, raw)
@@ -250,6 +266,7 @@ class SqlPackLoader:
                 T.shares,
                 T.price_per_share,
                 T.total_value,
+                T.shares_owned_after,
             )
             .where(T.ticker.in_(tickers))
             .where(T.transaction_type.in_(("P", "S")))
@@ -277,6 +294,7 @@ class SqlPackLoader:
                     shares=_f(r[7]),
                     price=_f(r[8]),
                     value=_f(r[9]),
+                    shares_owned_after=_f(r[10]),
                 )
             )
 
@@ -293,6 +311,12 @@ class SqlPackLoader:
                 R.rating_new,
                 R.price_target_old,
                 R.price_target_new,
+                # Yahoo's own fields, stored as text in raw_data: the columns of
+                # older rows are still NULL (scripts/repair/
+                # backfill_analyst_price_targets.py fills them)
+                R.raw_data[KEY_OLD].astext,
+                R.raw_data[KEY_NEW].astext,
+                R.raw_data[KEY_ACTION].astext,
             )
             .where(R.ticker.in_(tickers))
             .where(R.rating_date <= d)
@@ -307,8 +331,10 @@ class SqlPackLoader:
                     action=r[3],
                     rating_old=r[4],
                     rating_new=r[5],
-                    target_old=_f(r[6]),
-                    target_new=_f(r[7]),
+                    # the column wins, raw_data is the fallback
+                    target_old=_first_target(r[6], r[8]),
+                    target_new=_first_target(r[7], r[9]),
+                    target_action=parse_target_action(r[10]),
                 )
             )
 
@@ -444,6 +470,14 @@ class SqlPackLoader:
                 E.rev_down_30d,
                 E.revenue_avg,
                 E.revenue_growth,
+                E.eps_low,
+                E.eps_high,
+                E.eps_year_ago,
+                E.eps_growth,
+                E.revenue_low,
+                E.revenue_high,
+                E.revenue_n_analysts,
+                E.revenue_year_ago,
             )
             .where(E.ticker.in_(tickers))
             .where(E.as_of <= d)
@@ -467,6 +501,14 @@ class SqlPackLoader:
                     rev_down_30d=r[12],
                     revenue_avg=_f(r[13]),
                     revenue_growth=_f(r[14]),
+                    eps_low=_f(r[15]),
+                    eps_high=_f(r[16]),
+                    eps_year_ago=_f(r[17]),
+                    eps_growth=_f(r[18]),
+                    revenue_low=_f(r[19]),
+                    revenue_high=_f(r[20]),
+                    revenue_n_analysts=r[21],
+                    revenue_year_ago=_f(r[22]),
                 )
             )
 
@@ -630,6 +672,16 @@ class SqlPackLoader:
                 previous[ticker] = items[1]
         if not latest:
             return
+        # the "N" of "x of N tracked funds": every filer that filed for the period
+        tracked = {
+            r[0]: int(r[1])
+            for r in self.session.execute(
+                select(H.report_period, func.count(func.distinct(H.filer_cik)))
+                .where(visible)
+                .where(H.report_period >= floor)
+                .group_by(H.report_period)
+            ).all()
+        }
 
         grouped = (
             select(
@@ -700,6 +752,33 @@ class SqlPackLoader:
                 prev_n_filers=int(prev[1]) if prev else None,
                 prev_shares_total=_f(prev[2]) if prev else None,
                 top=top,
+                n_tracked=tracked.get(period),
+                prev_n_tracked=tracked.get(prev[0]) if prev else None,
+            )
+
+    def _bars(self, d: date, tickers: list[str], raw: RawSources) -> None:
+        """Real daily bars up to ``d`` (chart, ranges, volatility, reactions)."""
+        from trading_signals.db.models.prices import PriceDaily as P
+
+        rows = self.session.execute(
+            select(P.ticker, P.trade_date, P.open, P.high, P.low, P.close, P.volume)
+            .where(P.ticker.in_(tickers))
+            .where(P.trade_date <= d)
+            .where(P.trade_date >= d - timedelta(days=BARS_LOOKBACK_DAYS))
+            .where(P.is_extrapolated.is_not(True))
+            .where(P.close.is_not(None))
+            .order_by(P.ticker, P.trade_date)
+        ).all()
+        for r in rows:
+            raw.get(r[0]).bars.append(
+                BarRow(
+                    trade_date=r[1],
+                    open=_f(r[2]),
+                    high=_f(r[3]),
+                    low=_f(r[4]),
+                    close=_f(r[5]),
+                    volume=_f(r[6]),
+                )
             )
 
     def _stats(self, d: date, tickers: list[str], raw: RawSources) -> None:

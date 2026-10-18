@@ -36,15 +36,26 @@ SNAPSHOT_MAX_AGE_DAYS = 14
 # ── Row limits of the raw-table sections ─────────────────────────────
 
 INSIDER_WINDOW_DAYS = 180
-INSIDER_ROWS = 6
+INSIDER_ROWS = 4
 RATING_WINDOW_DAYS = 180
-RATING_ROWS = 5
+RATING_ROWS = 4
 POLITICIAN_WINDOW_DAYS = 180
-POLITICIAN_ROWS = 4
+POLITICIAN_ROWS = 3
 HEADLINE_WINDOW_DAYS = 30
-HEADLINE_ROWS = 5
-HOLDER_ROWS = 5
-EARNINGS_PAST_ROWS = 4
+HEADLINE_ROWS = 4
+HOLDER_ROWS = 4
+#: Reported quarters shown in the earnings table (with their price reaction).
+EARNINGS_PAST_ROWS = 8
+#: Calendar days of earnings history loaded (8 quarters + margin).
+EARNINGS_LOOKBACK_DAYS = 800
 SHORT_INTEREST_ROWS = 3
 #: An options IV rank needs a year of daily snapshots.
 IV_RANK_MIN_OBS = 252
+
+# ── Price bars, chart and peers ──────────────────────────────────────
+
+#: Calendar days of daily bars loaded per ticker: the 252-session chart plus
+#: the SMA200 warm-up, and the 8 earnings quarters with the session before.
+BARS_LOOKBACK_DAYS = 840
+#: Peers shown in the peer section (``derived/context_pack/peers.py``).
+PEER_ROWS = 4

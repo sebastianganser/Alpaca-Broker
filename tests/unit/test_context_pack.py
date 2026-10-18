@@ -17,7 +17,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from tests.unit.pack_data import SESSION, FakeLoader, make_loader
+from tests.unit.pack_data import SESSION, FakeLoader, make_loader, stub_chart
 from trading_signals.analysis.forecast_review import gate_flags
 from trading_signals.analysis.screen import (
     DEFAULT_CONFIG,
@@ -54,7 +54,15 @@ BUCKET_WORDS = (
     "composite",
     "screen/v1",
 )
-MAX_TICKER_FILE_BYTES = 12_000
+MAX_TICKER_FILE_BYTES = 13_800
+
+
+@pytest.fixture(autouse=True)
+def fast_charts(monkeypatch):
+    """Tiny stand-in charts: the real renderer costs about 0.3 s per ticker."""
+    monkeypatch.setattr(
+        "trading_signals.derived.context_pack.generator.render_chart_png", stub_chart
+    )
 
 
 def run(tmp_path, loader=None, requested=None, session=None):

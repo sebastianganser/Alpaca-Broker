@@ -8,6 +8,7 @@ Nightly timeline (US close = 22:00 CET, 21:00 during DST-mismatch weeks)::
     00:15 short_interest_collector (~2.5 h, FINRA data ready ~00:00)
     00:30 sentiment_computer         01:00 analyst_ratings_collector
     01:30 estimates_collector        03:30 log_retention
+    04:00 sec_filings_collector (22:00 ET = EDGAR cut-off of the US day)
     04:15 fred_collector
     04:30 nightly_chain: TA catch-up → feature_pipeline → target_backfill
                          → forecast_review → context_pack
@@ -105,6 +106,14 @@ JOB_DEFINITIONS: list[tuple[str, object, dict, str]] = [
         {"hour": 3, "minute": 30},
         "Daily Log Retention (90 days)",
     ),
+    # EDGAR accepts same-day 8-Ks until 22:00 ET = 04:00 Berlin: this run sees
+    # the complete US day (after-close earnings releases) before the chain.
+    (
+        "sec_filings_collector",
+        jobs.run_sec_filings_collector,
+        {"hour": 4, "minute": 0},
+        "Daily SEC Filings (8-K, 10-Q/K, 144, 13D/G, S-1/S-3, DEF 14A + 8-K texts)",
+    ),
     # FRED updates ~22:00 ET = 04:00 CET. 6 series, ~2s total.
     (
         "fred_collector",
@@ -173,6 +182,12 @@ JOB_DEFINITIONS: list[tuple[str, object, dict, str]] = [
         jobs.run_universe_validation,
         {"day_of_week": "sun", "hour": 13, "minute": 0},
         "Weekly Universe Validation (Alpaca assets: delisted/renamed tickers)",
+    ),
+    (
+        "sec_financials_collector",
+        jobs.run_sec_financials_collector,
+        {"day_of_week": "sun", "hour": 14, "minute": 0},
+        "Weekly SEC XBRL Quarterly Financials (companyfacts)",
     ),
     # ── Monthly (1st) ──
     (

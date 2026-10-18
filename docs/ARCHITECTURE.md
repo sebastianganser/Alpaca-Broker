@@ -172,6 +172,8 @@ trading_signals/
 │   ├── sec_client.py       # SEC EDGAR client (rate limit, CIK mapping)
 │   ├── form4_collector.py  # Insider trades (Form 4)
 │   ├── form13f_collector.py# Institutional holdings (13F-HR, top filers)
+│   ├── sec_filings_collector.py # SEC filings (8-K + items, 10-Q/K, 144, 13D/G, S-1/S-3, DEF 14A) + press release / 8-K excerpts (EDGAR submissions API, daily 04:00)
+│   ├── sec_financials_collector.py / sec_xbrl.py # XBRL quarterly financials (companyfacts API, weekly Sunday) / pure companyfacts parser
 │   ├── cusip_resolver.py   # CUSIP → ticker (cusip_map cache, local tables, OpenFIGI)
 │   ├── disclosure_client.py / politician_trades_collector.py  # Senate eFD PTRs
 │   ├── yfinance_client.py  # Shared yfinance client (rate limit, batching, backoff)

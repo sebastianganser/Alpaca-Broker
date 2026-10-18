@@ -16,6 +16,8 @@ A pack for session ``d`` may only show what was public at the close of ``d``
   ``d`` (publication lag, ``short_interest_features.publication_cutoff``);
 * snapshot-type sources (estimates, IV, fundamentals, ARK): ``as_of`` /
   ``snapshot_date <= d``.
+* real daily price bars (chart, ranges, volatility, earnings reactions):
+  ``trade_date <= d``.
 
 The loader (``loader.py``) fetches a superset with coarse SQL bounds; this
 module is the single, unit-tested place where the exact rule is applied
@@ -136,6 +138,7 @@ def apply_pit(raw: TickerRaw, d: date) -> TickerRaw:
             if m.valid_from <= d and (m.valid_to is None or m.valid_to > d)
         ],
         holders=holders,
+        bars=[b for b in raw.bars if b.trade_date <= d],
         stats={k: v for k, v in raw.stats.items() if _stat_visible(v, d)},
     )
 

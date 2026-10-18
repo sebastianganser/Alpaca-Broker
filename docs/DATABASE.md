@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** October 2026 (migrations 001–039; 039 is applied with the next deploy)
+**Last updated:** 18 October 2026 (migrations 001–040; 040 is applied with the next deploy)
 
 ---
 
@@ -22,7 +22,7 @@ SET search_path TO signals, public;
 
 - The ORM (`src/trading_signals/db/base.py`) sets `MetaData(schema="signals")` with a naming convention (`ix_…`, `uq_…`, `ck_<table>_<name>`, `fk_…`, `pk_<table>`). Constraint names created by hand-written migrations are listed explicitly below.
 - `BIGSERIAL` below = `BigInteger` primary key with `autoincrement=True` in the migration.
-- `TIMESTAMP` = `timestamp without time zone`; `TIMESTAMPTZ` = `timestamp with time zone`. The `TIMESTAMPTZ` columns of `collection_log`, `news_articles`, `news_sentiment`, `ticker_blacklist` and the forecast tables (`forecast_reviews`, `forecasts`, `pack_candidates`, `forecast_criterion_samples`, migration 039) are mapped with the ORM type `TZDateTime`: naive datetimes written by the app are interpreted as Europe/Berlin wall clock, values are read back as naive Europe/Berlin wall clock (migration 031). `insider_trades.acceptance_datetime`, `cusip_map.resolved_at` and `forecast_file_seals.sealed_at` use plain `DateTime(timezone=True)` (aware values; the seal is compared with the 09:30 New York open without any wall-clock conversion).
+- `TIMESTAMP` = `timestamp without time zone`; `TIMESTAMPTZ` = `timestamp with time zone`. The `TIMESTAMPTZ` columns of `collection_log`, `news_articles`, `news_sentiment`, `ticker_blacklist` and the forecast tables (`forecast_reviews`, `forecasts`, `pack_candidates`, `forecast_criterion_samples`, migration 039) are mapped with the ORM type `TZDateTime`: naive datetimes written by the app are interpreted as Europe/Berlin wall clock, values are read back as naive Europe/Berlin wall clock (migration 031). `insider_trades.acceptance_datetime`, `cusip_map.resolved_at`, `forecast_file_seals.sealed_at` and all `TIMESTAMPTZ` columns of the SEC tables (`sec_filings`, `sec_filing_texts`, `financials_quarterly`, migration 040) use plain `DateTime(timezone=True)` (aware values; the seal is compared with the 09:30 New York open without any wall-clock conversion).
 
 ---
 
@@ -264,6 +264,19 @@ CREATE TABLE signals.fundamentals_snapshot (
   target_price_median NUMERIC(16,4),
   target_price_high   NUMERIC(16,4),
   most_recent_quarter DATE,              -- fiscal quarter end of the TTM figures (migration 029)
+  -- Further fields of the same yfinance info call (migration 040); ratios are decimal fractions
+  shares_outstanding NUMERIC(20,2),
+  float_shares    NUMERIC(20,2),
+  held_percent_institutions NUMERIC(10,6),  -- Yahoo values > 1 (100 %) occur
+  held_percent_insiders NUMERIC(10,6),
+  short_percent_of_float NUMERIC(10,6),
+  free_cashflow   NUMERIC(24,2),         -- amounts in the listing currency (ADRs: local currency)
+  total_cash      NUMERIC(24,2),
+  total_debt      NUMERIC(24,2),
+  gross_margins   NUMERIC(10,6),
+  recommendation_mean NUMERIC(6,3),      -- 1 = strong buy ... 5 = sell
+  recommendation_key VARCHAR(20),        -- 'buy', 'hold', ...; NULL = no analyst coverage (Yahoo's literal 'none')
+  number_of_analyst_opinions SMALLINT,
   fetched_at      TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (ticker, snapshot_date)
 );
@@ -358,6 +371,89 @@ CREATE TABLE signals.estimates_snapshot (
 
 CREATE INDEX idx_estimates_ticker ON signals.estimates_snapshot(ticker);
 CREATE INDEX idx_estimates_as_of ON signals.estimates_snapshot(as_of);
+```
+
+### `signals.sec_filings` (Migration 040)
+SEC EDGAR filings of the universe companies (metadata only), one row per accession number. Written by the daily `sec_filings_collector` (`collectors/sec_filings_collector.py`, collector name `sec_filings`; EDGAR submissions API, one request per CIK, share classes once); details and the form whitelist: [DATA_SOURCES.md](DATA_SOURCES.md) §13. Insider forms 3/4/5 and 13F stay in their own tables.
+
+**Point-in-time:** a filing is public from `acceptance_datetime` (the true instant EDGAR accepted it, UTC; `NULL` → from the end of `filing_date`). The submissions JSON labels a value `Z` that is really Eastern wall clock + 8 h (summer) / + 10 h (winter); `acceptance_datetime` is the corrected instant (`collectors/sec_client.submission_acceptance_utc`), `acceptance_raw` keeps the exact string so the reading can be revised without a new download. `filing_date` is EDGAR's filing date (accepted after 17:30 ET → next business day; 8-K and Section-16 filings until 22:00 ET count for the same day).
+
+**Share classes:** `ticker` is the first (alphabetical) active ticker of the CIK, `tickers` lists all of them (`'GOOGL' = ANY(tickers)` finds Alphabet's filings, which are stored once under `GOOG`).
+
+```sql
+CREATE TABLE signals.sec_filings (
+  id                   BIGSERIAL PRIMARY KEY,
+  cik                  VARCHAR(10) NOT NULL,        -- 10 digits, zero padded
+  ticker               VARCHAR(20) NOT NULL,
+  tickers              VARCHAR(20)[] NOT NULL,
+  accession_number     VARCHAR(25) NOT NULL,        -- 0000320193-26-000018
+  form                 VARCHAR(20) NOT NULL,        -- '8-K', '8-K/A', '10-Q', '144', 'SCHEDULE 13G/A', ...
+  filing_date          DATE NOT NULL,
+  acceptance_datetime  TIMESTAMPTZ,                 -- true acceptance instant (UTC)
+  acceptance_raw       VARCHAR(32),                 -- submissions JSON string, e.g. 2026-07-31T00:30:28.000Z
+  report_date          DATE,
+  items                TEXT[],                      -- 8-K item codes {2.02,9.01}; NULL for other forms
+  primary_document     VARCHAR(255),
+  url                  TEXT,
+  is_amendment         BOOLEAN NOT NULL,            -- form ends with /A
+  texts_fetched_at     TIMESTAMPTZ,                 -- text step finished (rows in sec_filing_texts or none to fetch); NULL = not yet / failed, retried within the 14-day lookback
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_sec_filings_accession_number UNIQUE (accession_number)
+);
+
+CREATE INDEX ix_sec_filings_ticker_filing_date ON signals.sec_filings(ticker, filing_date);
+CREATE INDEX ix_sec_filings_filing_date ON signals.sec_filings(filing_date);
+CREATE INDEX ix_sec_filings_cik_filing_date ON signals.sec_filings(cik, filing_date);
+```
+
+### `signals.sec_filing_texts` (Migration 040)
+Cleaned plain-text excerpt (first ≈ 3,000 characters, no HTML) of the press release (`EX-99.x`) of an 8-K with item 2.02 / 7.01 / 8.01, or of the body of an 8-K with a material event item (`exhibit = '8-K'`, cover page cut off). Child of `sec_filings`; deleted with its filing (`ON DELETE CASCADE`, and explicitly first by `data_retention`).
+
+```sql
+CREATE TABLE signals.sec_filing_texts (
+  accession_number VARCHAR(25) NOT NULL
+      REFERENCES signals.sec_filings(accession_number) ON DELETE CASCADE,
+  exhibit          VARCHAR(20) NOT NULL,            -- 'EX-99.1', 'EX-99', '8-K' (report body)
+  filename         VARCHAR(255),
+  excerpt          TEXT NOT NULL,
+  full_length      INTEGER,                         -- characters of the cleaned text before the cut
+  fetched_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (accession_number, exhibit)
+);
+```
+
+### `signals.financials_quarterly` (Migration 040)
+Standardised quarterly financials per ticker from the SEC XBRL `companyfacts` API. Written by the weekly `sec_financials_collector` (`collectors/sec_financials_collector.py` + `collectors/sec_xbrl.py`, collector name `sec_financials`; [DATA_SOURCES.md](DATA_SOURCES.md) §14), upsert on `(ticker, period_end)`; tickers that share a CIK get identical rows. Only quarters ending on or after `data_start_date()`.
+
+**Point-in-time:** values are **as first reported**; `filed` is the date the row's income-statement and cash-flow figures became public - use rows with `filed <= d`. Balance-sheet figures (`cash_and_equivalents`, `total_debt`, `shares_outstanding`) that were first reported in a later filing than the quarter's main filing are `NULL`. `NULL` = not reported / not derivable (banks have no gross profit, operating income or capex), never 0. Q4 = fiscal year − 9 months; cash-flow quarters are differences of year-to-date values; `raw_tags` names the us-gaap tag of every figure (`{"tags": {...}, "derived": [...]}`; `derived` lists figures obtained by subtraction or calculation - EPS of derived quarters is an approximation). USD only (IFRS filers have no rows). A company that re-incorporated under a new CIK (e.g. ExxonMobil Holdings, 2026) only has the quarters its new registrant filed.
+
+```sql
+CREATE TABLE signals.financials_quarterly (
+  ticker                VARCHAR(20) NOT NULL,
+  period_end            DATE NOT NULL,              -- fiscal quarter end
+  cik                   VARCHAR(10) NOT NULL,
+  fiscal_year           SMALLINT,                   -- the company's own labelling
+  fiscal_period         VARCHAR(2),                 -- 'Q1'..'Q4'
+  form                  VARCHAR(12),                -- '10-Q' | '10-K'
+  filed                 DATE NOT NULL,              -- point-in-time key
+  accession_number      VARCHAR(25),                -- filing that completed the row
+  revenue               NUMERIC(24,2),
+  gross_profit          NUMERIC(24,2),              -- falls back to revenue - cost of revenue (raw_tags.derived)
+  operating_income      NUMERIC(24,2),
+  net_income            NUMERIC(24,2),              -- attributable to the company's shareholders
+  eps_diluted           NUMERIC(14,4),
+  operating_cash_flow   NUMERIC(24,2),
+  capex                 NUMERIC(24,2),              -- payments for property, plant and equipment (positive)
+  free_cash_flow        NUMERIC(24,2),              -- operating_cash_flow - abs(capex)
+  cash_and_equivalents  NUMERIC(24,2),
+  total_debt            NUMERIC(24,2),              -- long-term debt incl. current portion (+ commercial paper / short-term borrowings)
+  shares_outstanding    NUMERIC(24,2),
+  raw_tags              JSONB,
+  fetched_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (ticker, period_end)
+);
+
+CREATE INDEX ix_financials_quarterly_period_end ON signals.financials_quarterly(period_end);
 ```
 
 ### `signals.index_membership`
@@ -968,6 +1064,9 @@ Decision 2026-10-05: the system keeps exactly the last **20 calendar quarters** 
 | `short_interest` | `settlement_date` |
 | `macro_series` | `obs_date` |
 | `analysis_reports` | `report_date` |
+| `sec_filing_texts` | via its filing: `accession_number IN (SELECT accession_number FROM sec_filings WHERE filing_date < cutoff)` (runs before `sec_filings`; the FK also cascades) |
+| `sec_filings` | `filing_date` |
+| `financials_quarterly` | `period_end` |
 
 **Not covered by `data_retention`:**
 
@@ -984,7 +1083,7 @@ Decision 2026-10-05: the system keeps exactly the last **20 calendar quarters** 
 
 ## Migrations
 
-Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–038 (linear chain, head = 038; production at 037 since 2026-10-17 19:03, 038 pending deploy).
+Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–040 (linear chain, head = 040; production at 039 since 2026-10-18, 040 pending deploy).
 
 | Migration | Description |
 |---|---|
@@ -1027,6 +1126,7 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 | 037 | Trailing-stop trade label on `feature_snapshots`: `return_trail_60d` (NUMERIC(10,6)), `trail_exit_day` (SMALLINT), `trail_stopped` (BOOLEAN); `ADD COLUMN IF NOT EXISTS`, history via `target_backfill` (nightly chain or `features_rebuild.py --skip-ta --skip-clusters --skip-features`) |
 | 038 | Drops the 037 trailing-stop label columns again (`DROP COLUMN IF EXISTS` `return_trail_60d`, `trail_exit_day`, `trail_stopped`) – scope decision 2026-10-17: Alpaca-Broker forecasts, a separate bot trades; the downgrade re-adds the columns exactly as 037 defined them. 037 itself is unchanged. The model target of the monthly analysis is the strategy-neutral `return_60d` |
 | 039 | Forecast pipeline: tables `forecast_reviews`, `forecasts`, `pack_candidates`, `forecast_criterion_samples`, `forecast_file_seals` (see "Forecast tables"); drops the empty stage-2 tables of 035 (`DROP TABLE IF EXISTS stage2_decisions`, `stage2_reviews`; the downgrade drops the new tables and recreates the stage-2 tables exactly as 035). Applied with the deploy after 2026-10-18 (039 was extended with `forecast_file_seals` before its first deploy). Tested on a fresh `postgres:18`: `upgrade head`, `alembic check` (clean), `downgrade 038` (stage-2 DDL identical to 035), `upgrade head` again |
+| 040 | SEC feeds (docs/DATA_SOURCES.md §13/§14): tables `sec_filings` (unique `uq_sec_filings_accession_number`, 3 indexes), `sec_filing_texts` (FK → `sec_filings(accession_number)` `ON DELETE CASCADE`, PK `(accession_number, exhibit)`), `financials_quarterly` (PK `(ticker, period_end)`, `raw_tags` JSONB) and 12 nullable `fundamentals_snapshot` columns (`shares_outstanding`, `float_shares`, `held_percent_institutions`, `held_percent_insiders`, `short_percent_of_float`, `free_cashflow`, `total_cash`, `total_debt`, `gross_margins`, `recommendation_mean`, `recommendation_key`, `number_of_analyst_opinions`) from the same yfinance `info` call; the downgrade drops them again. **Pending deploy.** Tested on a fresh `postgres:18`: `upgrade head`, `alembic check` (clean), `downgrade 039`, `upgrade head` again, plus an end-to-end run of both collectors, the retention job and the dashboard statistics against that throwaway database |
 
 > [!NOTE]
 > Migration 024 was extended after production had applied it (commit `81446a4` added `sector_relative_return_20d` / `sector_relative_momentum`), so 025 (`32168a0`) created the two columns in production. On an empty database both added them and `alembic upgrade head` failed at 025. **Fixed 2026-10-16:** 025 uses `ADD COLUMN IF NOT EXISTS` and its downgrade is a no-op (024's downgrade drops the columns). Verified on a throwaway `postgres:18`: fresh `upgrade head` → 035, round trip `025 → 023 → head`, and the production history (old 024 without the columns → 025 creates them). No effect on databases already at 025 or later.

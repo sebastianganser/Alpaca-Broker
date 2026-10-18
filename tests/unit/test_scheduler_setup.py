@@ -30,6 +30,8 @@ class TestCreateScheduler:
             "short_interest_positions_collector",
             "universe_validation",
             "options_iv_collector",
+            "sec_filings_collector",
+            "sec_financials_collector",
             *CHAIN_STEP_JOB_IDS,
             *CATCHUP_JOBS,
         ):
@@ -43,6 +45,8 @@ class TestCreateScheduler:
             "options_iv_collector": ("23", "15"),
             "short_interest_collector": ("0", "15"),
             "fred_collector": ("4", "15"),
+            "sec_filings_collector": ("4", "0"),
+            "sec_financials_collector": ("14", "0"),
             "nightly_chain": ("4", "30"),
         }
         for jid, hm in expected.items():
@@ -51,8 +55,61 @@ class TestCreateScheduler:
         assert (fa["day"], fa["hour"], fa["minute"]) == ("1", "7", "0")
 
     def test_job_count(self):
-        assert len(JOB_DEFINITIONS) == 27
-        assert len(create_scheduler().get_jobs()) == 27
+        assert len(JOB_DEFINITIONS) == 29
+        assert len(create_scheduler().get_jobs()) == 29
+
+    def test_sec_filings_runs_daily_at_the_edgar_cutoff_before_the_chain(self):
+        sched = create_scheduler()
+        job = sched.get_job("sec_filings_collector")
+        f = {x.name: str(x) for x in job.trigger.fields}
+        # daily, 04:00 Berlin = 22:00 ET: EDGAR's cut-off for same-day 8-Ks
+        assert (f["day_of_week"], f["hour"], f["minute"]) == ("*", "4", "0")
+        assert str(job.trigger.timezone) == "Europe/Berlin"
+        # after the night collectors (22:30-03:00 load), before FRED and the chain
+        assert _hm(sched.get_job("estimates_collector")) == ("1", "30")
+        assert _hm(sched.get_job("log_retention")) == ("3", "30")
+        assert _hm(sched.get_job("fred_collector")) == ("4", "15")
+        assert _hm(sched.get_job("nightly_chain")) == ("4", "30")
+        # a regular scheduled job, not a paused chain step, not a chain input yet
+        assert "sec_filings_collector" not in CHAIN_STEP_JOB_IDS
+        assert "sec_filings" not in NIGHTLY_UPSTREAM
+        assert "sec_filings_collector" not in CATCHUP_JOBS
+        assert JOB_COLLECTOR_NAMES["sec_filings_collector"] == "sec_filings"
+
+    def test_sec_financials_runs_weekly_on_sunday_afternoon(self):
+        sched = create_scheduler()
+        job = sched.get_job("sec_financials_collector")
+        f = {x.name: str(x) for x in job.trigger.fields}
+        assert (f["day_of_week"], f["hour"], f["minute"]) == ("sun", "14", "0")
+        assert str(job.trigger.timezone) == "Europe/Berlin"
+        # after the other Sunday collectors (universe validation at 13:00)
+        assert _hm(sched.get_job("universe_validation")) == ("13", "0")
+        assert "sec_financials_collector" not in CHAIN_STEP_JOB_IDS
+        assert "sec_financials" not in NIGHTLY_UPSTREAM
+        assert JOB_COLLECTOR_NAMES["sec_financials_collector"] == "sec_financials"
+
+    def test_sec_jobs_stay_clear_of_the_seal_and_the_collector_night(self):
+        # 22:30-03:00 Berlin collector load, 09:00-09:25 New York seal runs
+        # (15:00-15:25 Berlin, one hour earlier in the weeks of the clock change)
+        sched = create_scheduler()
+        for job_id, (hour, minute) in {
+            "sec_filings_collector": (4, 0),
+            "sec_financials_collector": (14, 0),
+        }.items():
+            minutes = hour * 60 + minute
+            assert not (22 * 60 + 30 <= minutes or minutes <= 3 * 60), job_id
+            assert not (14 * 60 + 55 <= minutes <= 15 * 60 + 35), job_id
+            assert sched.get_job(job_id) is not None
+
+    def test_sec_job_functions_are_wired(self):
+        from trading_signals.scheduler import jobs
+
+        definitions = {d[0]: d for d in JOB_DEFINITIONS}
+        assert definitions["sec_filings_collector"][1] is jobs.run_sec_filings_collector
+        assert (
+            definitions["sec_financials_collector"][1]
+            is jobs.run_sec_financials_collector
+        )
 
     def test_forecast_seal_fires_before_the_us_open_in_new_york_time(self):
         from datetime import UTC, datetime
@@ -193,6 +250,25 @@ class TestRegistry:
     def test_every_job_has_a_registry_entry(self):
         for job_id, *_ in JOB_DEFINITIONS:
             assert job_id in JOB_COLLECTOR_NAMES, job_id
+
+    def test_sec_job_runners_wire_the_collectors(self):
+        from unittest.mock import patch
+
+        from trading_signals.scheduler import jobs
+
+        with patch.object(jobs, "_run_collector") as run:
+            jobs.run_sec_filings_collector()
+            jobs.run_sec_financials_collector()
+
+        (filings_id, filings_factory), (fin_id, fin_factory) = (
+            c.args for c in run.call_args_list
+        )
+        assert filings_id == "sec_filings_collector"
+        collector = filings_factory()
+        assert type(collector).__name__ == "SecFilingsCollector"
+        assert collector.lookback_days == 14 and collector.fetch_texts is True
+        assert fin_id == "sec_financials_collector"
+        assert fin_factory.__name__ == "SecFinancialsCollector"
 
     def test_job_runner_wires_collector(self):
         from unittest.mock import patch

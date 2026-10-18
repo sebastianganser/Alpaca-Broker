@@ -33,6 +33,8 @@ JOB_COLLECTOR_NAMES: dict[str, str] = {
     "politician_trades_collector": "politician_trades_collector",
     "short_interest_positions_collector": "short_interest_positions",
     "fundamentals_collector": "fundamentals_yf",
+    "sec_filings_collector": "sec_filings",
+    "sec_financials_collector": "sec_financials",
     "earnings_calendar_collector": "earnings_calendar_collector",
     "index_sync": "index_sync",
     "universe_validation": "universe_validation",

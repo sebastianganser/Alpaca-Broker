@@ -156,6 +156,38 @@ def run_form13f_collector() -> None:
     _run_collector("form13f_collector", lambda: Form13FCollector(lookback_days=120))
 
 
+def run_sec_filings_collector() -> None:
+    """Daily SEC EDGAR filings (8-K + press releases, 10-Q/K, 144, 13D/G, ...).
+
+    Scheduled for 04:00 Europe/Berlin = 22:00 ET, EDGAR's cut-off for
+    same-day filings (8-Ks are accepted until 22:00 ET and get that day's
+    filing date), so the 04:30 nightly chain sees the complete US day - in
+    particular after-the-close earnings 8-Ks (16:00-17:30 ET). Outside the
+    22:30-03:00 collector load, 30 minutes before the chain; not a nightly
+    upstream (the pack does not read the table yet). ~650 submissions
+    requests + one request per 8-K text, well under 15 minutes.
+    """
+    from trading_signals.collectors.sec_filings_collector import SecFilingsCollector
+
+    _run_collector(
+        "sec_filings_collector", lambda: SecFilingsCollector(lookback_days=14)
+    )
+
+
+def run_sec_financials_collector() -> None:
+    """Weekly SEC XBRL quarterly financials (companyfacts API).
+
+    Scheduled for Sundays at 14:00 Europe/Berlin (after the other Sunday
+    collectors, daytime, far from the nightly load and the seal runs).
+    ~650 companyfacts requests (one per CIK, 0.3-0.5 MB each) ≈ 5-10 minutes.
+    """
+    from trading_signals.collectors.sec_financials_collector import (
+        SecFinancialsCollector,
+    )
+
+    _run_collector("sec_financials_collector", SecFinancialsCollector)
+
+
 def run_politician_trades_collector() -> None:
     """Weekly politician trades collection from official disclosure portals.
 
@@ -1226,7 +1258,9 @@ def retention_statements(cutoff: date) -> list[tuple[str, object]]:
     Date columns are chosen so that rows with garbage *event* dates are not
     lost early: insider trades by ``filing_date`` (transaction_date contains
     bogus years), politician trades by ``disclosure_date``, 13F by
-    ``filing_date``. News sentiment is deleted via its article (FK).
+    ``filing_date``. News sentiment is deleted via its article (FK); SEC
+    filings by ``filing_date`` (their text excerpts via the filing, deleted
+    first), quarterly financials by ``period_end``.
     """
     from sqlalchemy import delete, select
 
@@ -1245,10 +1279,18 @@ def retention_statements(cutoff: date) -> list[tuple[str, object]]:
     from trading_signals.db.models.options_iv import OptionsIVSnapshot
     from trading_signals.db.models.politicians import PoliticianTrade
     from trading_signals.db.models.prices import PriceDaily
+    from trading_signals.db.models.sec import (
+        FinancialsQuarterly,
+        SecFiling,
+        SecFilingText,
+    )
     from trading_signals.db.models.short_interest import ShortInterest, ShortVolume
     from trading_signals.db.models.technical_indicators import TechnicalIndicator
 
     old_articles = select(NewsArticle.id).where(NewsArticle.published_at < cutoff)
+    old_filings = select(SecFiling.accession_number).where(
+        SecFiling.filing_date < cutoff
+    )
     simple = [
         ("news_articles", NewsArticle, NewsArticle.published_at),
         ("prices_daily", PriceDaily, PriceDaily.trade_date),
@@ -1272,12 +1314,22 @@ def retention_statements(cutoff: date) -> list[tuple[str, object]]:
         ("short_interest", ShortInterest, ShortInterest.settlement_date),
         ("macro_series", MacroSeries, MacroSeries.obs_date),
         ("analysis_reports", AnalysisReport, AnalysisReport.report_date),
+        ("sec_filings", SecFiling, SecFiling.filing_date),
+        ("financials_quarterly", FinancialsQuarterly, FinancialsQuarterly.period_end),
     ]
     stmts: list[tuple[str, object]] = [
         (
             "news_sentiment",
             delete(NewsSentiment).where(NewsSentiment.article_id.in_(old_articles)),
-        )
+        ),
+        # texts before their filings (the FK would cascade anyway; this keeps
+        # the per-table counts of the run notes)
+        (
+            "sec_filing_texts",
+            delete(SecFilingText).where(
+                SecFilingText.accession_number.in_(old_filings)
+            ),
+        ),
     ]
     stmts += [
         (label, delete(model).where(col < cutoff)) for label, model, col in simple

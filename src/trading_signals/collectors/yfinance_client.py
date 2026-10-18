@@ -28,6 +28,7 @@ import yfinance as yf
 
 from trading_signals.collectors._parsing import safe_float
 from trading_signals.utils.logging import get_logger
+from trading_signals.utils.price_targets import price_target_fields
 
 try:  # yfinance >= 0.2.5x
     from yfinance.exceptions import YFRateLimitError
@@ -141,6 +142,14 @@ def _epoch_to_date(value: Any) -> date | None:
     except (OverflowError, OSError, ValueError):
         return None
 
+def _recommendation_key(value: Any) -> str | None:
+    """Yahoo's consensus label (``buy``, ``hold`` ...); ``none``/blank -> ``None``."""
+    if not isinstance(value, str):
+        return None
+    key = value.strip().lower()
+    return key[:20] if key and key != "none" else None
+
+
 # Suppress yfinance's internal ERROR logging for expected cases like
 # "No earnings dates found, symbol may be delisted". These are not
 # real errors (just missing data for small-cap/special tickers) but
@@ -165,6 +174,19 @@ FUNDAMENTALS_KEYS = {
     "currentRatio": "current_ratio",
     "dividendYield": "dividend_yield",
     "beta": "beta",
+    # Further numeric fields of the same ``info`` call (migration 040). Ratios
+    # arrive as decimal fractions (0.66 = 66 %), amounts in the listing currency.
+    "sharesOutstanding": "shares_outstanding",
+    "floatShares": "float_shares",
+    "heldPercentInstitutions": "held_percent_institutions",
+    "heldPercentInsiders": "held_percent_insiders",
+    "shortPercentOfFloat": "short_percent_of_float",
+    "freeCashflow": "free_cashflow",
+    "totalCash": "total_cash",
+    "totalDebt": "total_debt",
+    "grossMargins": "gross_margins",
+    "recommendationMean": "recommendation_mean",
+    "numberOfAnalystOpinions": "number_of_analyst_opinions",
 }
 
 
@@ -309,6 +331,12 @@ class YFinanceClient:
                 info.get("mostRecentQuarter")
             )
 
+            # Analyst consensus label ('buy', 'hold', ...); Yahoo writes the
+            # literal 'none' when no analyst covers the stock -> NULL (no coverage)
+            record["recommendation_key"] = _recommendation_key(
+                info.get("recommendationKey")
+            )
+
             # yfinance returns dividendYield in percent form (0.4 = 0.4%)
             # while all other ratio fields are in decimal form (0.451 = 45.1%).
             # Normalize to decimal for consistent storage and display.
@@ -317,6 +345,10 @@ class YFinanceClient:
 
             # Plausibility checks – catch yfinance format changes / bad data
             _validate_fundamentals(record)
+            if record.get("number_of_analyst_opinions") is not None:
+                record["number_of_analyst_opinions"] = int(
+                    record["number_of_analyst_opinions"]
+                )
 
             # Attempt to get eps_growth_yoy from earnings estimate
             est = _try_get(t.get_earnings_estimate)
@@ -395,6 +427,10 @@ class YFinanceClient:
     ) -> list[dict]:
         """Fetch analyst upgrades/downgrades via ticker.upgrades_downgrades.
 
+        The price targets (``currentPriceTarget`` / ``priorPriceTarget``) go
+        into ``price_target_new`` / ``price_target_old`` (NULL if Yahoo gives 0
+        or NaN); ``priceTargetAction`` stays in ``raw_data`` (no column).
+
         Args:
             tickers: List of ticker symbols.
             lookback_days: Only return ratings from the last N days.
@@ -424,6 +460,11 @@ class YFinanceClient:
                 if rating_date is None or rating_date < cutoff:
                     continue
 
+                # currentPriceTarget / priorPriceTarget are part of the Yahoo
+                # row (yfinance >= 0.2.5x); 0 / NaN mean "no target" -> NULL.
+                # priceTargetAction (Raises / Lowers / Maintains) stays in
+                # raw_data (no column).
+                target_new, target_old, _ = price_target_fields(row)
                 records.append({
                     "ticker": ticker_str,
                     "firm": row.get("Firm", None),
@@ -431,8 +472,8 @@ class YFinanceClient:
                     "rating_date": rating_date,
                     "rating_new": row.get("ToGrade", None),
                     "rating_old": row.get("FromGrade", None),
-                    "price_target_new": None,  # Not in upgrades_downgrades
-                    "price_target_old": None,
+                    "price_target_new": target_new,
+                    "price_target_old": target_old,
                     "action": row.get("Action", None),
                     "raw_data": {
                         k: str(v) for k, v in row.to_dict().items()
@@ -685,6 +726,16 @@ _PLAUSIBILITY_RULES: dict[str, tuple[float, float, str]] = {
     # Absolute fields (revenue_ttm excluded: ADRs report in local currency)
     "market_cap":        (0.0, 100e12,  "Market Cap 0 bis 100T$"),
     "eps_ttm":           (-1000.0, 10000.0, "EPS -1000 bis 10000"),
+    # Fields added with migration 040 (free_cashflow / total_cash / total_debt
+    # are excluded like revenue_ttm: ADRs report in local currency)
+    "shares_outstanding": (0.0, 1e12,   "Aktien 0 bis 1T"),
+    "float_shares":      (0.0, 1e12,    "Streubesitz 0 bis 1T Aktien"),
+    "held_percent_institutions": (0.0, 5.0, "Inst.-Quote 0-500% (>100% moeglich)"),
+    "held_percent_insiders": (0.0, 1.0, "Insider-Quote 0 bis 100%"),
+    "short_percent_of_float": (0.0, 5.0, "Short-Quote 0-500% (Format-Guard)"),
+    "gross_margins":     (-100.0, 1.01, "Bruttomarge bis 100%"),
+    "recommendation_mean": (0.5, 5.5,   "Analysten-Konsens 1 (Strong Buy) - 5 (Sell)"),
+    "number_of_analyst_opinions": (0.0, 200.0, "Analystenzahl 0 bis 200"),
 }
 
 

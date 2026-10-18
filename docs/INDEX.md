@@ -24,6 +24,8 @@
 | Short-term candidate concept (barrier trades, K1–K5) | [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) |
 | Format of the old stage-2 feedback file `decisions.yaml` (historical; parser and tables removed in code, valid in the running container until migration 039 is deployed) | [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) |
 | Format of Claude's forecast file `forecasts.yaml` and the pre-registered evaluation of the forecasts | [FORECASTS.md](FORECASTS.md) |
+| Trade ideas for the future trading bot (`trade_ideas.yaml`, not evaluated) and the research archive `research_sources.md` | [TRADE_IDEAS.md](TRADE_IDEAS.md) |
+| Unattended daily forecast run on a Linux VM (Claude Code CLI, timers, virtiofs / rsync access to the share) | [infra/forecast-vm/README.md](../infra/forecast-vm/README.md) |
 | Candidate screen: quality gate, evidence groups with literature signs, buckets, backtest | [SCREEN.md](SCREEN.md) |
 | S&P 500 survivorship gap: root cause, removal list, **repair runbook** (dry runs, `--apply`, rollback) | [reports/2026-10-16_sp500_survivorship_inventory.md](reports/2026-10-16_sp500_survivorship_inventory.md) |
 | GitHub overview / external audience | [README.md](../README.md) |
@@ -39,6 +41,7 @@
 | [CLAUDE.md](../CLAUDE.md) | Entry point for every AI session – project identity, principles, status, quick facts, session checklists | Status after every session |
 | [README.md](../README.md) | GitHub-facing project overview | After major milestones |
 | [.claude/](../.claude/) | Shared Claude Code setup: subagents (`log-checker` Haiku, `doc-keeper` Sonnet, `code-reviewer` Opus), skills (`/log-check`, `/deploy`, `/session-end`), permissions (`settings.json`) | When the workflow changes |
+| [infra/forecast-vm/](../infra/forecast-vm/README.md) | Package for the Linux forecast VM: `run-forecast.sh` (headless `claude -p`, pinned model), `sync.sh`, systemd timers / cron, settings example (German README) | When the forecast run changes |
 | [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) | Host operations (status, logs, deploy, run, run-bg) behind the Unraid User Script `alpaca-ops` | When ops change |
 
 ### Architecture & Infrastructure
@@ -47,7 +50,7 @@
 |---|---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Deployment topology (Unraid, container, volumes), project structure, data flow, nightly chain, context-pack output | On structural changes |
 | [DATABASE.md](DATABASE.md) | Database schema – all tables, migration history 001–038, retention per table | On schema changes / migrations |
-| [SCHEDULER.md](SCHEDULER.md) | Execution schedule – all 27 jobs, nightly chain, forecast seal, manual operations | When jobs change |
+| [SCHEDULER.md](SCHEDULER.md) | Execution schedule – all 29 jobs, nightly chain, forecast seal, manual operations | When jobs change |
 
 ### Data Sources
 
@@ -88,6 +91,7 @@
 | [FORECASTS.md](FORECASTS.md) | File format `forecasts.yaml` (`forecasts/v1`, absolute direction per ticker and horizon), pre-registered evaluation (absolute and relative), decisive criterion (pre-registered 2026-10-18, 300 sessions) | Design 2026-10-17; ingest, persistence and nightly step implemented 2026-10-18 (plan step 4, deploy pending) |
 | [SCREEN.md](SCREEN.md) | Neutral candidate screen: quality gate, 12 evidence groups with a-priori literature signs, event triggers, buckets (option D), historical validation | Implemented 2026-10-17 (`analysis/screen.py`); used by the context pack v2 (2026-10-18) |
 | [CONTEXT_PACK.md](CONTEXT_PACK.md) | Context pack v2 (`pack_format: 2`) for the person writing the analysis skill prompt: files (`00_uebersicht.md`, `screen.csv`, alphabetical `TICKER.md`), selection, ticker-file sections, percentiles, point-in-time rules, how to write `forecasts.yaml`, deadline | Implemented in code 2026-10-18 (`derived/context_pack/`), deploy pending with plan step 4 |
+| [TRADE_IDEAS.md](TRADE_IDEAS.md) | File format `trade_ideas.yaml` (`trade_ideas/v1`: direction, horizon, entry zone, invalidation level, catalysts, validity window) written by the skill next to the neutral forecast for the later bot, plus the research archive `research_sources.md`; not sealed, not evaluated | Defined 2026-10-18 (skill `swp-v2`); no code reads it yet |
 
 ### Reports (`docs/reports/`, generated 2026-10-06, 2026-10-16 and 2026-10-17)
 

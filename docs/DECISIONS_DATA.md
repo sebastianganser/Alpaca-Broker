@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) · [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md)
 
-**Last updated:** 17 October 2026
+**Last updated:** 18 October 2026
 
 ---
 
@@ -448,3 +448,28 @@
 - Active universe 760 (757 − PARA + SKYD/TWLO/VYLR + BF.B). The check `select b.ticker from signals.ticker_blacklist b join signals.index_membership m on m.ticker = b.ticker where m.valid_to is null` must return no rows (standing check after every `index_sync`).
 - The ANSS/ATVI/XLNX rows can no longer be distinguished from the other backfilled rows by `source`; the old IEX values are not backed up.
 - Numbers and backups of the run: runbook section 8, "Execution log 2026-10-17" ([report](reports/2026-10-16_sp500_survivorship_inventory.md)).
+
+---
+
+### [2026-10-18] SEC Filings, XBRL Quarterly Financials and More yfinance Fundamentals as New Feeds
+
+**Context:** An inventory of the warehouse plus web research on 2026-10-18 found three free gaps that matter most for a Wall-Street-style assessment of a ticker: *what the company has just filed* (earnings press release, officer changes, planned insider sales, activist stakes, dilution filings), a *quarterly, point-in-time financial series* (the pack only had Yahoo's TTM ratios) and the *ownership / consensus fields* that the existing Yahoo `info` call already returns. The context pack wiring of the new tables is a separate step.
+
+**Decision:**
+- **Filings** (`sec_filings`, `sec_filing_texts`, daily job `sec_filings_collector`): EDGAR submissions API per CIK, form whitelist of 8-K, 10-Q/10-K, 6-K/20-F/40-F, NT 10-K/Q, 144, 13D/13G (old `SC` and new `SCHEDULE` form names), S-1/S-3, DEF 14A/DEFM14A ([DATA_SOURCES.md](DATA_SOURCES.md) §13); not Forms 3/4/5, 13F, 424B*, 425. Text excerpts (first ≈ 3,000 characters) for 8-Ks with item 2.02/7.01/8.01 (press release EX-99.x) and for the event items 1.01-1.05, 2.01, 2.05, 2.06, 3.01, 4.01, 4.02, 5.02 (report body without the cover page), fetched with one streamed request per filing (the full-submission `.txt`, closed after the wanted document) instead of parsing the index page. Failed text fetches stay retryable (`texts_fetched_at` NULL, 14-day lookback).
+- **Schedule:** `sec_filings_collector` daily at **04:00 Berlin = 22:00 ET**, EDGAR's cut-off for same-day 8-Ks, so the 04:30 chain sees the complete US day including after-the-close earnings; 21:00 Berlin (the first idea) is 15:00 ET, i.e. *before* the close, and would miss exactly those releases. The 22:30-03:00 collector load and the seal runs (15:00-15:25 Berlin) are avoided. `sec_financials_collector` weekly **Sunday 14:00** (after `universe_validation`, daytime). Neither is in `NIGHTLY_UPSTREAM` yet (nothing reads the tables); the pack wiring adds `sec_filings: False`.
+- **Point-in-time key of filings:** `acceptance_datetime` = true acceptance instant in UTC. The `Z`-labelled `acceptanceDateTime` of the submissions JSON is the Eastern wall clock **+ 8 h (summer) / + 10 h (winter)** (checked on ten filings of six filers against the filing index page and the `<ACCEPTANCE-DATETIME>` of the full-submission text); `submission_acceptance_utc` undoes the shift, the raw string is kept in `acceptance_raw`. The older `parse_acceptance_datetime` (Form 4 / 13F) was **not** changed: it is 8-10 hours too late, conservative but it delays most intraday insider filings by a session in "public before 16:00 ET" rules - open point for the insider features.
+- **Share classes:** filings are stored once per accession under the first ticker of the CIK with the array `tickers` of all its tickers (accession stays unique, the text table keeps a plain FK); the financials are per ticker (identical rows for GOOG/GOOGL), like every other per-ticker table.
+- **Financials** (`financials_quarterly`, weekly job `sec_financials_collector`): XBRL `companyfacts` per CIK, standalone quarters in the retention window, values **as first reported** (`filed` = point-in-time key; restatements are ignored, no vintages), Q4 = FY − 9M, cash-flow quarters from year-to-date differences, one tag per figure and company (the best-covered recent tag; other tags only fill quarters if they agree with it within 1 % - a taxonomy hand-over is stitched, different measures such as JPM `Revenues` vs `RevenuesNetOfInterestExpense` are not mixed), balance-sheet figures first reported later than the quarter's main filing stay NULL, `raw_tags` documents tags and derived figures. USD only.
+- **yfinance extras:** twelve nullable columns of `fundamentals_snapshot` from the same `info` call, no extra requests (shares, float, institutional/insider holding, short percent of float, free cash flow, cash, debt, gross margin, consensus mean/key/analyst count); Yahoo's literal `'none'` becomes NULL, ratios get plausibility guards, amounts do not (ADRs report in local currency).
+- **Retention / reset:** the new tables follow the 20-quarter retention (`sec_filings` by `filing_date`, texts first, `financials_quarterly` by `period_end`) and are wiped by the factory reset - unlike the forecast records they can be collected again.
+- **Backfills** (`scripts/repair/backfill_sec_filings.py` 120 days, `backfill_sec_financials.py`; dry run by default, `--apply`) need Sebastian's OK on production; the weekly financials job is its own backfill.
+- The dashboard `table_stats` now also lists the three new tables and the five forecast tables (`forecasts`, `forecast_reviews`, `forecast_criterion_samples`, `forecast_file_seals`, `pack_candidates`); a unit test fails if a new ORM table is neither listed nor on the (one-entry) exclusion list.
+
+**Rationale:** A forecast made after the close should see the earnings release and the 8-K that was accepted a few minutes ago; Yahoo's snapshot cannot show quarterly trends or the date a number became public. EDGAR is free, has no key and the project already speaks to it (10 requests/s, contact user agent). Point-in-time correctness is the project's central invariant, so the acceptance instant is stored corrected *and* raw, and the financials carry `filed`. Stitching tags only when they agree keeps long series without the jumps that come from mixing definitions; first-reported values are what the market saw.
+
+**Consequence:**
+- 29 jobs, migration 040 (pending deploy; tested on a fresh `postgres:18`: `upgrade head`, `alembic check` clean, `downgrade 039`, `upgrade head`, plus an end-to-end run of both collectors, retention and the dashboard statistics on that throwaway database against the live SEC API).
+- Request volume: filings ≈ 650 + 10-60 text requests per night (≈ 5-10 minutes), financials ≈ 650 per week (≈ 250 MB, ≈ 5-10 minutes), both at 9 requests/s.
+- Known limits: a company that re-incorporated under a new CIK (ExxonMobil Holdings, CIK 2115436 since 2026) only shows the filings and quarters of its new registrant; banks have no gross profit/operating income/capex; Berkshire's per-class EPS and share counts are not in `companyfacts`; derived-quarter EPS is an approximation.
+- Open: wiring into the context pack and the nightly upstream list, a decision on the 8-10 h bias of `parse_acceptance_datetime` for the insider features, and a `Form 4` read of the new `144` notices as a planned-sale signal.

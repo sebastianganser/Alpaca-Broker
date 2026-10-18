@@ -8,6 +8,7 @@ from trading_signals.derived.context_pack.fmt import (
     DASH,
     NA,
     age_text,
+    money,
     num,
     percent,
     signed_percent,
@@ -52,6 +53,11 @@ def render_valuation(ctx: TickerContext) -> list[str]:
     return lines
 
 
+def _amount(label: str, value: float | None, fmt) -> list[str]:
+    """A metric row without percentile (an absolute amount, not a ratio)."""
+    return [label, NA if value is None else fmt(value), DASH]
+
+
 def render_fundamentals(ctx: TickerContext) -> list[str]:
     quarter = ctx.fund.get("most_recent_quarter")
     quarter = quarter.isoformat() if isinstance(quarter, date) else NA
@@ -60,6 +66,18 @@ def render_fundamentals(ctx: TickerContext) -> list[str]:
         "",
         f"Berichtsquartal der TTM-Werte: {quarter}.",
         "",
+        metric_group(
+            [
+                _amount("Umsatz TTM", ctx.fval("revenue_ttm"), money),
+                _amount("EPS TTM", ctx.fval("eps_ttm"), num),
+                ctx.fund_metric(
+                    "Current Ratio",
+                    "current_ratio",
+                    num,
+                    sector=True,
+                ),
+            ]
+        ),
         metric_group(
             [
                 ctx.metric(

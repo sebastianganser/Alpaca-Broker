@@ -11,10 +11,12 @@ SEC EDGAR requires NO API key or registration. The User-Agent header
 with contact info is the only requirement for identification.
 """
 
+import re
 import time
 import xml.etree.ElementTree as ET
-from collections.abc import Iterable
-from datetime import UTC, date, datetime
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
@@ -60,11 +62,139 @@ def parse_acceptance_datetime(value: str | None) -> datetime | None:
     return dt.replace(tzinfo=ZoneInfo("America/New_York")).astimezone(UTC)
 
 
+_NY = ZoneInfo("America/New_York")
+
+
+def submission_acceptance_utc(value: str | None) -> datetime | None:
+    """True acceptance instant of a filing from the submissions JSON (UTC).
+
+    The ``acceptanceDateTime`` strings of the submissions API look like UTC
+    (``...Z``) but are not: compared with the "Accepted" time that EDGAR shows
+    on every filing index page (Eastern time, e.g. ``2026-07-30 16:30:28``) and
+    with the ``<ACCEPTANCE-DATETIME>`` of the full-submission text, the JSON
+    value is the Eastern wall clock PLUS twice the UTC offset - ``+8 h`` during
+    daylight saving time and ``+10 h`` in winter (verified 2026-10-18 on ten
+    filings 2016-2026 of six filers, e.g. ``2026-07-31T00:30:28.000Z`` for
+    ``16:30:28`` ET). This function undoes that shift and returns the real
+    instant (tz-aware, UTC). The raw string is stored next to the result
+    (``sec_filings.acceptance_raw``) so the reading can be revised without a
+    new download.
+
+    NOTE: :func:`parse_acceptance_datetime` (Form 4 / 13F) reads the same
+    string as Eastern wall clock, i.e. 8-10 hours too late. That is
+    conservative for point-in-time use (never earlier than the truth) but
+    delays almost every intraday filing by a session in cut-off rules such as
+    "public before 16:00 ET". Returns ``None`` for missing/unparseable input.
+    """
+    if not value:
+        return None
+    try:
+        naive = datetime.fromisoformat(value.strip().replace("Z", "").split("+")[0])
+    except ValueError:
+        return None
+    for shift_hours, utc_offset_hours in ((8, -4), (10, -5)):
+        eastern = naive - timedelta(hours=shift_hours)
+        local = eastern.replace(tzinfo=_NY)
+        if local.utcoffset() == timedelta(hours=utc_offset_hours):
+            return local.astimezone(UTC)
+    # Inside the one-hour clock-change gap: use the winter reading
+    return (naive - timedelta(hours=10)).replace(tzinfo=_NY).astimezone(UTC)
+
+
+@dataclass(frozen=True)
+class SgmlDocument:
+    """One ``<DOCUMENT>`` of an EDGAR full-submission text file."""
+
+    type: str  # e.g. "8-K", "EX-99.1", "EX-101.SCH"
+    sequence: int | None
+    filename: str | None
+    raw: bytes  # content between <TEXT> and </TEXT> (undecoded)
+
+    def text(self) -> str:
+        """Decode the content (UTF-8, falling back to Windows-1252)."""
+        try:
+            return self.raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return self.raw.decode("cp1252", errors="replace")
+
+
+_SGML_DOC_END = b"</DOCUMENT>"
+_SGML_TYPE = re.compile(rb"<TYPE>[ \t]*([^\r\n<]+)")
+_SGML_SEQUENCE = re.compile(rb"<SEQUENCE>[ \t]*(\d+)")
+_SGML_FILENAME = re.compile(rb"<FILENAME>[ \t]*([^\r\n<]+)")
+_SGML_TEXT_START = re.compile(rb"<TEXT>[ \t]*\r?\n?")
+
+#: Upper bound of bytes read from one full-submission text file.
+MAX_SUBMISSION_BYTES = 8_000_000
+
+
+def _parse_sgml_block(block: bytes) -> SgmlDocument | None:
+    """Parse the part of the stream that ends with ``</DOCUMENT>``."""
+    start = block.rfind(b"<DOCUMENT>")
+    if start < 0:
+        return None
+    block = block[start:]
+    m_type = _SGML_TYPE.search(block)
+    m_text = _SGML_TEXT_START.search(block)
+    if not m_type or not m_text:
+        return None
+    body = block[m_text.end():]
+    end = body.rfind(b"</TEXT>")
+    if end >= 0:
+        body = body[:end]
+    m_seq = _SGML_SEQUENCE.search(block, 0, m_text.start())
+    m_name = _SGML_FILENAME.search(block, 0, m_text.start())
+    filename = None
+    if m_name:
+        filename = m_name.group(1).decode("ascii", errors="replace").strip()
+    return SgmlDocument(
+        type=m_type.group(1).decode("ascii", errors="replace").strip(),
+        sequence=int(m_seq.group(1)) if m_seq else None,
+        filename=filename,
+        raw=body,
+    )
+
+
+def iter_sgml_documents(
+    chunks: Iterable[bytes], max_bytes: int = MAX_SUBMISSION_BYTES
+) -> Iterator[SgmlDocument]:
+    """Yield the documents of an EDGAR ``<accession>.txt`` file as they arrive.
+
+    ``chunks`` is the (streamed) byte content. Documents are yielded as soon
+    as their ``</DOCUMENT>`` has been read, so the caller can stop early (e.g.
+    after the press-release exhibit) and close the connection. Reading stops
+    after ``max_bytes``; a document that is cut off by the limit is dropped.
+    """
+    buffer = bytearray()
+    total = 0
+    for chunk in chunks:
+        if not chunk:
+            continue
+        total += len(chunk)
+        buffer.extend(chunk)
+        while True:
+            end = buffer.find(_SGML_DOC_END)
+            if end < 0:
+                break
+            block = bytes(buffer[:end])
+            del buffer[: end + len(_SGML_DOC_END)]
+            doc = _parse_sgml_block(block)
+            if doc is not None:
+                yield doc
+        if total > max_bytes:
+            logger.warning(
+                f"[sec_client] submission text exceeds {max_bytes} bytes - "
+                f"stopped reading"
+            )
+            return
+
+
 class SECClient:
     """SEC EDGAR API client with rate limiting and CIK mapping."""
 
     TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
     SUBMISSIONS_BASE = "https://data.sec.gov/submissions"
+    FACTS_BASE = "https://data.sec.gov/api/xbrl/companyfacts"
     ARCHIVES_BASE = "https://www.sec.gov/Archives/edgar/data"
 
     def __init__(self, user_agent: str | None = None) -> None:
@@ -195,6 +325,75 @@ class SECClient:
         data = self._get_json(url)
         self._submissions_cache[padded] = data
         return data
+
+    def fetch_submissions(self, cik: str) -> dict:
+        """Fetch a company's submissions JSON WITHOUT keeping it in the cache.
+
+        For collectors that walk the whole universe and only keep the extracted
+        rows: ``get_submissions`` caches every response for the lifetime of the
+        client (~1 MB of Python objects per large filer).
+        """
+        return self._get_json(f"{self.SUBMISSIONS_BASE}/CIK{self.pad_cik(cik)}.json")
+
+    def get_submissions_page(self, name: str) -> dict:
+        """Fetch an older submissions page (``CIK##########-submissions-001.json``).
+
+        Companies with many filings list only the newest ~1000 (at least one
+        year) in ``filings.recent``; ``filings.files`` names the older pages.
+        """
+        return self._get_json(f"{self.SUBMISSIONS_BASE}/{name}")
+
+    def get_company_facts(self, cik: str) -> dict | None:
+        """XBRL ``companyfacts`` of a company (all us-gaap/dei facts).
+
+        Returns ``None`` if the company has no XBRL facts (HTTP 404).
+        """
+        url = f"{self.FACTS_BASE}/CIK{self.pad_cik(cik)}.json"
+        try:
+            return self._get_json(url)
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                return None
+            raise
+
+    @retry(max_attempts=5, base_delay=3.0)
+    def _open_stream(self, url: str) -> requests.Response:
+        """GET request with ``stream=True`` (rate limited, retried on open)."""
+        self._rate_limit()
+        response = self._session.get(
+            url, timeout=30, stream=True, headers={"Accept": "text/plain, */*"}
+        )
+        try:
+            response.raise_for_status()
+        except Exception:
+            response.close()
+            raise
+        return response
+
+    def iter_filing_documents(
+        self,
+        cik: str,
+        accession_number: str,
+        max_bytes: int = MAX_SUBMISSION_BYTES,
+    ) -> Iterator[SgmlDocument]:
+        """Stream the documents of a filing from its full-submission text file.
+
+        One request per filing (``<accession>.txt`` holds the primary document
+        and all exhibits). The caller stops iterating once it has what it needs;
+        the connection is closed then.
+        """
+        acc_no_dashes = accession_number.replace("-", "")
+        url = (
+            f"{self.ARCHIVES_BASE}/{self.pad_cik(cik)}/{acc_no_dashes}/"
+            f"{accession_number}.txt"
+        )
+        response = self._open_stream(url)
+        try:
+            yield from iter_sgml_documents(
+                response.iter_content(chunk_size=65536), max_bytes=max_bytes
+            )
+        finally:
+            response.close()
 
     @staticmethod
     def _extract_filings(

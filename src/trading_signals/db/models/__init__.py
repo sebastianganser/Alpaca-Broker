@@ -27,6 +27,7 @@ from trading_signals.db.models.news import NewsArticle, NewsSentiment
 from trading_signals.db.models.options_iv import OptionsIVSnapshot
 from trading_signals.db.models.politicians import PoliticianTrade
 from trading_signals.db.models.prices import PriceDaily
+from trading_signals.db.models.sec import FinancialsQuarterly, SecFiling, SecFilingText
 from trading_signals.db.models.technical_indicators import TechnicalIndicator
 from trading_signals.db.models.universe import Universe
 
@@ -40,6 +41,7 @@ __all__ = [
     "EarningsCalendar",
     "EstimatesSnapshot",
     "FeatureSnapshot",
+    "FinancialsQuarterly",
     "Forecast",
     "ForecastCriterionSample",
     "ForecastFileSeal",
@@ -56,6 +58,8 @@ __all__ = [
     "PackCandidate",
     "PoliticianTrade",
     "PriceDaily",
+    "SecFiling",
+    "SecFilingText",
     "TechnicalIndicator",
     "TickerBlacklist",
     "Universe",

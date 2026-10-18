@@ -28,9 +28,10 @@ from trading_signals.derived.context_pack.fmt import (
     signed,
     signed_int,
     signed_percent,
+    to_float,
 )
 from trading_signals.derived.context_pack.model import TickerContext, metric_group
-from trading_signals.derived.context_pack.rows import InsiderTradeRow
+from trading_signals.derived.context_pack.rows import Holders13F, InsiderTradeRow
 from trading_signals.derived.feature_pipeline import (
     FORM13F_MAX_AGE_DAYS,
     ark_state_at,
@@ -50,6 +51,39 @@ def placed_date(t: InsiderTradeRow) -> date | None:
     if t.acceptance is not None:
         return t.acceptance.date()
     return None
+
+
+def holding_change(t: InsiderTradeRow) -> float | str | None:
+    """Change of the insider's holding through this trade.
+
+    ``fraction`` of the holding before the trade (``+0.042`` = +4.2 %),
+    ``"new"`` if the holding before was zero (a first purchase), ``None`` if it
+    cannot be derived (no post-trade holding or no share count, or an
+    inconsistent holding before).
+    """
+    after, traded = to_float(t.shares_owned_after), to_float(t.shares)
+    if after is None or traded is None or traded <= 0 or after < 0:
+        return None
+    signed = traded if t.transaction_type == "P" else -traded
+    before = after - signed
+    if before < 0:
+        return None
+    if before == 0:
+        return "new"
+    return signed / before
+
+
+def holding_cell(t: InsiderTradeRow) -> str:
+    """``holding after (change)``; a dash if the filing gave no holding."""
+    after = to_float(t.shares_owned_after)
+    if after is None:
+        return DASH
+    change = holding_change(t)
+    if change is None:
+        return shares(after)
+    if change == "new":
+        return f"{shares(after)} (neue Position)"
+    return f"{shares(after)} ({signed_percent(change)})"
 
 
 def insider_window_summary(
@@ -139,12 +173,22 @@ def render_insider(ctx: TickerContext) -> list[str]:
                     shares(t.shares),
                     num(t.price),
                     money(t.value),
+                    holding_cell(t),
                 ]
             )
         lines += [
             "",
             *md_table(
-                ["Gemeldet", "Insider (Titel)", "Art", "Aktien", "Preis", "Wert"], rows
+                [
+                    "Gemeldet",
+                    "Insider (Titel)",
+                    "Art",
+                    "Aktien",
+                    "Preis",
+                    "Wert",
+                    "Bestand danach (Änderung in % des Bestands davor)",
+                ],
+                rows,
             ),
         ]
     else:
@@ -158,6 +202,36 @@ def render_insider(ctx: TickerContext) -> list[str]:
 
 
 # ── 13F ──────────────────────────────────────────────────────────────
+
+
+def _tracked_funds_line(h: Holders13F) -> str:
+    """``x von N verfolgten Fonds`` and the total they hold (not all institutions)."""
+    of = f" von {h.n_tracked}" if h.n_tracked else ""
+    prev = ""
+    if h.prev_period is not None and h.prev_n_filers is not None:
+        prev_of = f" von {h.prev_n_tracked}" if h.prev_n_tracked else ""
+        prev = f" (Vorperiode {h.prev_n_filers}{prev_of})"
+    change = None
+    if (
+        h.shares_total is not None
+        and h.prev_shares_total is not None
+        and h.prev_shares_total > 0
+    ):
+        change = h.shares_total / h.prev_shares_total - 1.0
+    total = (
+        f"Gesamtbestand {shares(h.shares_total)} Aktien"
+        + (
+            f" (Vorperiode {shares(h.prev_shares_total)}, {signed_percent(change)})"
+            if change is not None
+            else ""
+        )
+        if h.shares_total is not None
+        else f"Gesamtbestand {NA}"
+    )
+    return (
+        f"- **{h.n_filers}{of} verfolgten Fonds** halten die Aktie{prev}; {total}. "
+        "Nur verfolgte Fonds, nicht der gesamte institutionelle Besitz."
+    )
 
 
 def render_13f(ctx: TickerContext) -> list[str]:
@@ -186,6 +260,7 @@ def render_13f(ctx: TickerContext) -> list[str]:
                 ctx.metric("ausgestiegen", "form13f_exited_positions_count", integer),
             ]
         ),
+        _tracked_funds_line(h),
     ]
     if h.top:
         rows = []
@@ -452,8 +527,27 @@ def render_positioning(ctx: TickerContext) -> list[str]:
             ]
         )
     )
+    lines.append(_realised_vs_implied(ctx, current))
     latest = iv_rows[-1] if iv_rows else None
     if latest is not None:
         lines.append(f"- Stand Optionen: {age_text(latest.snapshot_date, d)}")
     lines.append("")
     return lines
+
+
+def _realised_vs_implied(ctx: TickerContext, iv: float | None) -> str:
+    """Realised volatility (20 / 60 sessions) next to the ATM IV and the premium."""
+    price = ctx.price
+    rows = []
+    for label, rv in (
+        ("20 T", price.rv20 if price else None),
+        ("60 T", price.rv60 if price else None),
+    ):
+        premium = None if rv is None or iv is None else iv - rv
+        premium_text = NA if premium is None else f"{vol_points(premium)} Vol.-Pkt"
+        rows.append(f"{label} {percent(rv)} (IV-Prämie {premium_text})")
+    return (
+        "- Realisierte Volatilität (annualisiert, echte Kurse): "
+        + " · ".join(rows)
+        + "; IV-Prämie = ATM-IV 30 T minus realisiert."
+    )

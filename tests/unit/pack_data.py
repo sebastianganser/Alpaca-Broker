@@ -10,6 +10,7 @@ so the tests can prove that the generator hides them.
 
 from __future__ import annotations
 
+import zlib
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -21,6 +22,7 @@ from trading_signals.db.models.features import FEATURE_COLUMNS
 from trading_signals.derived.context_pack.model import UniverseInfo
 from trading_signals.derived.context_pack.rows import (
     ArkRow,
+    BarRow,
     EarningsRow,
     EstimateRow,
     HeadlineRow,
@@ -36,6 +38,7 @@ from trading_signals.derived.context_pack.rows import (
     SourceStat,
     TechnicalRow,
 )
+from trading_signals.utils.market_calendar import trading_days
 
 NY = ZoneInfo("America/New_York")
 SESSION = date(2026, 10, 16)  # a Friday, NYSE session
@@ -130,11 +133,68 @@ def make_fundamentals(
     return pd.DataFrame(data).set_index("ticker", drop=False)
 
 
+def _weekday(d: date) -> date:
+    """``d`` moved back to the previous Monday-Friday day."""
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
+def make_bars(
+    ticker: str,
+    day: date = SESSION,
+    days: int = 840,
+    overrides: dict[date, float] | None = None,
+    leak_after: bool = True,
+) -> list[BarRow]:
+    """Daily real bars on the NYSE sessions up to ``day`` (random walk, seeded).
+
+    ``overrides`` replaces the close of single dates (the open / high / low
+    follow). ``leak_after`` adds a bar AFTER ``day`` (a leaky loader), which
+    the point-in-time filter must remove.
+    """
+    sessions = trading_days(day - timedelta(days=days), day)
+    if leak_after:
+        sessions = [*sessions, day + timedelta(days=3)]  # the next Monday
+    rng = np.random.default_rng(zlib.crc32(ticker.encode()))
+    rets = rng.normal(0.0004, 0.015, len(sessions))
+    level = 60.0 + float(rng.uniform(0, 80))
+    out = []
+    prev = level
+    for s, r in zip(sessions, rets, strict=True):
+        close = prev * (1.0 + float(r))
+        if overrides and s in overrides:
+            close = overrides[s]
+        open_ = prev * (1.0 + float(rng.normal(0, 0.004)))
+        high = max(open_, close) * (1.0 + abs(float(rng.normal(0, 0.005))))
+        low = min(open_, close) * (1.0 - abs(float(rng.normal(0, 0.005))))
+        volume = float(rng.integers(1_000_000, 9_000_000))
+        out.append(BarRow(s, open_, high, low, close, volume))
+        prev = close
+    return out
+
+
 def make_raw(ticker: str, day: date = SESSION, seed: int = 0) -> RawSources:
     """Raw-table rows of one ticker, with leaky rows mixed in."""
     close_et = datetime.combine(day, datetime.min.time().replace(hour=16), tzinfo=NY)
     r = RawSources()
     t = r.get(ticker)
+    filler_insider = [
+        InsiderTradeRow(
+            ticker,
+            f"Filler Insider {k}",
+            "VP Engineering",
+            "P" if k % 2 else "S",
+            day - timedelta(days=100 + 12 * k),
+            day - timedelta(days=98 + 12 * k),
+            None,
+            500 * k,
+            20.0,
+            10000.0 * k,
+            20000 * k,
+        )
+        for k in range(1, 5)
+    ]
     t.insider = [
         InsiderTradeRow(
             ticker,
@@ -147,6 +207,7 @@ def make_raw(ticker: str, day: date = SESSION, seed: int = 0) -> RawSources:
             1000,
             10.0,
             10000.0,
+            11000,  # holding after the purchase: +10 % of the 10000 before
         ),
         InsiderTradeRow(
             ticker,
@@ -159,6 +220,7 @@ def make_raw(ticker: str, day: date = SESSION, seed: int = 0) -> RawSources:
             5000,
             11.0,
             55000.0,
+            45000,  # after the sale: -10 % of the 50000 before
         ),
         # accepted 16:05 ET on the session day: NOT public at the close
         InsiderTradeRow(
@@ -186,6 +248,7 @@ def make_raw(ticker: str, day: date = SESSION, seed: int = 0) -> RawSources:
             2.0,
             4.0,
         ),
+        *filler_insider,
     ]
     t.ratings = [
         RatingRow(
@@ -197,6 +260,28 @@ def make_raw(ticker: str, day: date = SESSION, seed: int = 0) -> RawSources:
             "Buy",
             90.0,
             110.0,
+            "Raises",
+        ),
+        RatingRow(
+            ticker,
+            day - timedelta(days=9),
+            "Other Bank",
+            "main",
+            "Buy",
+            "Buy",
+            120.0,
+            120.0,
+            "Maintains",
+        ),
+        RatingRow(
+            ticker,
+            day - timedelta(days=12),
+            "No Target Bank",
+            "main",
+            "Hold",
+            "Hold",
+            None,
+            None,
         ),
         RatingRow(
             ticker,
@@ -208,6 +293,20 @@ def make_raw(ticker: str, day: date = SESSION, seed: int = 0) -> RawSources:
             None,
             None,
         ),
+    ]
+    t.ratings += [
+        RatingRow(
+            ticker,
+            day - timedelta(days=40 + 15 * k),
+            f"Filler Securities {k}",
+            "main",
+            "Buy",
+            "Buy",
+            100.0 + k,
+            105.0 + k,
+            "Raises",
+        )
+        for k in range(1, 4)
     ]
     t.politicians = [
         PoliticianRow(
@@ -235,6 +334,21 @@ def make_raw(ticker: str, day: date = SESSION, seed: int = 0) -> RawSources:
             "Self",
         ),
     ]
+    t.politicians += [
+        PoliticianRow(
+            ticker,
+            f"Filler Member {k}",
+            "House",
+            "R",
+            "TX",
+            "Purchase",
+            day - timedelta(days=30 + 10 * k),
+            day - timedelta(days=20 + 10 * k),
+            "$15,001 - $50,000",
+            "Spouse",
+        )
+        for k in range(1, 4)
+    ]
     pub = datetime.combine(day, datetime.min.time().replace(hour=10), tzinfo=NY)
     t.headlines = [
         HeadlineRow(
@@ -261,6 +375,22 @@ def make_raw(ticker: str, day: date = SESSION, seed: int = 0) -> RawSources:
             "negative",
             -0.8,
         ),
+        HeadlineRow(
+            ticker,
+            pub - timedelta(days=3),
+            f"{ticker} announces new share buyback programme worth billions",
+            "Reuters",
+            "positive",
+            0.7,
+        ),
+        HeadlineRow(
+            ticker,
+            pub - timedelta(days=6),
+            "Regulator opens inquiry into industry pricing practices",
+            "Bloomberg",
+            "negative",
+            -0.6,
+        ),
     ]
     t.earnings = [
         EarningsRow(
@@ -274,6 +404,19 @@ def make_raw(ticker: str, day: date = SESSION, seed: int = 0) -> RawSources:
         ),
         EarningsRow(ticker, day - timedelta(days=60), "AMC", 1.2, 1.3, 8.3),
         EarningsRow(ticker, day - timedelta(days=150), "BMO", 1.0, 1.1, 10.0),
+        # six older quarters (BMO / AMC / DMH / unknown time), so the table
+        # shows the full eight
+        *[
+            EarningsRow(
+                ticker,
+                _weekday(day - timedelta(days=150 + 91 * k)),
+                ("AMC", "BMO", "DMH", None, "AMC", "BMO")[k - 1],
+                1.0,
+                1.0 + 0.05 * k,
+                5.0 * k,
+            )
+            for k in range(1, 7)
+        ],
         # first seen only after the session: an announced date nobody knew yet
         EarningsRow(
             ticker,
@@ -302,6 +445,14 @@ def make_raw(ticker: str, day: date = SESSION, seed: int = 0) -> RawSources:
             rev_down_30d=1,
             revenue_avg=2.5e10,
             revenue_growth=0.12,
+            eps_low=1.3,
+            eps_high=1.7,
+            eps_year_ago=1.3,
+            eps_growth=0.15,
+            revenue_low=2.3e10,
+            revenue_high=2.7e10,
+            revenue_n_analysts=18,
+            revenue_year_ago=2.2e10,
         )
         for p in ("0q", "+1q", "0y", "+1y")
     ] + [EstimateRow(ticker, day + timedelta(days=1), "0q", eps_avg=99.0)]
@@ -324,17 +475,22 @@ def make_raw(ticker: str, day: date = SESSION, seed: int = 0) -> RawSources:
     t.holders = Holders13F(
         report_period=date(2026, 6, 30),
         max_filing_date=date(2026, 8, 14),
-        n_filers=1500,
+        n_filers=15,
         shares_total=5e8,
         prev_period=date(2026, 3, 31),
-        prev_n_filers=1450,
+        prev_n_filers=14,
         prev_shares_total=4.9e8,
+        n_tracked=19,
+        prev_n_tracked=18,
         top=(
             HolderRow("Vanguard Group", 8e7, 1.6e10, 7.5e7),
             HolderRow("BlackRock", 7e7, 1.4e10, 7e7),
             HolderRow("New Fund LP", 1e6, 2e8, None),
+            HolderRow("State Street Global Advisors", 4e7, 8e9, 4.1e7),
+            HolderRow("Geode Capital Management", 2e7, 4e9, 1.9e7),
         ),
     )
+    t.bars = make_bars(ticker, day)
     t.stats = {
         "prices": SourceStat(date(2021, 10, 18), day, 1260),
         "estimates": SourceStat(date(2026, 4, 2), day, 130),
@@ -409,3 +565,21 @@ def make_loader(n: int = 120, seed: int = 0, day: date = SESSION) -> FakeLoader:
 
 
 UTC_NOW = datetime(2026, 10, 18, 4, 30, tzinfo=UTC)
+
+
+def stub_chart(ticker, company, session, bars, analysis):
+    """A tiny PNG with the generator's ownership marker (fast stand-in for the
+    real chart, which takes about 0.3 s per ticker; ``test_context_pack_chart.py``
+    draws the real one)."""
+    import io
+
+    from PIL import Image
+    from PIL.PngImagePlugin import PngInfo
+
+    from trading_signals.derived.context_pack.chart import chart_description
+
+    info = PngInfo()
+    info.add_text("Description", chart_description(ticker, session))
+    out = io.BytesIO()
+    Image.new("RGB", (4, 4), "white").save(out, format="PNG", pnginfo=info)
+    return out.getvalue()

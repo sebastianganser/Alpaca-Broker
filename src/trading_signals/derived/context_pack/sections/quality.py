@@ -113,10 +113,9 @@ def render_quality(ctx: TickerContext) -> list[str]:
         "- Alter der Quellen in Tagen (letzter Stand, Daten im Kopf der Datei): "
         + " · ".join(ages),
         "- Historie (Tage mit Daten): " + " · ".join(young),
-        "- Junge Quellen (Konsens, Optionen, News, Short Volume) haben nur Monate "
-        "an Historie, ihre Perzentile sind instabil; der IV-Rank gilt erst ab "
-        "252 Tagen. Sektor und Branche sind der aktuelle Stand, nicht "
-        "point-in-time.",
+        "- Junge Quellen (Konsens, Optionen, News, Short Volume): nur Monate "
+        "Historie, Perzentile instabil; IV-Rank erst ab 252 Tagen. Sektor und "
+        "Branche sind der aktuelle Stand, nicht point-in-time.",
         "",
     ]
 

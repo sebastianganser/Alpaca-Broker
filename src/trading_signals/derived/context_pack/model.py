@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -31,7 +31,8 @@ from trading_signals.derived.context_pack.constants import (
 )
 from trading_signals.derived.context_pack.fmt import DASH, NA, pct_cell
 from trading_signals.derived.context_pack.fmt import to_float as f
-from trading_signals.derived.context_pack.rows import TickerRaw
+from trading_signals.derived.context_pack.rows import PeerTable, TickerRaw
+from trading_signals.derived.context_pack.technicals import PriceAnalysis
 
 
 def mid_rank_pct(
@@ -140,6 +141,14 @@ class TickerContext:
     raw: TickerRaw
     market: Mapping[str, float | None]
     coverage: Mapping[str, tuple[int, int]]
+    #: Ascending NYSE sessions up to the pack day (earnings reactions, volatility).
+    sessions: Sequence[date] = ()
+    #: Facts computed from the real bars (None = no bars at all).
+    price: PriceAnalysis | None = None
+    #: Name of the chart file next to the ticker file (None = no chart written).
+    chart_file: str | None = None
+    #: Peer section (None = not computed).
+    peer_table: PeerTable | None = None
 
     def val(self, col: str) -> float | None:
         """Snapshot feature as float (None = no coverage)."""

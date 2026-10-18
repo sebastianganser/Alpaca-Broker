@@ -60,6 +60,8 @@ class OverviewData:
     missing_requested: Sequence[str] = ()
     #: Requested tickers beyond the cap (ignored).
     ignored_requested: Sequence[str] = ()
+    #: Chart images written next to the ticker files (``TICKER.png``).
+    n_charts: int = 0
 
 
 def _spy_line(spy: Mapping[int, float | None]) -> str:
@@ -142,6 +144,14 @@ def render_overview(data: OverviewData) -> str:
         lines.append(
             "Heute keine Ticker-Dateien (zu wenige Gate-Ticker für den Screen)."
         )
+    if data.n_charts:
+        lines += [
+            "",
+            "Zu den Ticker-Dateien gehört je ein Chart `TICKER.png` im selben "
+            "Ordner (Tageskerzen eines Jahres, SMA50 / SMA200, 52-Wochen-Spanne, "
+            "Unterstützung / Widerstand, Volumen); der Text der Datei enthält "
+            "dieselben Ebenen.",
+        ]
     if data.missing_requested:
         lines += [
             "",
