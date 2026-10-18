@@ -221,6 +221,53 @@ class SourceStat:
 
 
 @dataclass(frozen=True)
+class SecTextRow:
+    """A stored text excerpt of a filing (press release ``EX-99.x`` or the 8-K body)."""
+
+    exhibit: str
+    excerpt: str
+
+
+@dataclass(frozen=True)
+class SecFilingRow:
+    """An SEC EDGAR filing of the company (metadata, plus texts if stored)."""
+
+    ticker: str
+    accession_number: str
+    form: str
+    filing_date: date
+    acceptance: datetime | None  # tz-aware EDGAR acceptance instant (None = unknown)
+    items: tuple[str, ...] = ()  # 8-K item codes, e.g. ("2.02", "9.01")
+    is_amendment: bool = False
+    texts: tuple[SecTextRow, ...] = ()
+
+
+@dataclass(frozen=True)
+class QuarterRow:
+    """A standardised fiscal quarter from the SEC XBRL facts (USD, as first reported).
+
+    ``filed`` is the date the row became public (point-in-time key). A figure that
+    is ``None`` is not reported / not derivable - never zero.
+    """
+
+    period_end: date
+    filed: date
+    fiscal_period: str | None = None  # Q1 ... Q4
+    form: str | None = None  # 10-Q | 10-K
+    revenue: float | None = None
+    gross_profit: float | None = None
+    operating_income: float | None = None
+    net_income: float | None = None
+    eps_diluted: float | None = None
+    operating_cash_flow: float | None = None
+    capex: float | None = None
+    free_cash_flow: float | None = None
+    cash_and_equivalents: float | None = None
+    total_debt: float | None = None
+    shares_outstanding: float | None = None
+
+
+@dataclass(frozen=True)
 class PeerRow:
     """One line of the peer table (values of the pack session; None = no coverage)."""
 
@@ -264,6 +311,10 @@ class TickerRaw:
     #: Real daily bars, ascending, up to the pack session (chart, ranges,
     #: volatility, earnings reactions).
     bars: list[BarRow] = field(default_factory=list)
+    #: SEC filings of the last 90 days (any order; PIT-filtered by :mod:`.pit`).
+    sec_filings: list[SecFilingRow] = field(default_factory=list)
+    #: Quarterly financials published by the pack day (any order).
+    quarters: list[QuarterRow] = field(default_factory=list)
     stats: dict[str, SourceStat] = field(default_factory=dict)
 
 

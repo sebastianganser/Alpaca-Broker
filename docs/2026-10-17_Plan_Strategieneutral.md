@@ -102,7 +102,7 @@ Felder wie Limit, Kursziel, Stop oder Positionsgröße lehnt der Parser ab – d
 | 3 | Context Pack v2: Gate, Screen, Abschnitte, `screen.csv`, `pack_candidates`, Tests; optional Pack-Aufbewahrung begrenzen | 3–4 d |
 | 4 | Forecast-Parser/Ingest, Chain-Schritt `stage2_review` → `forecast_review` (Jobzahl bleibt 26), Migration 039 | 2 d |
 | 5 | Deploy 1; Skill-Prompt `aktien-analyse` anpassen (liegt bei Sebastian, außerhalb des Repos); Probelauf mit einem Tag | 0,5 d |
-| 6 | Barrier/Hit-Model/Backtest-Rückbau, Migration 040, Test auf frischer DB | 1,5 d |
+| 6 | Barrier/Hit-Model/Backtest-Rückbau, Migration 041 (040 ist seit 18.10. die SEC-Migration), Test auf frischer DB | 1,5 d |
 | 7 | Deploy 2, Doku-Durchgang (Mission, ROADMAP: Sprint 11/12 wandern zum Bot) | 0,5 d |
 
 Gesamt ca. 10–12 Agenten-Tage.
@@ -117,7 +117,7 @@ Gesamt ca. 10–12 Agenten-Tage.
 
 - **Prognose-Richtung:** Claude prognostiziert die **absolute** Richtung (Kurs steigt / fällt / neutral); ausgewertet wird **absolut und relativ** (gegenüber Universums-Mittel und SPY).
 - **Auswahl:** Variante **D** (Hybrid: `screen.csv` für alle Gate-Ticker, Volldateien für 10 bullische + 10 bärische (anfangs per Config aus) + 5 Zufalls-Kontrollen + Wunsch-Ticker).
-- **Barrier-Label:** wird **gelöscht** (Migration 040), ebenso die leeren Stage-2-Tabellen.
+- **Barrier-Label:** wird **gelöscht** (Migration 041), ebenso die leeren Stage-2-Tabellen.
 - **H14-Sekundärziel:** keine Antwort → H14 bleibt unverändert; nach dem Löschen der Barrier-Spalte entfällt die Info-Zeile (vom Code abgefangen), die Vorab-Registrierung bleibt unberührt.
 - **Entscheidender Test (17.10.):** das **System** (Claudes Prognosen gegen das Gate-Universum, `decisive_mode = system`); der Mehrwert gegenüber der Shortlist wird zusätzlich berichtet; die rohe absolute Trefferquote wird nur berichtet; jede Änderung von `forecaster_version` startet eine neue eingefrorene Stichprobe.
 
@@ -132,7 +132,7 @@ Ursprüngliche Liste der offenen Freigaben:
 
 1. Forecast-Schema und vorab registrierte Bewertungskriterien – insbesondere: soll Claude die **absolute** Richtung prognostizieren (Kurs steigt/fällt) oder die **relative** (besser/schlechter als der Markt)? Empfehlung: absolute Richtung prognostizieren, aber beides auswerten, damit Marktbewegung und echte Auswahlqualität getrennt sichtbar sind.
 2. Auswahl-Option D, Anzahl der Volldateien und Zufalls-Kontrollen
-3. Migration 040 (löscht abgeleitete Barrier-Werte ohne Backup)
+3. Migration 041 (löscht abgeleitete Barrier-Werte ohne Backup)
 4. Sekundärziel in H14 (`return_barrier_14d` → `return_60d`, nur Information)
 5. Anpassung des Skill-Prompts `aktien-analyse`
 6. Datenändernde Produktionsläufe wie gewohnt einzeln

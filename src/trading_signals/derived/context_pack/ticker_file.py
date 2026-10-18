@@ -1,4 +1,4 @@
-"""Assemble one ticker file: YAML frontmatter plus the 13 sections."""
+"""Assemble one ticker file: YAML frontmatter plus the 15 sections."""
 
 from __future__ import annotations
 

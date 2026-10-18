@@ -32,8 +32,11 @@ from trading_signals.derived.context_pack.rows import (
     IvRow,
     MembershipRow,
     PoliticianRow,
+    QuarterRow,
     RatingRow,
     RawSources,
+    SecFilingRow,
+    SecTextRow,
     ShortInterestRow,
     SourceStat,
     TechnicalRow,
@@ -127,6 +130,23 @@ def make_fundamentals(
     data = {c: rng.uniform(0.01, 100.0, size=len(tickers)) for c in FUND_COLUMNS}
     data["market_cap"] = rng.uniform(1e9, 4e12, size=len(tickers))
     data["dividend_yield"] = rng.uniform(0.0, 0.05, size=len(tickers))
+    # the columns of migration 040 are drawn AFTER the older ones, so the values
+    # the older tests rely on do not change
+    n = len(tickers)
+    data["shares_outstanding"] = rng.uniform(1e8, 2e10, size=n)
+    data["float_shares"] = data["shares_outstanding"] * rng.uniform(0.7, 0.99, size=n)
+    data["held_percent_institutions"] = rng.uniform(0.3, 1.1, size=n)
+    data["held_percent_insiders"] = rng.uniform(0.0, 0.1, size=n)
+    data["short_percent_of_float"] = rng.uniform(0.003, 0.12, size=n)
+    data["free_cashflow"] = rng.uniform(-2e9, 9e10, size=n)
+    data["total_cash"] = rng.uniform(1e8, 1e11, size=n)
+    data["total_debt"] = rng.uniform(1e8, 1.5e11, size=n)
+    data["gross_margins"] = rng.uniform(0.15, 0.8, size=n)
+    data["recommendation_mean"] = rng.uniform(1.2, 3.6, size=n)
+    data["number_of_analyst_opinions"] = rng.integers(5, 45, size=n).astype(float)
+    data["recommendation_key"] = np.where(
+        data["recommendation_mean"] < 2.5, "buy", "hold"
+    )
     data["ticker"] = tickers
     data["snapshot_date"] = day - timedelta(days=2)
     data["most_recent_quarter"] = date(2026, 6, 30)
@@ -171,6 +191,139 @@ def make_bars(
         volume = float(rng.integers(1_000_000, 9_000_000))
         out.append(BarRow(s, open_, high, low, close, volume))
         prev = close
+    return out
+
+
+PRESS_RELEASE = (
+    "ACME Corp. Reports Third Quarter 2026 Results. Revenue of $12.3 billion, up 8% "
+    "year over year; diluted EPS of $1.45. The Board raised the quarterly dividend by "
+    "5% and authorized an additional $5 billion share repurchase program. "
+    "Management raised full-year guidance for revenue and earnings per share, citing "
+    "strong demand in the data center segment and improved operating leverage. "
+    "Conference call today at 5:00 p.m. Eastern. Forward-looking statements: this "
+    "release contains forward-looking statements that involve risks and uncertainties."
+)
+FILLER = (
+    " The company will provide further details in its next periodic report and on "
+    "its investor relations website; the information in this report is furnished "
+    "and not filed, and no forward-looking statement is a guarantee of future "
+    "performance, results or events, which are subject to the risks described in "
+    "the company's annual report and its other public filings."
+)
+BODY_502 = (
+    "Item 5.02 Departure of Directors. The Board accepted the resignation of the "
+    "Chief Financial Officer effective December 31." + FILLER
+)
+BODY_101 = (
+    "Item 1.01 Entry into a Material Definitive Agreement. The company entered into "
+    "a long-term supply agreement."
+)
+
+
+def _at(day: date, hour: int, minute: int = 0) -> datetime:
+    return datetime(day.year, day.month, day.day, hour, minute, tzinfo=NY)
+
+
+def make_sec_filings(ticker: str, day: date = SESSION) -> list[SecFilingRow]:
+    """Nine listed filings (one more than the table shows), four Form 144 notices
+    and three leaky rows: a filing accepted 16:05 ET on the session, one filed
+    after the session and one just outside the 90-day window."""
+
+    def row(back, hour, form, items=(), texts=(), amend=False, acc=None, minute=0):
+        filed = day - timedelta(days=back)
+        return SecFilingRow(
+            ticker=ticker,
+            accession_number=acc or f"0000000000-26-{back:06d}{hour:02d}",
+            form=form,
+            filing_date=filed,
+            acceptance=_at(filed, hour, minute),
+            items=tuple(items),
+            is_amendment=amend,
+            texts=tuple(SecTextRow(e, x) for e, x in texts),
+        )
+
+    return [
+        row(3, 17, "8-K", ("2.02", "9.01"), [("EX-99.1", PRESS_RELEASE)], minute=10),
+        row(6, 8, "8-K", ("5.02",), [("8-K", BODY_502)], minute=5),
+        row(
+            9,
+            9,
+            "8-K",
+            ("7.01", "9.01"),
+            [("EX-99.1", "Investor presentation for the autumn conference." + FILLER)],
+        ),
+        row(12, 7, "8-K/A", ("2.02",), amend=True),
+        row(18, 16, "SCHEDULE 13D", minute=30),
+        row(25, 12, "S-3ASR"),
+        row(30, 6, "10-Q"),
+        row(40, 8, "8-K", ("1.01",), [("8-K", BODY_101)]),
+        row(55, 8, "8-K", ("3.02",)),
+        *[row(5 + 7 * k, 10, "144", acc=f"0000000001-26-{k:08d}") for k in range(4)],
+        # accepted 16:05 ET on the session day: NOT public at the close
+        row(
+            0,
+            16,
+            "8-K",
+            ("8.01",),
+            [("EX-99.1", "LEAK press release after the bell")],
+            acc="0000000002-26-LEAK0001",
+            minute=5,
+        ),
+        # filed after the session: not public
+        SecFilingRow(
+            ticker,
+            "0000000003-26-LEAK0002",
+            "8-K",
+            day + timedelta(days=1),
+            _at(day + timedelta(days=1), 9),
+            ("2.02",),
+            False,
+            (SecTextRow("EX-99.1", "LEAK next day press release"),),
+        ),
+        # older than the 90-day window
+        row(100, 8, "8-K", ("2.02",), acc="0000000004-26-OLD00001"),
+    ]
+
+
+def make_quarters(ticker: str, day: date = SESSION) -> list[QuarterRow]:
+    """Twelve reported quarters (newest ended 2026-06-30) plus one leaky quarter that
+    was filed only after the session."""
+    ends = [
+        date(2026, 6, 30), date(2026, 3, 31), date(2025, 12, 31), date(2025, 9, 30),
+        date(2025, 6, 30), date(2025, 3, 31), date(2024, 12, 31), date(2024, 9, 30),
+        date(2024, 6, 30), date(2024, 3, 31), date(2023, 12, 31), date(2023, 9, 30),
+    ]  # fmt: skip
+    out = []
+    for k, end in enumerate(ends):
+        revenue = 1.0e10 * (1.0 + 0.02 * (len(ends) - k))
+        out.append(
+            QuarterRow(
+                period_end=end,
+                filed=end + timedelta(days=35),
+                fiscal_period=f"Q{(end.month - 1) // 3 + 1}",
+                form="10-K" if end.month == 12 else "10-Q",
+                revenue=revenue,
+                gross_profit=revenue * 0.52,
+                operating_income=revenue * 0.28,
+                net_income=revenue * 0.21,
+                eps_diluted=1.0 + 0.05 * (len(ends) - k),
+                operating_cash_flow=revenue * 0.30,
+                capex=revenue * 0.05,
+                free_cash_flow=revenue * 0.25,
+                cash_and_equivalents=8.0e9 + 1e8 * k,
+                total_debt=1.5e10,
+                shares_outstanding=1.5e10 * (1.0 + 0.01 * k),
+            )
+        )
+    out.append(
+        QuarterRow(
+            period_end=date(2026, 9, 30),
+            filed=day + timedelta(days=2),  # published after the session
+            fiscal_period="Q3",
+            form="10-Q",
+            revenue=9.999e10,
+        )
+    )
     return out
 
 
@@ -491,7 +644,10 @@ def make_raw(ticker: str, day: date = SESSION, seed: int = 0) -> RawSources:
         ),
     )
     t.bars = make_bars(ticker, day)
+    t.sec_filings = make_sec_filings(ticker, day)
+    t.quarters = make_quarters(ticker, day)
     t.stats = {
+        "sec_filings": SourceStat(day - timedelta(days=400), day, 80),
         "prices": SourceStat(date(2021, 10, 18), day, 1260),
         "estimates": SourceStat(date(2026, 4, 2), day, 130),
         "options_iv": SourceStat(date(2026, 8, 10), day, 50),

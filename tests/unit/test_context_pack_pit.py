@@ -286,7 +286,9 @@ def test_number_of_queries_does_not_depend_on_the_number_of_tickers():
         return session.execute.call_count
 
     few, many = count(3), count(25)
-    assert few == many and few <= 20  # batch queries, never per ticker x section
+    # batch queries, never per ticker x section (the SEC filings, their
+    # coverage and the quarterly financials added three of the ~24)
+    assert few == many and few <= 24
     assert count(0) == 0
 
 

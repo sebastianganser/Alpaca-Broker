@@ -313,8 +313,30 @@ def render_estimates(ctx: TickerContext) -> list[str]:
         ]
     else:
         lines += ["", f"- Rating-Aktionen der letzten {RATING_WINDOW_DAYS} Tage: keine"]
-    lines.append("")
+    lines += ["", yahoo_consensus_line(ctx), ""]
     return lines
+
+
+def yahoo_consensus_line(ctx: TickerContext) -> str:
+    """Yahoo's analyst consensus as raw values: mean, label and number of analysts.
+
+    ``recommendation_mean`` runs from 1 (strong buy) to 5 (sell); the label is
+    Yahoo's own text (``buy``, ``hold`` ...) and shown as it is. Each missing
+    part is no coverage, never a number.
+    """
+    key = ctx.fund.get("recommendation_key")
+    key_text = clean_text(key, 20) if isinstance(key, str) and key.strip() else NA
+    return metric_group(
+        [
+            [
+                "Yahoo-Analystenkonsens, Empfehlung Ø (1 = Strong Buy … 5 = Sell)",
+                num(ctx.fval("recommendation_mean")),
+                DASH,
+            ],
+            ["Schlüssel", key_text, DASH],
+            ["Analysten", integer(ctx.fval("number_of_analyst_opinions")), DASH],
+        ]
+    )
 
 
 def render_earnings(ctx: TickerContext) -> list[str]:

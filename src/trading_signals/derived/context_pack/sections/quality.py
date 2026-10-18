@@ -15,6 +15,7 @@ from trading_signals.derived.context_pack.model import (
     TickerContext,
     vix_regime_label,
 )
+from trading_signals.derived.context_pack.sections.filings import recent_filings
 from trading_signals.derived.context_pack.sections.flows import placed_date
 
 #: Sources of the freshness table, in display order: key -> German label.
@@ -32,6 +33,8 @@ SOURCE_LABELS: dict[str, str] = {
     "short_volume": "Short Volume (FINRA)",
     "options_iv": "Optionen (IV)",
     "news": "News / FinBERT",
+    "sec_filings": "SEC-Meldungen (EDGAR)",
+    "financials": "Quartalszahlen (SEC XBRL)",
 }
 #: Sources that have only months of history (unstable percentiles).
 YOUNG_SOURCES = ("estimates", "options_iv", "short_volume", "news")
@@ -69,6 +72,12 @@ def source_freshness(ctx: TickerContext) -> dict[str, date | None]:
         "short_volume": stat_last("short_volume"),
         "options_iv": max((i.snapshot_date for i in raw.iv), default=None),
         "news": stat_last("news"),
+        # newest filing of the 90-day window / newest published quarter
+        "sec_filings": max(
+            (f.filing_date for f in recent_filings(raw, ctx.session)),
+            default=None,
+        ),
+        "financials": max((q.filed for q in raw.quarters), default=None),
     }
 
 

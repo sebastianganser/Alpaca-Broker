@@ -69,6 +69,7 @@ NIGHTLY_UPSTREAM: dict[str, bool] = {
     "form4_collector": False,
     "news_alpaca": False,
     "sentiment_computer": False,
+    "sec_filings": False,
 }
 
 #: Jobs that are re-run once shortly after startup if their last scheduled

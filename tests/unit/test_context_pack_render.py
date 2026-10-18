@@ -447,7 +447,7 @@ def test_clean_text_flattens_and_neutralises_markup():
 def test_every_section_is_present_in_order(tmp_path):
     text = render(tmp_path)
     headings = re.findall(r"^## (\d+)\. ", text, re.M)
-    assert headings == [str(i) for i in range(1, 15)]
+    assert headings == [str(i) for i in range(1, 16)]
     for needle in (
         "Trend und Momentum",
         "Bewertung (relativ zum Sektor)",
@@ -462,6 +462,7 @@ def test_every_section_is_present_in_order(tmp_path):
         "Datenqualität und Frische",
         "Marktregime",
         "Peers (gleiche Branche)",
+        "SEC-Meldungen (8-K und weitere)",
     ):
         assert needle in text
     for sub in (
@@ -732,7 +733,7 @@ def test_a_ticker_without_any_data_renders_without_errors_or_placeholders(tmp_pa
         t.insider, t.ratings, t.politicians, t.headlines = [], [], [], []
         t.earnings, t.estimates, t.short_interest, t.ark, t.iv = [], [], [], [], []
         t.technical, t.memberships, t.holders, t.stats = None, [], None, {}
-        t.bars = []
+        t.bars, t.sec_filings, t.quarters = [], [], []
 
     text = render(tmp_path, mutate=mutate, raw=empty)
     assert text.startswith("---\npack_format: 2")
@@ -744,7 +745,7 @@ def test_a_ticker_without_any_data_renders_without_errors_or_placeholders(tmp_pa
     assert "Kurs (Schluss):** keine Abdeckung" in text
     assert "Nächster Termin:** kein Termin in den nächsten 90 Tagen bekannt" in text
     assert [h for h in re.findall(r"^## (\d+)\. ", text, re.M)] == [
-        str(i) for i in range(1, 15)
+        str(i) for i in range(1, 16)
     ]
     assert "Peers: keine Abdeckung (Branche und Sektor unbekannt)" in text
     assert "52-Wochen-Spanne: keine Abdeckung" in text

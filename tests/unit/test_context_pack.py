@@ -54,7 +54,10 @@ BUCKET_WORDS = (
     "composite",
     "screen/v1",
 )
-MAX_TICKER_FILE_BYTES = 13_800
+#: The densest synthetic file (every source filled, every table at its row
+#: limit, two long press-release excerpts) measures 17.4 KB; the limit was
+#: 13.8 KB before the SEC enrichment of 2026-10-18 (docs/CONTEXT_PACK.md section 9).
+MAX_TICKER_FILE_BYTES = 17_500
 
 
 @pytest.fixture(autouse=True)

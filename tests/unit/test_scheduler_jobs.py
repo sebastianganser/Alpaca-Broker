@@ -185,6 +185,30 @@ class TestUpstream:
         assert "news_alpaca" in stale and "options_iv_collector" in stale
         assert running == ["news_alpaca"]
 
+    def test_sec_filings_is_a_non_critical_upstream_the_chain_waits_for(self):
+        from sqlalchemy.dialects import postgresql
+
+        session = MagicMock()
+        session.execute.return_value.all.return_value = [
+            ("sec_filings", job_status.RUNNING)
+        ]
+        with patch(
+            "trading_signals.db.session.get_session",
+            lambda: _fake_session(session),
+        ):
+            stale, running = jobs.check_upstream(date(2026, 10, 2))
+        assert "sec_filings" in stale and running == ["sec_filings"]  # chain waits
+        # the freshness bound is the close of the target session (16:00 ET)
+        params = session.execute.call_args.args[0].compile(
+            dialect=postgresql.dialect()
+        ).params
+        started = [v for v in params.values() if hasattr(v, "hour")]
+        assert started and started[0].isoformat() == "2026-10-02T16:00:00-04:00"
+        # a failed filings night is never critical: no features/pack skipped
+        assert jobs.NIGHTLY_UPSTREAM["sec_filings"] is False
+        with patch.object(jobs, "price_coverage", return_value=(100, 100)):
+            assert jobs._critical_stale(date(2026, 10, 2), ["sec_filings"]) == []
+
     def test_wait_polls_until_not_running(self):
         results = iter([(["a"], ["a"]), (["a"], ["a"]), (["b"], [])])
         sleeps = []

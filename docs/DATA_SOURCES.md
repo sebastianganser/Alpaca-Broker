@@ -29,8 +29,8 @@
 | **Massive (ex Polygon)** | Short Volume (daily) + FINRA Short Interest (twice a month) | Free | Daily (volume) / weekly run (interest) | T+1 (volume) / ~7 business days after settlement date (interest) | 9.5c | ✅ Active |
 | **Wikipedia – index change tables** | Index membership history (S&P 500, Nasdaq 100) | Free | Monthly (`index_sync`) | Effective date of the change (editor lag not measured) | 9.5a | ✅ Active (source page changed, parser fixed 2026-10-16) |
 | **Alpaca Corporate Actions** | Renames, mergers (explains disappeared tickers) | Free | Weekly (`universe_validation`) + monthly (`index_sync`) | Process date of the action | 9.5c | 🟡 Code committed 2026-10-16, deploy pending |
-| **SEC EDGAR – Filings** (submissions API) | 8-K (+ item codes, press release / report excerpts), 10-Q/10-K, 144, 13D/13G, S-1/S-3, DEF 14A, NT 10-K/Q, 6-K | Free | Daily 04:00 CET | Minutes after acceptance (collected the same night, 22:00 ET cut-off) | 18.10.2026 | 🟡 Code ready 2026-10-18, deploy + backfill pending |
-| **SEC EDGAR – XBRL financials** (companyfacts API) | Quarterly revenue, profit, EPS, cash flow, FCF, cash, debt, shares | Free | Weekly (Sunday 14:00) | With the 10-Q/10-K filing | 18.10.2026 | 🟡 Code ready 2026-10-18, deploy + backfill pending |
+| **SEC EDGAR – Filings** (submissions API) | 8-K (+ item codes, press release / report excerpts), 10-Q/10-K, 144, 13D/13G, S-1/S-3, DEF 14A, NT 10-K/Q, 6-K | Free | Daily 04:00 CET | Minutes after acceptance (collected the same night, 22:00 ET cut-off) | 18.10.2026 | ✅ Deployed 2026-10-18 (`990c286`, migration 040); 120-day backfill the same evening: 9,633 filings + 2,372 texts from 740 companies |
+| **SEC EDGAR – XBRL financials** (companyfacts API) | Quarterly revenue, profit, EPS, cash flow, FCF, cash, debt, shares | Free | Weekly (Sunday 14:00) | With the 10-Q/10-K filing | 18.10.2026 | ✅ Deployed 2026-10-18 (`990c286`, migration 040); backfilled the same evening: 11,926 quarters for 642 tickers |
 
 ---
 
@@ -359,7 +359,7 @@ The maintained file is `S&P 500 Historical Components & Changes (Updated).csv` (
 
 ---
 
-## 13. SEC EDGAR – Filings and Press Releases (since 2026-10-18, code ready, deploy pending)
+## 13. SEC EDGAR – Filings and Press Releases (since 2026-10-18, deployed)
 
 **Category:** Company filings (metadata + text excerpts), point-in-time
 **API:** `https://data.sec.gov/submissions/CIK##########.json` (filing list per company), `https://www.sec.gov/Archives/edgar/data/<cik>/<accession>/<accession>.txt` (full-submission text, streamed for the press release)
@@ -376,10 +376,12 @@ One row per filing of every active universe company that has a CIK (share classe
 | `8-K`, `8-K/A` | Current reports with **item codes** (`2.02` results, `7.01`/`8.01` Reg FD / other events, `5.02` officer changes, `1.01`/`2.01` agreements/acquisitions, `4.02` non-reliance on financial statements, `1.05` cyber incident, `3.01` delisting notice, ...) |
 | `10-Q`, `10-K` (+ `/A`), `6-K`, `20-F`, `40-F` | Periodic reports; the foreign-private-issuer forms of the few ADRs in the universe |
 | `NT 10-K`, `NT 10-Q` | Late-filing notices - a red flag |
-| `144` | Notice of a planned insider sale |
-| `SC 13D/G` (+ `/A`) and, since the structured-data switch of Dec 2024, `SCHEDULE 13D/G` (+ `/A`) | Stakes >= 5 %: activists, passive holders |
+| `144` | Notice of a planned insider sale (stored under the issuer, see multi-party forms below) |
+| `SC 13D/G` (+ `/A`) and, since the structured-data switch of Dec 2024, `SCHEDULE 13D/G` (+ `/A`) | Stakes >= 5 %: activists, passive holders (stored under the company the stake is in) |
 | `S-1`, `S-3`, `S-3ASR` (+ `/A`) | Registration of securities: dilution / shelf offerings |
 | `DEF 14A`, `DEFM14A` | Proxy statements: pay, votes, mergers |
+
+**Multi-party forms (`144` and every 13D/13G variant, fix of 2026-10-18):** EDGAR lists such a filing in the submissions of **every party** - the filer / holder (BlackRock, JPMorgan ... filing a 13G about another company; the insider of a 144) and the subject company (the issuer the stake or sale is about). The submissions JSON does not say which role the listing company has, so a not-yet-stored filing of these forms is resolved through its SEC header (`SECClient.fetch_filing_header`: `<accession>.hdr.sgml`, 1-5 KB, fallback the head of `<accession>.txt`; parsed by `parse_header_parties`) and stored **only under the CIK of the `SUBJECT COMPANY` block**, with that CIK's tickers and URL. A filing whose subject is not a universe company is not stored; a header without a subject block counts the listing company as subject only if the header does not name it as filer; a failed header request skips only that filing (retried by the next runs). One lookup per accession and run, shared by all companies. An accession-number prefix is **not** a usable shortcut (it is the CIK that submitted the filing: Walmart submits its executives' 144s under its own login while being the issuer). Before the fix BLK held 650 and STT 162 13G rows that were stakes in other companies and ~200 subject copies were dropped by the unique key ([LEARNINGS.md](LEARNINGS.md) 2026-10-18); `scripts/repair/fix_sec_filing_subjects.py` repairs the stored rows.
 
 **Not collected:** Forms 3/4/5 (`form4_collector`), 13F (`form13f_collector`), `424B*` prospectus supplements (thousands of structured-note supplements per day from the banks), `425` / `SC TO` merger communications, exhibits of 10-K/10-Q.
 
@@ -392,9 +394,9 @@ One row per filing of every active universe company that has a CIK (share classe
 ### Schedule and Request Volume
 
 - **Daily 04:00 Berlin = 22:00 ET**, EDGAR's cut-off for same-day 8-Ks: the run sees the complete US day including after-the-close earnings releases (16:00-17:30 ET), lies outside the 22:30-03:00 collector load and 30 minutes before the nightly chain. 14-day lookback (robust against missed days).
-- Per run: 1 (`company_tickers.json`) + ≈ 650 submissions requests (one per CIK, 0.1-1 MB) + one request per filing text (≈ 10-60 on a normal day, up to ≈ 150 in peak earnings weeks) at 9 requests/s ≈ 5-10 minutes. `filings.recent` of the submissions JSON holds the newest ≈ 1,000 filings (at least one year); older pages are read when the lookback needs them.
-- **Initial backfill:** `scripts/repair/backfill_sec_filings.py` (dry run by default, `--apply`, `--days 120`, `--tickers`): 120 days ≈ 650 + 2,000-4,000 text requests ≈ 15-40 minutes. **Needs Sebastian's OK on production.**
-- Not yet an input of the nightly chain or the context pack: wiring is a separate step (add `sec_filings: False` to `NIGHTLY_UPSTREAM` then).
+- Per run: 1 (`company_tickers.json`) + ≈ 650 submissions requests (one per CIK, 0.1-1 MB) + one request per filing text (≈ 10-60 on a normal day, up to ≈ 150 in peak earnings weeks) at 9 requests/s ≈ 5-10 minutes. `filings.recent` of the submissions JSON holds the newest ≈ 1,000 filings (at least one year); older pages are read when the lookback needs them. **Plus one small header request (1-5 KB) per distinct not-yet-stored multi-party accession:** ≈ 45 new per normal day (≈ 17 13D/13G + ≈ 30 Form 144) and, because copies of universe filers whose subject is not covered (BlackRock & co.) are never stored, their re-reads on each of the 14 lookback days (≈ 100 on a normal day, a few hundred around the quarterly 13G amendment deadlines) - minutes at most, a failed lookup only skips its filing.
+- **Initial backfill:** `scripts/repair/backfill_sec_filings.py` (dry run by default, `--apply`, `--days 120`, `--tickers`): 120 days ≈ 650 + 2,000-4,000 text requests ≈ 15-40 minutes. **Needs Sebastian's OK on production.** Done 2026-10-18 19:50-20:02 with his OK (`collection_log` #2088): 9,633 filings + 2,372 texts from 740 companies.
+- Input of the context pack (section 15, [CONTEXT_PACK.md](CONTEXT_PACK.md) §6.4) and a non-critical nightly upstream: `NIGHTLY_UPSTREAM["sec_filings"] = False` (the 04:30 chain waits for a still running 04:00 job; a failed or stale night only makes the chain `partial`).
 
 ### Limitations
 
@@ -405,7 +407,7 @@ One row per filing of every active universe company that has a CIK (share classe
 
 ---
 
-## 14. SEC EDGAR – XBRL Quarterly Financials (since 2026-10-18, code ready, deploy pending)
+## 14. SEC EDGAR – XBRL Quarterly Financials (since 2026-10-18, deployed)
 
 **Category:** Standardised fundamentals from the company's own filings, point-in-time
 **API:** `https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json` (all us-gaap/dei facts of a company since its first XBRL filing, 0.3-0.5 MB gzip)
@@ -431,7 +433,7 @@ One row per ticker and fiscal quarter inside the retention window (`data_start_d
 
 - **Weekly, Sunday 14:00 Berlin** (after the other Sunday collectors, daytime, away from the nightly load and the seal runs). The full fact history is re-read every week; a new 10-Q/10-K adds a quarter, nothing else changes - the weekly job is its own backfill.
 - Per run: 1 + ≈ 650 `companyfacts` requests (one per CIK, share classes once) ≈ 250 MB ≈ 5-10 minutes.
-- **Initial run:** `scripts/repair/backfill_sec_financials.py` (dry run by default, `--apply`, `--tickers`) or simply the first scheduled run. **Needs Sebastian's OK on production.**
+- **Initial run:** `scripts/repair/backfill_sec_financials.py` (dry run by default, `--apply`, `--tickers`) or simply the first scheduled run. **Needs Sebastian's OK on production.** Done 2026-10-18 20:02-20:06 with his OK (`collection_log` #2089): 11,926 quarters for 642 tickers. 118 active tickers have no quarters: 15 ETFs, ≈ 95 foreign private issuers (6-K/20-F, IFRS - not parsed, known limit), OTC ADRs (BYDDY, KMTUY) and new listings (VYLR, FDXF); all domestic S&P 500 members are covered.
 - Not yet read by the context pack or the features: separate wiring step.
 
 ### Limitations
@@ -477,6 +479,7 @@ All data in the system is bounded by `DATA_START_DATE = 2021-01-01` (defined in 
 | `scripts/backfill_party_mapping.py` | Backfill party affiliation for politician_trades | One-time after C3 deploy |
 | `scripts/repair/backfill_sec_filings.py` | Dry run (default) / `--apply` of the SEC filings + press release backfill (120 days) | Once after the deploy of migration 040 (needs Sebastian's OK) |
 | `scripts/repair/backfill_sec_financials.py` | Dry run (default) / `--apply` of the SEC XBRL quarterly financials | Once after the deploy of migration 040 (needs Sebastian's OK) |
+| `scripts/repair/fix_sec_filing_subjects.py` | Dry run (default) / `--apply`: re-attribute stored 13D/13G/144 rows to the subject company of their SEC header, delete those whose subject is not a universe company (≈ 5,500 header requests, ≈ 20-25 min) | Once after the deploy of the multi-party fix (apply needs Sebastian's OK) |
 
 ---
 

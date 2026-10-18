@@ -3,7 +3,7 @@
 > Central navigator for all project documentation.
 > Start here to find the right document for your question.
 
-**Last updated:** 17 October 2026 (S&P 500 survivorship repair finished; three re-run reports of 2026-10-17 added)
+**Last updated:** 18 October 2026 (no document added or renamed; last entry of the session log is Session 35)
 
 ---
 
@@ -12,7 +12,7 @@
 | I'm looking for... | Document |
 |---|---|
 | Project overview, mission, principles, current status | [CLAUDE.md](../CLAUDE.md) |
-| **Where did the last session stop? What is deployed? What is open?** | [SESSION_LOG.md](SESSION_LOG.md) – last entry (Session 34) · [ROADMAP.md](ROADMAP.md) – "Offene Punkte" |
+| **Where did the last session stop? What is deployed? What is open?** | [SESSION_LOG.md](SESSION_LOG.md) – last entry (Session 35) · [ROADMAP.md](ROADMAP.md) – "Offene Punkte" |
 | How is the system deployed and structured? | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | What database tables exist? (DDL, migrations 001–038, retention) | [DATABASE.md](DATABASE.md) |
 | When do jobs run? (schedule, nightly chain) | [SCHEDULER.md](SCHEDULER.md) |

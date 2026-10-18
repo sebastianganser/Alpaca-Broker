@@ -7,6 +7,11 @@ A pack for session ``d`` may only show what was public at the close of ``d``
 
 * Form 4: ``acceptance_datetime`` < 16:00 ET on ``d`` when known, else
   ``filing_date <= d``, else ``transaction_date + 4 days <= d``;
+* SEC filings (``sec_filings``): the same EDGAR rule without the third step -
+  ``acceptance_datetime`` < 16:00 ET on ``d`` when known, else
+  ``filing_date <= d`` (:func:`edgar_public_by`, shared with Form 4);
+* quarterly financials (``financials_quarterly``): ``filed <= d`` (a date-only
+  source, like 13F ``filing_date``);
 * news: ``published_at`` < 16:00 ET on ``d`` (:func:`news_cutoff_utc`);
 * 13F: ``filing_date <= d``;
 * politicians: ``disclosure_date <= d``;
@@ -33,6 +38,8 @@ from trading_signals.derived.context_pack.rows import (
     EarningsRow,
     InsiderTradeRow,
     PoliticianRow,
+    QuarterRow,
+    SecFilingRow,
     SourceStat,
     TickerRaw,
 )
@@ -59,15 +66,41 @@ def session_close_et(d: date) -> datetime:
     return datetime.combine(d, MARKET_CLOSE_ET, tzinfo=NY_TZ)
 
 
+def edgar_public_by(
+    acceptance: datetime | None, filing_date: date | None, d: date
+) -> bool | None:
+    """The EDGAR rule shared by Form 4 and the SEC filings table.
+
+    Public at the close of ``d`` if EDGAR accepted the filing before 16:00 ET on
+    ``d`` (``acceptance``, strict: accepted AT the close is not yet public); if
+    the acceptance time is unknown the filing date decides (``filing_date <= d``).
+    ``None`` = neither is known (the caller applies its own fallback).
+    """
+    if acceptance is not None:
+        return _aware(acceptance) < session_close_et(d)
+    if filing_date is not None:
+        return filing_date <= d
+    return None
+
+
 def insider_public_by(t: InsiderTradeRow, d: date) -> bool:
     """Was this Form 4 trade public at the close of ``d``?"""
-    if t.acceptance is not None:
-        return _aware(t.acceptance) < session_close_et(d)
-    if t.filing_date is not None:
-        return t.filing_date <= d
+    decided = edgar_public_by(t.acceptance, t.filing_date, d)
+    if decided is not None:
+        return decided
     return t.transaction_date is not None and t.transaction_date <= d - timedelta(
         days=FALLBACK_FILING_LAG_DAYS
     )
+
+
+def sec_filing_public_by(f: SecFilingRow, d: date) -> bool:
+    """Was this SEC filing public at the close of ``d``? (the Form 4 rule)"""
+    return bool(edgar_public_by(f.acceptance, f.filing_date, d))
+
+
+def quarter_public_by(q: QuarterRow, d: date) -> bool:
+    """Was this quarterly row public by ``d``? (``filed`` is a date: ``filed <= d``)"""
+    return q.filed <= d
 
 
 def news_public_by(published_at: datetime, d: date) -> bool:
@@ -139,6 +172,8 @@ def apply_pit(raw: TickerRaw, d: date) -> TickerRaw:
         ],
         holders=holders,
         bars=[b for b in raw.bars if b.trade_date <= d],
+        sec_filings=[f for f in raw.sec_filings if sec_filing_public_by(f, d)],
+        quarters=[q for q in raw.quarters if quarter_public_by(q, d)],
         stats={k: v for k, v in raw.stats.items() if _stat_visible(v, d)},
     )
 
@@ -147,8 +182,11 @@ __all__ = [
     "EARNINGS_FORWARD_DAYS",
     "apply_pit",
     "earnings_visible",
+    "edgar_public_by",
     "insider_public_by",
     "news_public_by",
     "politician_public_by",
+    "quarter_public_by",
+    "sec_filing_public_by",
     "session_close_et",
 ]

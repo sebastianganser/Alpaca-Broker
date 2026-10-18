@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** 18 October 2026 (migrations 001–040; 040 is applied with the next deploy)
+**Last updated:** 18 October 2026 (migrations 001–040; production at 040 since the deploy of 2026-10-18 15:57)
 
 ---
 
@@ -1083,7 +1083,7 @@ Decision 2026-10-05: the system keeps exactly the last **20 calendar quarters** 
 
 ## Migrations
 
-Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–040 (linear chain, head = 040; production at 039 since 2026-10-18, 040 pending deploy).
+Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–040 (linear chain, head = 040; production at 040 since the deploy of 2026-10-18 15:57, `990c286`).
 
 | Migration | Description |
 |---|---|

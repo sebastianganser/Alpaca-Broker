@@ -97,6 +97,12 @@ Claude Code reaches the production system through three channels (no SSH):
 
 Scope and guard rules: in the WebGUI only the container `alpaca-broker`, its folders and its own User Scripts may be touched – never other containers (GynOrg, PostgreSQL), array, shares, users, network or security settings. Deploys/restarts are not allowed between 22:15 and 05:15 (collectors + nightly chain), while a job is running (`is_running` in `dashboard/summary`) or while a project script runs in the container (`docker top`; started via `run` or `run-bg`). `run` and `run-bg` are refused in the night window at the start; a detached `run-bg` is not stopped at 22:15, so it must end before the chain (04:30, Tue–Sat) or be stopped with `run-stop` (decision [2026-10-17](DECISIONS_ARCHITECTURE.md)). The shared Claude Code setup (permissions, subagents, skills) lives in `.claude/`; the working rules are in [CLAUDE.md](../CLAUDE.md).
 
+### Forecast VM and Reboot Resilience
+
+**Forecast VM** (`forecast-vm`, Unraid VM, Ubuntu 26.04, 192.168.1.250, set up 2026-10-18; package and German setup guide: [infra/forecast-vm/README.md](../infra/forecast-vm/README.md)): the headless Claude Code CLI (Opus) runs the skill `signal-warehouse-prognose` on the newest context pack and writes `forecasts.yaml` (+ `trade_ideas.yaml`) into the pack folder through the virtiofs mount `/mnt/alpaca` (= `/mnt/user/Workfiles/AlpacaBroker`). The systemd user timer `forecast-run.timer` fires Tue–Sat 07:30 Europe/Berlin with retries at 09:30 and 11:30 (they do nothing once `forecasts.yaml` exists; attempt limit `MAX_ATTEMPTS`). Logs: `~/alpaca/logs`; timer state: `systemctl --user list-timers`. The container never talks to the VM - the share is the only interface, and the on-time proof is the seal of the job `forecast_seal` ([FORECASTS.md](FORECASTS.md)).
+
+**Reboot resilience** (set 2026-10-18 for the unattended phase): Unraid "Enable auto start" (array) = Yes; the `postgresql18-alpaca` container has autostart on; `alpaca-broker` runs with `restart: unless-stopped`, and the startup catch-up re-runs the key jobs ([Startup catch-up](#startup-catch-up)); `forecast-vm` has VM autostart on, `linger=yes` (user timers run without a login), `forecast-run.timer` has `Persistent=true` (a missed run is made up after boot, the script's deadline guard protects), the Claude CLI login is stored on the VM and the virtiofs mount is in `/etc/fstab` with `nofail`.
+
 ---
 
 ## Project Structure
@@ -198,8 +204,8 @@ trading_signals/
 │   ├── target_backfill.py        # Forward returns 1/5/20/60d + barrier label (return_barrier_14d, …)
 │   ├── recompute.py              # Recompute TA, targets, st_* after a price-history refresh
 │   ├── context_pack/             # Context pack v2 ([CONTEXT_PACK.md](CONTEXT_PACK.md)): generator.py (entry point `ContextPackGenerator`), loader.py (batch SQL, the only DB access),
-│   │                             #   pit.py (point-in-time rules), model.py (gate-universe percentiles), sections/ (13 ticker-file sections), ticker_file.py, overview.py,
-│   │                             #   screen_csv.py, template.py (forecasts.yaml template), fmt.py, rows.py, constants.py
+│   │                             #   pit.py (point-in-time rules), model.py (gate-universe percentiles), sections/ (15 ticker-file sections; filings.py = section 15 "SEC-Meldungen"), ticker_file.py, overview.py,
+│   │                             #   screen_csv.py, template.py (forecasts.yaml template), financials.py (XBRL quarterly table), chart.py (TICKER.png), peers.py, technicals.py, fmt.py, rows.py, constants.py
 │   ├── forecasts.py              # Parses/validates forecasts.yaml (forecasts/v1) → forecast_reviews / forecasts (append-only, idempotent by file hash; on time only with a seal)
 │   ├── forecast_seal.py          # Job forecast_seal: SHA-256 of forecasts.yaml before the open → forecast_file_seals (the on-time proof)
 │   └── pack_candidates.py        # Screen candidates of a pack → pack_candidates (called by the pack generator, plan step 3)
@@ -309,12 +315,13 @@ context_packs/
 └── 2026-10-16/                   # one folder per market session (target session, ISO date)
     ├── 00_uebersicht.md          # overview: regime, coverage, gate counts, alphabetical file list, forecasts.yaml template + deadline
     ├── screen.csv                # every ticker that passed the quality gate: group percentiles, breadth, composite, flags (no bucket)
-    ├── AAPL.md  AMD.md  …        # full files of the screened tickers, alphabetical, ~9 KB each
+    ├── AAPL.md  AMD.md  …        # full files of the screened tickers, alphabetical, ~11–17.5 KB each
+    ├── AAPL.png AMD.png …        # one chart image per full file (candles, SMA50/200, support / resistance)
     └── forecasts.yaml            # written by the Claude broker skill (forecasts/v1, FORECASTS.md), read by forecast_review
 ```
 
 - **Selection (pack format 2):** the quality gate and the neutral screen `screen/v1` ([SCREEN.md](SCREEN.md)) on the session's `feature_snapshots`: ≤ 10 bullish candidates, 10 bearish (switched off by configuration), 5 random controls, plus the tickers of `requested_tickers.txt`. The files are alphabetical and carry no hint why they are in the pack; the buckets are stored in `pack_candidates` (same transaction, replaced on a re-run).
-- **Ticker files:** YAML frontmatter (`pack_format: 2`, `ticker`, `session`, `sector`, `data_freshness`) plus 13 sections (head, trend, valuation, fundamentals, estimates / analysts, earnings, smart money, positioning, news, sector, liquidity, data quality, regime). Every value is the raw value plus its percentile among the gate tickers; NULL is shown as "keine Abdeckung", never as 0. Raw-table sections (Form 4 trades, rating actions, headlines, 13F holders, politicians, short-interest settlements) are read with exactly the point-in-time cut-offs of the feature pipeline.
+- **Ticker files:** YAML frontmatter (`pack_format: 2`, `ticker`, `session`, `sector`, `data_freshness` incl. `sec_filings` and `financials`) plus 15 sections (head, trend, valuation, fundamentals, estimates / analysts, earnings, smart money, positioning, news, sector, liquidity, data quality, regime, peers, SEC filings; sections 14 and 15 were added additively, `pack_format` stays 2). Every value is the raw value plus its percentile among the gate tickers; NULL is shown as "keine Abdeckung", never as 0. Raw-table sections (Form 4 trades, rating actions, headlines, 13F holders, politicians, short-interest settlements, SEC filings) are read with exactly the point-in-time cut-offs of the feature pipeline.
 - **Encoding:** all files (packs, `screen.csv` and `forecast_auswertung.md`) are written as `utf-8-sig` (UTF-8 with BOM).
 - **Re-runs:** old `TICKER.md` / legacy `NN_*.md` files of the same day are deleted before writing; `forecasts.yaml` and unknown files are never touched. The overview is written last.
 - **Forecasts:** `forecast_review` scans all session folders for `forecasts.yaml` (schema `forecasts/v1`, format and pre-registered evaluation: [FORECASTS.md](FORECASTS.md)), stores each new file once (SHA-256, only after the deadline of its pack day, each file in its own savepoint) in `forecast_reviews` / `forecasts` (append-only; a changed file is a new review; `on_time` only if `decided_at` and the file's seal from the weekday job `forecast_seal` precede the 09:30 New York open), freezes the decisive sample of a forecaster version when it is complete and computes its verdict once (`forecast_criterion_samples`), and writes `forecast_auswertung.md` (blinded: counts only until a version's verdict exists). A rejected file or row → run status `partial` (alert).
@@ -323,6 +330,8 @@ context_packs/
 > **File permissions:** the container runs as `99:100`. The host directory must be owned by `99:100`:
 > `chown -R 99:100 /mnt/user/Workfiles/AlpacaBroker`.
 > Running scripts via `docker exec -u root …` creates root-owned files/folders that the app later cannot overwrite (e.g. a session folder or `forecast_auswertung.md`) – run scripts as the default container user, or re-`chown` afterwards. (The compose file contains a commented-out `user: "0:0"` fallback; fixing ownership is the preferred solution.)
+>
+> **Pack folders are `2777` (since 2026-10-18, `PACK_DIR_MODE` in `derived/context_pack/generator.py`):** the forecast VM writes `forecasts.yaml` as uid 1000 through virtiofs. Other-write was verified from the VM; group write via the supplementary group 100 could not be (virtiofsd may drop supplementary groups). The share root is `777` like every Unraid share ([DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) 2026-10-18).
 
 ---
 

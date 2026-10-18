@@ -531,8 +531,36 @@ def render_positioning(ctx: TickerContext) -> list[str]:
     latest = iv_rows[-1] if iv_rows else None
     if latest is not None:
         lines.append(f"- Stand Optionen: {age_text(latest.snapshot_date, d)}")
-    lines.append("")
+    lines += ["", *_yahoo_ownership_lines(ctx), ""]
     return lines
+
+
+def _yahoo_ownership_lines(ctx: TickerContext) -> list[str]:
+    """Short quote of the float and the holder shares, as Yahoo reports them."""
+    return [
+        metric_group(
+            [
+                ctx.fund_metric(
+                    "Laut Yahoo: Short-Quote am Streubesitz",
+                    "short_percent_of_float",
+                    percent,
+                    sector=True,
+                ),
+                ctx.fund_metric(
+                    "Anteil Institutionen (kann über 100 % liegen)",
+                    "held_percent_institutions",
+                    percent,
+                    sector=True,
+                ),
+                ctx.fund_metric(
+                    "Anteil Insider",
+                    "held_percent_insiders",
+                    percent,
+                    sector=True,
+                ),
+            ]
+        ),
+    ]
 
 
 def _realised_vs_implied(ctx: TickerContext, iv: float | None) -> str:

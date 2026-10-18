@@ -59,3 +59,29 @@ IV_RANK_MIN_OBS = 252
 BARS_LOOKBACK_DAYS = 840
 #: Peers shown in the peer section (``derived/context_pack/peers.py``).
 PEER_ROWS = 4
+
+# ── SEC filings (section 15) and quarterly financials (section 4) ────
+
+#: Calendar days of SEC filings shown in section 15.
+SEC_WINDOW_DAYS = 90
+#: Filings listed in the section-15 table (newest first); more are counted.
+SEC_FILING_ROWS = 6
+#: Characters of the section-15 excerpts, newest filing first (after flattening,
+#: ellipsis included): the newest press release gets about 500, the next one 300.
+#: The number of excerpts is the length of the tuple.
+SEC_EXCERPT_CHARS = (500, 300)
+#: Characters of a stored excerpt the loader fetches (a safe margin above
+#: :data:`SEC_EXCERPT_CHARS`; the stored text is already whitespace-normalised).
+SEC_TEXT_FETCH_CHARS = 800
+#: Quarters shown in the quarterly table of section 4.
+QUARTER_ROWS = 8
+#: Calendar days of quarterly financials loaded: 8 shown quarters plus the
+#: quarters a year before each of them (year-on-year growth) and a margin.
+FINANCIALS_LOOKBACK_DAYS = 1200
+#: A prior-year quarter ends this many days before (+/- the tolerance; 52/53-week
+#: fiscal calendars shift the quarter end by a few days).
+YEAR_DAYS = 365
+YEAR_TOLERANCE_DAYS = 20
+#: Change of the share count (fraction) below which it is called "hardly changed";
+#: cover-page counts of a different date add noise of a few tenths of a percent.
+SHARES_FLAT_BAND = 0.01

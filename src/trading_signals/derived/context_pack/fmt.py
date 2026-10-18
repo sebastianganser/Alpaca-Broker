@@ -87,6 +87,19 @@ def money(x: Any, unit: str = " USD", na: str = NA) -> str:
     return f"{v:.2f}{unit}"
 
 
+def millions(x: Any, na: str = NA) -> str:
+    """Amount in millions without unit, for dense tables (``12400``, ``85.3``).
+
+    The unit is named once in the table text. Whole millions from 100 on,
+    one decimal below; a covered zero stays ``0.0``.
+    """
+    v = to_float(x)
+    if v is None:
+        return na
+    m = v / 1e6
+    return f"{m:.0f}" if abs(m) >= 100 else f"{m:.1f}"
+
+
 def shares(x: Any, na: str = NA) -> str:
     """Share count, abbreviated (``12.3 Mio.``)."""
     v = to_float(x)

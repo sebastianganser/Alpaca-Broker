@@ -22,23 +22,29 @@ import pandas as pd
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Text,
     and_,
+    cast,
     func,
     or_,
     select,
     tuple_,
     type_coerce,
 )
+from sqlalchemy.dialects.postgresql import ARRAY, array
 from sqlalchemy.orm import Session
 
 from trading_signals.derived.context_pack.constants import (
     BARS_LOOKBACK_DAYS,
     EARNINGS_LOOKBACK_DAYS,
+    FINANCIALS_LOOKBACK_DAYS,
     HEADLINE_WINDOW_DAYS,
     HOLDER_ROWS,
     INSIDER_WINDOW_DAYS,
     POLITICIAN_WINDOW_DAYS,
     RATING_WINDOW_DAYS,
+    SEC_TEXT_FETCH_CHARS,
+    SEC_WINDOW_DAYS,
     SNAPSHOT_MAX_AGE_DAYS,
 )
 from trading_signals.derived.context_pack.model import UniverseInfo
@@ -58,8 +64,11 @@ from trading_signals.derived.context_pack.rows import (
     IvRow,
     MembershipRow,
     PoliticianRow,
+    QuarterRow,
     RatingRow,
     RawSources,
+    SecFilingRow,
+    SecTextRow,
     ShortInterestRow,
     SourceStat,
     TechnicalRow,
@@ -87,6 +96,8 @@ HEADLINE_FETCH_PER_TICKER = 15
 IV_LOOKBACK_DAYS = 370
 ARK_LOOKBACK_DAYS = 30
 SHORT_INTEREST_LOOKBACK_DAYS = 85
+#: Columns of ``fundamentals_snapshot`` that hold text (everything else is numeric).
+FUNDAMENTALS_TEXT_COLUMNS = ("recommendation_key",)
 
 
 class PackLoader(Protocol):
@@ -132,6 +143,16 @@ def _frame(rows: Iterable[Any], columns: Sequence[str], table) -> pd.DataFrame:
         else:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
+
+
+def _tickers_overlap(column: Any, tickers: Sequence[str]) -> Any:
+    """``column && ARRAY[tickers]`` with both sides as ``text[]``.
+
+    ``sec_filings.tickers`` is ``varchar(20)[]``; psycopg2 sends a Python list as
+    an untyped ``ARRAY['A', 'B']`` (``text[]``) and PostgreSQL does not compare
+    ``varchar[]`` with ``text[]``, so both operands are cast explicitly.
+    """
+    return cast(column, ARRAY(Text)).overlap(array(list(tickers), type_=Text))
 
 
 class SqlPackLoader:
@@ -203,7 +224,12 @@ class SqlPackLoader:
         data = [{c: getattr(r, c) for c in cols} for r in rows]
         df = pd.DataFrame(data, columns=cols)
         for c in cols:
-            if c not in ("ticker", "snapshot_date", "most_recent_quarter"):
+            if c not in (
+                "ticker",
+                "snapshot_date",
+                "most_recent_quarter",
+                *FUNDAMENTALS_TEXT_COLUMNS,
+            ):
                 df[c] = pd.to_numeric(df[c], errors="coerce")
         return df.set_index("ticker", drop=False)
 
@@ -243,6 +269,9 @@ class SqlPackLoader:
             self._memberships,
             self._holders,
             self._bars,
+            self._sec_filings,
+            self._sec_coverage,
+            self._financials,
             self._stats,
         ):
             loader(d, tickers, raw)
@@ -778,6 +807,154 @@ class SqlPackLoader:
                     low=_f(r[4]),
                     close=_f(r[5]),
                     volume=_f(r[6]),
+                )
+            )
+
+    def _sec_filings(self, d: date, tickers: list[str], raw: RawSources) -> None:
+        """SEC filings of the last 90 days plus the texts of those that have one.
+
+        The coarse bound is ``filing_date <= d`` (EDGAR's filing date is never
+        before the acceptance date, so every filing accepted before 16:00 ET on
+        ``d`` is inside); :func:`~.pit.apply_pit` applies the exact acceptance
+        rule. Share classes of one CIK (GOOG / GOOGL) share the row: it is
+        attached to every selected ticker of its ``tickers`` array.
+        """
+        from trading_signals.db.models.sec import SecFiling as F
+        from trading_signals.db.models.sec import SecFilingText as X
+
+        wanted = set(tickers)
+        rows = self.session.execute(
+            select(
+                F.accession_number,
+                F.tickers,
+                F.form,
+                F.filing_date,
+                F.acceptance_datetime,
+                F.items,
+                F.is_amendment,
+            )
+            .where(_tickers_overlap(F.tickers, tickers))
+            .where(F.filing_date <= d)
+            .where(F.filing_date >= d - timedelta(days=SEC_WINDOW_DAYS))
+        ).all()
+        if not rows:
+            return
+        texts: dict[str, list[SecTextRow]] = {}
+        text_rows = self.session.execute(
+            select(
+                X.accession_number,
+                X.exhibit,
+                # only the head of the excerpt: the section prints ~500 characters
+                func.left(X.excerpt, SEC_TEXT_FETCH_CHARS),
+            )
+            .where(X.accession_number.in_([r[0] for r in rows]))
+            .order_by(X.accession_number, X.exhibit)
+        ).all()
+        for accession, exhibit, excerpt in text_rows:
+            if excerpt:
+                texts.setdefault(accession, []).append(SecTextRow(exhibit, excerpt))
+        for accession, members, form, filed, accepted, items, amendment in rows:
+            for ticker in sorted(wanted.intersection(members or ())):
+                raw.get(ticker).sec_filings.append(
+                    SecFilingRow(
+                        ticker=ticker,
+                        accession_number=accession,
+                        form=form,
+                        filing_date=filed,
+                        acceptance=accepted,
+                        items=tuple(items or ()),
+                        is_amendment=bool(amendment),
+                        texts=tuple(texts.get(accession, ())),
+                    )
+                )
+
+    def _sec_coverage(self, d: date, tickers: list[str], raw: RawSources) -> None:
+        """First / last filing date and number of stored filings per ticker.
+
+        Tells "the source covers this company but nothing was filed in the last
+        90 days" from "the source knows nothing about it" (no CIK, never
+        collected). Grouped by the ``tickers`` array, so a share class that has
+        no row under its own ``ticker`` is covered through its siblings' rows.
+        """
+        from trading_signals.db.models.sec import SecFiling as F
+
+        rows = self.session.execute(
+            select(
+                F.tickers,
+                func.min(F.filing_date),
+                func.max(F.filing_date),
+                func.count(),
+            )
+            .where(_tickers_overlap(F.tickers, tickers))
+            # the EDGAR rule of pit.edgar_public_by: a filing accepted after the
+            # close of d must not even show up in the counts
+            .where(F.filing_date <= d)
+            .where(
+                or_(
+                    F.acceptance_datetime.is_(None),
+                    F.acceptance_datetime < session_close_et(d),
+                )
+            )
+            .group_by(F.tickers)
+        ).all()
+        wanted = set(tickers)
+        merged: dict[str, tuple[date, date, int]] = {}
+        for members, first, last, n in rows:
+            for ticker in wanted.intersection(members or ()):
+                old = merged.get(ticker)
+                merged[ticker] = (
+                    (first, last, int(n))
+                    if old is None
+                    else (min(old[0], first), max(old[1], last), old[2] + int(n))
+                )
+        for ticker, (first, last, n) in merged.items():
+            raw.get(ticker).stats["sec_filings"] = SourceStat(first, last, n)
+
+    def _financials(self, d: date, tickers: list[str], raw: RawSources) -> None:
+        """Quarterly XBRL financials published by ``d`` (``filed <= d``)."""
+        from trading_signals.db.models.sec import FinancialsQuarterly as Q
+
+        rows = self.session.execute(
+            select(
+                Q.ticker,
+                Q.period_end,
+                Q.filed,
+                Q.fiscal_period,
+                Q.form,
+                Q.revenue,
+                Q.gross_profit,
+                Q.operating_income,
+                Q.net_income,
+                Q.eps_diluted,
+                Q.operating_cash_flow,
+                Q.capex,
+                Q.free_cash_flow,
+                Q.cash_and_equivalents,
+                Q.total_debt,
+                Q.shares_outstanding,
+            )
+            .where(Q.ticker.in_(tickers))
+            .where(Q.filed <= d)
+            .where(Q.period_end >= d - timedelta(days=FINANCIALS_LOOKBACK_DAYS))
+        ).all()
+        for r in rows:
+            raw.get(r[0]).quarters.append(
+                QuarterRow(
+                    period_end=r[1],
+                    filed=r[2],
+                    fiscal_period=r[3],
+                    form=r[4],
+                    revenue=_f(r[5]),
+                    gross_profit=_f(r[6]),
+                    operating_income=_f(r[7]),
+                    net_income=_f(r[8]),
+                    eps_diluted=_f(r[9]),
+                    operating_cash_flow=_f(r[10]),
+                    capex=_f(r[11]),
+                    free_cash_flow=_f(r[12]),
+                    cash_and_equivalents=_f(r[13]),
+                    total_debt=_f(r[14]),
+                    shares_outstanding=_f(r[15]),
                 )
             )
 

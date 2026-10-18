@@ -54,7 +54,11 @@ from trading_signals.derived.context_pack.constants import (
     RETURN_LOOKBACK_DAYS,
     SCREEN_FILE,
 )
-from trading_signals.derived.context_pack.loader import PackLoader, SqlPackLoader
+from trading_signals.derived.context_pack.loader import (
+    FUNDAMENTALS_TEXT_COLUMNS,
+    PackLoader,
+    SqlPackLoader,
+)
 from trading_signals.derived.context_pack.model import (
     CrossSection,
     TickerContext,
@@ -95,10 +99,13 @@ _CHART_FILE_RE = re.compile(r"^(?P<ticker>[A-Z][A-Z0-9.\-]{0,9})\.png$")
 #: Encoding of every file on the share (UTF-8 with BOM, as before).
 ENCODING = "utf-8-sig"
 
-#: Pack folders are group-writable with the setgid bit: the forecast VM writes
-#: forecasts.yaml & co. as a member of the share's group (gid 100 "users",
-#: infra/forecast-vm/setup-vm-root.sh) while the container runs as 99:100.
-PACK_DIR_MODE = 0o2775
+#: Pack folders are world-writable (setgid kept): the forecast VM writes
+#: forecasts.yaml & co. as uid 1000 through virtiofs while the container runs as
+#: 99:100. Group write (2775, the VM user is in gid 100) is not enough there:
+#: virtiofsd switches to the caller's uid/gid but may drop its supplementary
+#: groups, whereas other-write was verified from the VM on 2026-10-18. The
+#: share root itself is 777, like every Unraid share.
+PACK_DIR_MODE = 0o2777
 
 
 def _make_group_writable(path: Path) -> None:
@@ -326,7 +333,12 @@ class ContextPackGenerator:
         for col in returns.columns:
             table[col] = returns[col].reindex(table.index)
         for col in fund.columns:
-            if col not in ("ticker", "snapshot_date", "most_recent_quarter"):
+            if col not in (
+                "ticker",
+                "snapshot_date",
+                "most_recent_quarter",
+                *FUNDAMENTALS_TEXT_COLUMNS,
+            ):
                 table[f"fund_{col}"] = pd.to_numeric(
                     fund[col], errors="coerce"
                 ).reindex(table.index)

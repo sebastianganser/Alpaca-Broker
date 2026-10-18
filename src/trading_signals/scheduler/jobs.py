@@ -163,8 +163,12 @@ def run_sec_filings_collector() -> None:
     same-day filings (8-Ks are accepted until 22:00 ET and get that day's
     filing date), so the 04:30 nightly chain sees the complete US day - in
     particular after-the-close earnings 8-Ks (16:00-17:30 ET). Outside the
-    22:30-03:00 collector load, 30 minutes before the chain; not a nightly
-    upstream (the pack does not read the table yet). ~650 submissions
+    22:30-03:00 collector load, 30 minutes before the chain. A non-critical
+    nightly upstream (``NIGHTLY_UPSTREAM["sec_filings"] = False``): the context
+    pack reads the table (section 15), so the chain waits for a still running
+    job, and a failed night only makes the chain ``partial``. The daily
+    04:00 run is always after the close of the session the chain targets (also
+    on weekends: Saturday 04:00 is Friday 22:00 ET). ~650 submissions
     requests + one request per 8-K text, well under 15 minutes.
     """
     from trading_signals.collectors.sec_filings_collector import SecFilingsCollector

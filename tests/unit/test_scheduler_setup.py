@@ -70,11 +70,39 @@ class TestCreateScheduler:
         assert _hm(sched.get_job("log_retention")) == ("3", "30")
         assert _hm(sched.get_job("fred_collector")) == ("4", "15")
         assert _hm(sched.get_job("nightly_chain")) == ("4", "30")
-        # a regular scheduled job, not a paused chain step, not a chain input yet
+        # a regular scheduled job, not a paused chain step; the context pack reads
+        # the table (section 15), so it is a NON-critical nightly upstream
         assert "sec_filings_collector" not in CHAIN_STEP_JOB_IDS
-        assert "sec_filings" not in NIGHTLY_UPSTREAM
+        assert NIGHTLY_UPSTREAM["sec_filings"] is False
         assert "sec_filings_collector" not in CATCHUP_JOBS
         assert JOB_COLLECTOR_NAMES["sec_filings_collector"] == "sec_filings"
+
+    def test_sec_filings_upstream_is_fresh_after_every_session_close(self):
+        """The 04:00 run is after the close (16:00 ET) of the session the chain targets.
+
+        ``check_upstream`` calls a collector fresh if it STARTED after the target
+        session's close: 04:00 Berlin is 22:00 ET (23:00 ET in the weeks where
+        Europe is already back on winter time) of the previous US day, also on
+        Saturday (Friday's session) - and the 04:30 chain never runs on a day
+        without a new session, so a quiet weekend or holiday cannot make it stale.
+        """
+        from datetime import date, datetime, timedelta
+        from zoneinfo import ZoneInfo
+
+        berlin, ny = ZoneInfo("Europe/Berlin"), ZoneInfo("America/New_York")
+        for session, run_day in (
+            (date(2026, 10, 15), date(2026, 10, 16)),  # Thursday -> Friday 04:00
+            (date(2026, 10, 16), date(2026, 10, 17)),  # Friday -> Saturday 04:00
+            (date(2026, 10, 30), date(2026, 10, 31)),  # EU on winter time, US not
+            (date(2026, 11, 2), date(2026, 11, 3)),  # both on winter time
+        ):
+            started = datetime(
+                run_day.year, run_day.month, run_day.day, 4, 0, tzinfo=berlin
+            )
+            close = datetime(
+                session.year, session.month, session.day, 16, 0, tzinfo=ny
+            )
+            assert started - close >= timedelta(hours=6)
 
     def test_sec_financials_runs_weekly_on_sunday_afternoon(self):
         sched = create_scheduler()

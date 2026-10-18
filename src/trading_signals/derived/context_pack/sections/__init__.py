@@ -13,6 +13,9 @@ from trading_signals.derived.context_pack.sections.estimates import (
     render_earnings,
     render_estimates,
 )
+from trading_signals.derived.context_pack.sections.filings import (
+    render_sec_filings,
+)
 from trading_signals.derived.context_pack.sections.flows import (
     render_positioning,
     render_smart_money,
@@ -36,9 +39,9 @@ from trading_signals.derived.context_pack.sections.quality import (
 
 Section = Callable[[TickerContext], list[str]]
 
-#: Order = section numbers 1 ... 14 (the headings carry the numbers). The peer
-#: section was added last (additive change of pack format 2): sections 1-13
-#: keep their numbers.
+#: Order = section numbers 1 ... 15 (the headings carry the numbers). The peer
+#: section (14) and the SEC filings (15) were added last (additive changes of
+#: pack format 2): sections 1-13 keep their numbers.
 SECTIONS: tuple[Section, ...] = (
     render_head,
     render_trend,
@@ -54,6 +57,7 @@ SECTIONS: tuple[Section, ...] = (
     render_quality,
     render_regime,
     render_peers,
+    render_sec_filings,
 )
 
 __all__ = ["SECTIONS", "Section"]

@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_DATA.md](DECISIONS_DATA.md) · [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md)
 
-**Last updated:** 17 October 2026
+**Last updated:** 18 October 2026
 
 ---
 
@@ -222,6 +222,13 @@
 **Decision:** Three more commands of the single User Script (`158bc59`): `run-bg scripts/…py [args]` starts the same `docker exec … python -u` detached (`setsid nohup`), output goes to `ops/bg-job.log` and ends with `## <timestamp> exit code <rc>`; `run-log [N]` shows whether a project script is running (via `docker top`) plus the log tail; `run-stop` sends SIGTERM to the project script processes. Argument validation is the same as for `run`. Only one project script at a time (`run-bg` refuses while one runs). `deploy`, `restart` and the deploy worker right before the container recreate refuse while a project script runs in the container; `status` lists running scripts.
 **Rationale:** the long-running repair must survive the popup and still be protected from the host operations that would kill it; `docker top` reads the process list from the host, so the image needs no `procps`.
 **Consequence:** The window guard (no start 22:15–05:15) only applies at the start – a detached run is **not** stopped at 22:15, so it must end before the nightly chain (04:30, Tuesday–Saturday) or be stopped with `run-stop`; scripts that write `feature_snapshots` must not overlap the chain (deadlock risk, 2026-10-15). Monitoring: `run-log`, the API, and the popup text rather than the cached share file (LEARNINGS 2026-10-17).
+
+### [2026-10-18] Pack Folders Are World-Writable (2777) for the Forecast VM
+
+**Context:** Since 2026-10-18 the forecast VM (`forecast-vm`, Ubuntu, Claude Code CLI) writes `forecasts.yaml` and `trade_ideas.yaml` into the pack folders over a virtiofs mapping of `/mnt/user/Workfiles/AlpacaBroker`, while the container creates those folders as `99:100`. The VM user has uid 1000 and sits in gid 100 as a supplementary group. The generator had set `PACK_DIR_MODE = 0o2775` (setgid, group write).
+**Decision:** `PACK_DIR_MODE = 0o2777` (`derived/context_pack/generator.py`): pack folders stay setgid but are writable by others. The share root is `777` like every Unraid share.
+**Rationale:** From the VM, writing as "other" was verified (the VM user creates files as `1000:1000`, mode `664`). Group write through the supplementary group 100 could not be verified: virtiofsd switches to the caller's uid/gid but may drop its supplementary groups, so `2775` could silently fail exactly when the forecast must be on time (a missing file is a missed forecast). The integrity guarantee that matters - the forecast file existed unchanged before the open - comes from the hash seal of `forecast_seal` ([FORECASTS.md](FORECASTS.md)), not from file permissions.
+**Consequence:** Files written by the VM are `1000:1000`, mode `664`; the container (`99:100`) reads them as "other" and never modifies them - the generator only touches its own ticker files and never `forecasts.yaml`. Any other user or process that can reach the share can now also create or remove files in a pack folder (the folder has no sticky bit); an edited or late `forecasts.yaml` shows up through the seal (hash and time), not through permissions. Revisit to `2775` if group write via gid 100 is verified from the VM (not done on 2026-10-18).
 
 ---
 
