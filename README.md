@@ -12,7 +12,7 @@ Build a data-driven research platform that aggregates signals from multiple sour
 - **🖥️ Dashboard:** FastAPI + React SPA with 7 pages (Dashboard, Universe, Signals, Features, Logs, Settings, Ticker Detail)
 - **📈 760 Active Tickers** (17 Oct 2026, after the S&P 500 survivorship repair): S&P 500 + Nasdaq 100 + ARK holdings + benchmark/sector ETFs, point-in-time universe for features
 - **🗄️ PostgreSQL 18:** raw data layer + recomputable derived features + feature store, rolling 20-quarter retention
-- **🤖 Automated:** APScheduler with 26 jobs (13 daily incl. the nightly chain, 7 weekly, 2 monthly, 4 chain steps)
+- **🤖 Automated:** APScheduler with 27 jobs (13 daily incl. the nightly chain, 1 weekday seal job in New York time, 7 weekly, 2 monthly, 4 chain steps)
 - **🧠 Feature Pipeline:** Daily feature vectors (~97 features in 17 groups) with forward-return and barrier-label backfill, daily Context Pack for the analysis skill
 - **📰 News Sentiment:** Alpaca News API + ProsusAI/finbert for headline-based sentiment scoring
 - **🔒 Paper Only:** Hardcoded safety check – **never** live trading

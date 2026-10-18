@@ -26,6 +26,7 @@ NEW_TABLES = (
     "forecasts",
     "pack_candidates",
     "forecast_criterion_samples",
+    "forecast_file_seals",
 )
 
 
@@ -79,6 +80,7 @@ def test_upgrade_creates_the_new_tables_and_drops_the_stage2_tables():
         "forecasts",
         "pack_candidates",
         "forecast_criterion_samples",
+        "forecast_file_seals",
     ]
     assert all(c.kwargs["schema"] == "signals" for c in op.create_table.call_args_list)
     executed = [str(c.args[0]) for c in op.execute.call_args_list]
@@ -99,6 +101,7 @@ def test_downgrade_drops_the_new_tables_and_restores_the_stage2_tables_like_035(
     op = _run(mod, "downgrade")
     dropped = [c.args[0] for c in op.drop_table.call_args_list]
     assert dropped == [
+        "forecast_file_seals",
         "forecast_criterion_samples",
         "pack_candidates",
         "forecasts",
@@ -126,3 +129,23 @@ def test_the_orm_mirrors_the_migrated_schema_including_check_constraints():
 def test_the_stage2_tables_are_gone_from_the_orm():
     assert not [t for t in Base.metadata.tables if "stage2" in t]
     assert {f"signals.{n}" for n in NEW_TABLES} <= set(Base.metadata.tables)
+
+
+def test_the_seal_table_has_the_contracted_columns_and_unique_key():
+    op = _run(_load("039_forecasts.py"), "upgrade")
+    seals = _migration_tables(op)["forecast_file_seals"]
+    assert {c.name for c in seals.columns} == {
+        "id",
+        "session_date",
+        "file_path",
+        "file_sha256",
+        "file_size",
+        "sealed_at",
+    }
+    assert all(not c.nullable for c in seals.columns if c.name != "id")
+    assert seals.c.sealed_at.type.timezone is True  # TIMESTAMPTZ
+    assert seals.c.sealed_at.server_default is not None
+    unique = [c for c in seals.constraints if isinstance(c, sa.UniqueConstraint)]
+    assert [[col.name for col in u.columns] for u in unique] == [
+        ["session_date", "file_sha256"]
+    ]

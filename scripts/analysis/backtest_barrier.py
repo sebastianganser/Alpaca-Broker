@@ -24,9 +24,11 @@ Usage (inside the container):
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -39,6 +41,123 @@ FILTER_ATR_MIN = 0.01
 FILTER_ATR_MAX = 0.03
 REGIME_VIX_MAX = 25.0
 SMA_REGIME = 200
+
+# ── Frozen copy of the retired context-pack score (plan 2026-10-17, step 3) ──
+# The hand-weighted score left the context pack with pack format 2. The K1
+# barrier backtest still reproduces its report with this copy; it is removed
+# together with this script in plan step 6.
+
+# PROVISIONAL score weights — NOT validated.
+# Originally taken from the Sprint 9 ML analysis top features, but that
+# analysis was biased (pooled correlations, row-iid tests, leaky CV; see
+# review finding H4). Treat these purely as a hand-tuned placeholder until
+# the rebuilt analysis (daily rank IC / purged CV) or R1/F1 provide
+# validated importances.
+#
+# Weights are applied to per-date cross-sectional percentile ranks
+# (centered: pct_rank - 0.5), never to raw values, so the scale of a
+# feature does not matter. Market-wide features (macro_*, breadth_*) were
+# removed: they are identical for all tickers on a date and cannot rank
+# candidates (they would be skipped automatically anyway).
+PRELIMINARY_WEIGHTS = {
+    "analyst_rating_score": 0.15,
+    "insider_net_buy_count_30d": 0.12,
+    "ark_conviction_score": 0.10,
+    "price_vs_sma50": 0.10,
+    "sentiment_momentum": 0.08,
+    "sue_last": 0.08,
+    "rsi_14": -0.07,  # negative = oversold is bullish
+    "relative_strength_spy": 0.10,
+    "sector_relative_return_20d": 0.08,
+    "volume_ratio_20d": 0.04,
+}
+
+#: Minimum number of contributing (non-constant, non-null) features.
+MIN_CONTRIBUTING_FEATURES = 3
+
+
+def _numeric(val: Any) -> float | None:
+    """Float value of a snapshot entry (bool -> 0/1), None if not numeric."""
+    if val is None or isinstance(val, (str, date)):
+        return None
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def compute_preliminary_scores(
+    snapshots: list[dict],
+    weights: dict[str, float] | None = None,
+    min_features: int = MIN_CONTRIBUTING_FEATURES,
+) -> list[dict]:
+    """Rank-based preliminary score for one date's snapshots (pure function).
+
+    For every weighted feature the cross-sectional percentile rank over the
+    snapshots that have a value is computed (average ties,
+    ``(rank-1)/(n-1)``) and centered (``- 0.5`` -> range [-0.5, 0.5]).
+    The score is ``sum(weight * centered_rank)`` over the features a ticker
+    has; missing features count as neutral (0).
+
+    Features with fewer than 2 distinct values on that date (e.g.
+    market-wide features, or all-equal values) carry no information and get
+    NO weight (they do not count as contributing).
+
+    Args:
+        snapshots: Feature dicts of ONE snapshot date (must contain "ticker").
+        weights: Feature -> weight (default :data:`PRELIMINARY_WEIGHTS`).
+        min_features: Tickers with fewer contributing features get
+            ``score = None``.
+
+    Returns:
+        New dicts (input is not mutated) with ``score``,
+        ``score_features_used`` and ``score_contributions``
+        (``{feature: {value, pct_rank, weight, contribution}}``).
+    """
+    weights = PRELIMINARY_WEIGHTS if weights is None else weights
+    out = [dict(s) for s in snapshots]
+
+    # feature -> {row index: centered pct rank}
+    ranks: dict[str, dict[int, float]] = {}
+    for feature in weights:
+        vals = [(i, _numeric(s.get(feature))) for i, s in enumerate(out)]
+        vals = [(i, v) for i, v in vals if v is not None]
+        if len({v for _, v in vals}) < 2:
+            continue  # constant / empty on this date -> no weight
+        sorted_vals = sorted(v for _, v in vals)
+        n = len(sorted_vals)
+        # average rank for ties (1-based)
+        first_pos: dict[float, int] = {}
+        counts: dict[float, int] = {}
+        for pos, v in enumerate(sorted_vals, start=1):
+            first_pos.setdefault(v, pos)
+            counts[v] = counts.get(v, 0) + 1
+        ranks[feature] = {
+            i: ((first_pos[v] + (counts[v] - 1) / 2.0) - 1.0) / (n - 1) - 0.5
+            for i, v in vals
+        }
+
+    for i, snap in enumerate(out):
+        contributions: dict[str, dict[str, float]] = {}
+        score = 0.0
+        for feature, weight in weights.items():
+            r = ranks.get(feature, {}).get(i)
+            if r is None:
+                continue
+            contrib = weight * r
+            score += contrib
+            contributions[feature] = {
+                "value": _numeric(snap.get(feature)),
+                "pct_rank": r + 0.5,
+                "weight": weight,
+                "contribution": contrib,
+            }
+        enough = len(contributions) >= min_features
+        snap["score"] = round(score, 6) if enough else None
+        snap["score_features_used"] = len(contributions)
+        snap["score_contributions"] = contributions
+    return out
 
 
 def parse_floats(value: str) -> list[float]:
@@ -66,8 +185,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def load_features(session, start: date, end: date | None) -> pd.DataFrame:
     from sqlalchemy import text
-
-    from trading_signals.derived.context_pack_generator import PRELIMINARY_WEIGHTS
 
     wanted = [*PRELIMINARY_WEIGHTS, "dollar_volume_20d", "atr_14_pct",
               "earnings_days_until", "macro_vix"]
@@ -110,8 +227,6 @@ def load_prices(session, start: date) -> pd.DataFrame:
 
 def score_all(features: pd.DataFrame) -> pd.DataFrame:
     """Context-pack score per date (same function as production)."""
-    from trading_signals.derived.context_pack_generator import compute_preliminary_scores
-
     parts = []
     for d, g in features.groupby("snapshot_date", sort=True):
         recs = g.to_dict("records")

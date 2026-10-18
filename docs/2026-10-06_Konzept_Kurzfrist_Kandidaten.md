@@ -1,6 +1,8 @@
 # Konzept – Kurzfrist-Kandidaten (1–14 Tage, Gewinnmitnahme 0,5–1 %)
 
 > **Historisch – abgelöst durch den strategieneutralen Umbau (Plan [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md), Entscheidung Sebastian 17.10.2026; [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md) „Strategy-Neutral Rework Approved“).** Alpaca-Broker prognostiziert nur noch (absolute Richtung je Ticker und Horizont, siehe [FORECASTS.md](FORECASTS.md)); Handelsregeln wie Barrier, Stop und Haltedauer gehören einem späteren eigenen Bot. Dieses Konzept bleibt gültig, bis die Prognose-Pipeline deployt ist, und dokumentiert, was gebaut und getestet wurde (K1–K5).
+>
+> **Context-Pack-Teile ersetzt (18.10.2026):** §7.5 (Risiko-Vorfilter, Top 5 nach vorläufigem Score) und §7.7 (Rückkanal `decisions.yaml`, Index-Warnhinweis, `stage2_auswertung.md`) beschreiben den Pack bis `pack_format: 1`. Der Pack v2 (`pack_format: 2`: Qualitäts-Gate statt ATR-/Earnings-Filter, neutraler Screen mit Zufalls-Kontrollen, `screen.csv`, `TICKER.md` alphabetisch, Rückkanal `forecasts.yaml`, kein Index-Warnhinweis, keine Handelsparameter) ist in [CONTEXT_PACK.md](CONTEXT_PACK.md) beschrieben; er ist im Code umgesetzt und wird mit Plan-Schritt 4 deployt.
 
 **Stand:** 6. Oktober 2026
 **Gegenstand:** Ausrichtung der täglichen Kandidatenauswahl auf das tatsächliche Handelsziel,
@@ -198,6 +200,8 @@ Statt weiterer Querschnitts-Kennzahlen werden **seltene, datierbare Ereignisse**
 
 ## 7.5 Stufe 1 als Risiko-Vorfilter (ab 2026-10-06)
 
+> **Ersetzt (18.10.2026) durch den neutralen Screen und das Qualitäts-Gate des Context Pack v2** ([CONTEXT_PACK.md](CONTEXT_PACK.md), [SCREEN.md](SCREEN.md)). Der Text unten dokumentiert den Pack bis `pack_format: 1`.
+
 Solange kein Modell den Walk-forward besteht, liefert Alpaca-Broker **handelbare** statt „vorhergesagter“ Kandidaten. Die eigentliche Auswahl trifft der Claude-Broker in Stufe 2.
 
 | Regel | Wert | Grund |
@@ -235,6 +239,8 @@ Solange kein Modell den Walk-forward besteht, liefert Alpaca-Broker **handelbare
 - **Deutung:** passt zur Literatur (Schwäche nach Aufnahme). Kleine Fallzahl, Ergebnis nach Sicht festgestellt → **nur Hinweis**: ein Warnhinweis „frisch in Index aufgenommen“ für Stufe 2 ist plausibel, aber nicht belegt.
 
 ## 7.7 Vorwärtstest Stufe 2 + Index-Warnhinweis (ab 2026-10-07)
+
+> **Ersetzt (18.10.2026):** Rückkanal `decisions.yaml` → `forecasts.yaml` ([FORECASTS.md](FORECASTS.md)), Bewertung mit der Barrier-Regel → `forecast_review`; der Index-Warnhinweis entfällt im Pack v2 (die Mitgliedschaft steht nur noch als Fakt im Kopf der Ticker-Datei, [CONTEXT_PACK.md](CONTEXT_PACK.md)).
 
 Bisher hat kein Baustein von Stufe 1 einen Vorsprung gezeigt (§7.3, §7.6). Ungetestet ist nur noch **Stufe 2** – der Claude-Broker mit Live-Daten. Sie wird ab jetzt auf neuen Daten gemessen (echter Vorwärtstest, kein Rückblick möglich). Festgelegt **vor** der ersten Entscheidung (2026-10-07):
 

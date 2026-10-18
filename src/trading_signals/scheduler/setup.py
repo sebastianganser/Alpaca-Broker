@@ -12,6 +12,10 @@ Nightly timeline (US close = 22:00 CET, 21:00 during DST-mismatch weeks)::
     04:30 nightly_chain: TA catch-up → feature_pipeline → target_backfill
                          → forecast_review → context_pack
                          (waits for running upstream jobs)
+
+    Weekdays 09:00 / 09:15 / 09:25 America/New_York (15:00 / 15:15 / 15:25
+    Berlin, one hour earlier in the weeks of the clock change): forecast_seal
+    seals forecasts.yaml before the open (NYSE sessions only).
 """
 
 from __future__ import annotations
@@ -23,6 +27,12 @@ from trading_signals.scheduler import jobs
 from trading_signals.scheduler.registry import CHAIN_STEP_JOB_IDS
 
 TIMEZONE = "Europe/Berlin"
+
+#: Scheduler options of single jobs. The seal job refuses to run at or after
+#: the open anyway, so a run that is delayed by more than a few minutes
+#: (restart, blocked scheduler) is dropped and reported as missed instead of
+#: running pointlessly.
+JOB_OPTIONS: dict[str, dict] = {"forecast_seal": {"misfire_grace_time": 300}}
 
 # (job_id, function, cron kwargs, name)
 JOB_DEFINITIONS: list[tuple[str, object, dict, str]] = [
@@ -107,6 +117,19 @@ JOB_DEFINITIONS: list[tuple[str, object, dict, str]] = [
         jobs.run_nightly_chain,
         {"hour": 4, "minute": 30},
         "Nightly Chain (TA → Features → Targets → Context Pack)",
+    ),
+    # Seal of the forecast file before the US open: the on-time proof of the
+    # pre-registered criterion (docs/FORECASTS.md section 2). New York time.
+    (
+        "forecast_seal",
+        jobs.run_forecast_seal,
+        {
+            "timezone": "America/New_York",
+            "day_of_week": "mon-fri",
+            "hour": 9,
+            "minute": "0,15,25",
+        },
+        "Forecast File Seal (SHA-256 of forecasts.yaml before the US open)",
     ),
     # ── Weekly (Sunday) ──
     (
@@ -211,9 +234,12 @@ def create_scheduler() -> BackgroundScheduler:
     )
     for job_id, func, cron, name in JOB_DEFINITIONS:
         kwargs = {"next_run_time": None} if job_id in CHAIN_STEP_JOB_IDS else {}
+        kwargs.update(JOB_OPTIONS.get(job_id, {}))
+        cron = dict(cron)  # a job may bring its own timezone (forecast_seal)
+        timezone = cron.pop("timezone", TIMEZONE)
         scheduler.add_job(
             func,
-            CronTrigger(timezone=TIMEZONE, **cron),
+            CronTrigger(timezone=timezone, **cron),
             id=job_id,
             name=name,
             **kwargs,

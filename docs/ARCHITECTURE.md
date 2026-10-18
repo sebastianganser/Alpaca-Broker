@@ -195,8 +195,11 @@ trading_signals/
 │   ├── feature_pipeline.py       # ~97 features / 17 groups (incl. st_*, short_interest_*) per PIT-universe ticker and session
 │   ├── target_backfill.py        # Forward returns 1/5/20/60d + barrier label (return_barrier_14d, …)
 │   ├── recompute.py              # Recompute TA, targets, st_* after a price-history refresh
-│   ├── context_pack_generator.py # Stage-1 risk pre-filter + provisional ranking → Markdown packs
-│   ├── forecasts.py              # Parses/validates forecasts.yaml (forecasts/v1) → forecast_reviews / forecasts (append-only, idempotent by file hash)
+│   ├── context_pack/             # Context pack v2 ([CONTEXT_PACK.md](CONTEXT_PACK.md)): generator.py (entry point `ContextPackGenerator`), loader.py (batch SQL, the only DB access),
+│   │                             #   pit.py (point-in-time rules), model.py (gate-universe percentiles), sections/ (13 ticker-file sections), ticker_file.py, overview.py,
+│   │                             #   screen_csv.py, template.py (forecasts.yaml template), fmt.py, rows.py, constants.py
+│   ├── forecasts.py              # Parses/validates forecasts.yaml (forecasts/v1) → forecast_reviews / forecasts (append-only, idempotent by file hash; on time only with a seal)
+│   ├── forecast_seal.py          # Job forecast_seal: SHA-256 of forecasts.yaml before the open → forecast_file_seals (the on-time proof)
 │   └── pack_candidates.py        # Screen candidates of a pack → pack_candidates (called by the pack generator, plan step 3)
 ├── analysis/
 │   ├── feature_report.py   # Monthly FeatureAnalysisEngine (daily rank IC, excess returns) → analysis_reports
@@ -255,7 +258,7 @@ flowchart TD
     CHAIN --> FS["feature_snapshots (features incl. st_*)"]
     FS --> TGT["Targets: return_1d/5d/20d/60d + barrier label"]
     TGT --> S2["forecast_review: forecasts.yaml → forecast_reviews / forecasts, frozen sample + verdict (once), forecast_auswertung.md"]
-    FS --> CP["Context Pack (risk pre-filter + provisional ranking) → Markdown on Unraid share"]
+    FS --> CP["Context Pack v2 (quality gate + neutral screen, screen.csv, ticker files, pack_candidates) → Unraid share"]
     CP -. "Claude broker skill writes forecasts.yaml" .-> S2
     TGT --> FA["feature_analysis (monthly, 1st 07:00) → analysis_reports"]
 ```
@@ -279,7 +282,7 @@ flowchart TD
     F --> G["3. target_backfill (returns + barrier label)"]
     G --> H["4. forecast_review"]
     H --> I{"feature_pipeline SUCCESS or PARTIAL?"}
-    I -- yes --> J["5. context_pack_generator(target)"]
+    I -- yes --> J["5. context_pack_generator(target): pack v2"]
     I -- no --> K["context pack SKIPPED"]
     J --> L["overall status → collection_log nightly_chain"]
     K --> L
@@ -295,25 +298,24 @@ flowchart TD
 
 ## Context Pack Output (Unraid share)
 
-Written by [derived/context_pack_generator.py](../src/trading_signals/derived/context_pack_generator.py) and the `forecast_review` step below `CONTEXT_PACK_PATH` (default `/mnt/user/Workfiles/AlpacaBroker/context_packs`):
+Written by [derived/context_pack/](../src/trading_signals/derived/context_pack/) (nightly chain step `context_pack_generator`; format reference for the skill author: [CONTEXT_PACK.md](CONTEXT_PACK.md)) and the `forecast_review` step below `CONTEXT_PACK_PATH` (default `/mnt/user/Workfiles/AlpacaBroker/context_packs`):
 
 ```
 context_packs/
+├── requested_tickers.txt         # optional: tickers that always get a full file (one per line)
 ├── forecast_auswertung.md        # Forecast evaluation report (German), rewritten on every forecast_review run
-└── 2026-10-14/                   # one folder per market session (target session, ISO date)
-    ├── 00_uebersicht.md          # overview: ranking, market context, exclusions, data quality,
-    │                             #   decisions.yaml template (replaced by forecasts.yaml with plan step 3)
-    ├── 01_<TICKER>.md            # top candidates (default top 5), rank-prefixed
-    ├── 02_<TICKER>.md
-    ├── …
+└── 2026-10-16/                   # one folder per market session (target session, ISO date)
+    ├── 00_uebersicht.md          # overview: regime, coverage, gate counts, alphabetical file list, forecasts.yaml template + deadline
+    ├── screen.csv                # every ticker that passed the quality gate: group percentiles, breadth, composite, flags (no bucket)
+    ├── AAPL.md  AMD.md  …        # full files of the screened tickers, alphabetical, ~9 KB each
     └── forecasts.yaml            # written by the Claude broker skill (forecasts/v1, FORECASTS.md), read by forecast_review
 ```
 
-- **Selection:** stage-1 risk pre-filter (dollar volume > 0, `atr_14_pct` between 1 % and 3 %, no earnings within 21 calendar days, ≥ 3 contributing features), then sorted by a **provisional, unvalidated** rank-based score (`PRELIMINARY_WEIGHTS`).
-- **Candidate files:** YAML frontmatter (`ticker`, `as_of`, `rank`, `preliminary_score`, `universe_size`, `sector`, `industry`, optional `close`/`adv_20d_musd`/`earnings_in_days`/`atr_14_pct`/`index_added`, **`selection: risk_prefilter`**, **`ranking_validated: false`**, `data_completeness`) + Markdown body with feature values and percentiles.
-- **Encoding:** all files (packs and `forecast_auswertung.md`) are written as `utf-8-sig` (UTF-8 with BOM).
-- **Re-runs:** old `NN_*.md` candidate files of the same day are deleted before writing; the overview is written even on days without eligible candidates.
-- **Forecasts:** `forecast_review` scans all session folders for `forecasts.yaml` (schema `forecasts/v1`, format and pre-registered evaluation: [FORECASTS.md](FORECASTS.md)), stores each new file once (SHA-256) in `forecast_reviews` / `forecasts` (append-only; a changed file is a new review), freezes the decisive sample of a forecaster version when it is complete and computes its verdict once (`forecast_criterion_samples`), and writes `forecast_auswertung.md`. A rejected file or row → run status `partial` (alert). The pack generator still writes the old `decisions.yaml` template until plan step 3.
+- **Selection (pack format 2):** the quality gate and the neutral screen `screen/v1` ([SCREEN.md](SCREEN.md)) on the session's `feature_snapshots`: ≤ 10 bullish candidates, 10 bearish (switched off by configuration), 5 random controls, plus the tickers of `requested_tickers.txt`. The files are alphabetical and carry no hint why they are in the pack; the buckets are stored in `pack_candidates` (same transaction, replaced on a re-run).
+- **Ticker files:** YAML frontmatter (`pack_format: 2`, `ticker`, `session`, `sector`, `data_freshness`) plus 13 sections (head, trend, valuation, fundamentals, estimates / analysts, earnings, smart money, positioning, news, sector, liquidity, data quality, regime). Every value is the raw value plus its percentile among the gate tickers; NULL is shown as "keine Abdeckung", never as 0. Raw-table sections (Form 4 trades, rating actions, headlines, 13F holders, politicians, short-interest settlements) are read with exactly the point-in-time cut-offs of the feature pipeline.
+- **Encoding:** all files (packs, `screen.csv` and `forecast_auswertung.md`) are written as `utf-8-sig` (UTF-8 with BOM).
+- **Re-runs:** old `TICKER.md` / legacy `NN_*.md` files of the same day are deleted before writing; `forecasts.yaml` and unknown files are never touched. The overview is written last.
+- **Forecasts:** `forecast_review` scans all session folders for `forecasts.yaml` (schema `forecasts/v1`, format and pre-registered evaluation: [FORECASTS.md](FORECASTS.md)), stores each new file once (SHA-256, only after the deadline of its pack day, each file in its own savepoint) in `forecast_reviews` / `forecasts` (append-only; a changed file is a new review; `on_time` only if `decided_at` and the file's seal from the weekday job `forecast_seal` precede the 09:30 New York open), freezes the decisive sample of a forecaster version when it is complete and computes its verdict once (`forecast_criterion_samples`), and writes `forecast_auswertung.md` (blinded: counts only until a version's verdict exists). A rejected file or row → run status `partial` (alert).
 
 > [!IMPORTANT]
 > **File permissions:** the container runs as `99:100`. The host directory must be owned by `99:100`:
@@ -341,7 +343,7 @@ The job store is in-memory, so APScheduler cannot detect misfires across restart
 
 ### Retention
 
-- **Data retention** (weekly, Sunday 03:00): keeps the last **20 calendar quarters** (`DATA_RETENTION_QUARTERS`, cutoff `quarter_cutoff(20)`). Deletes per table in its own savepoint; excludes `earnings_calendar`, `collection_log`, `universe`, `ticker_blacklist`, `index_membership`. Backfills must use `retention.data_start_date()` and never collect data before the window.
+- **Data retention** (weekly, Sunday 03:00): keeps the last **20 calendar quarters** (`DATA_RETENTION_QUARTERS`, cutoff `quarter_cutoff(20)`). Deletes per table in its own savepoint; excludes `earnings_calendar`, `collection_log`, `universe`, `ticker_blacklist`, `index_membership` and the forecast evaluation records (`forecast_reviews`, `forecasts`, `forecast_criterion_samples`, `forecast_file_seals`, `pack_candidates`). Backfills must use `retention.data_start_date()` and never collect data before the window.
 - **Log retention** (daily 03:30): deletes `collection_log` rows older than **90 days** and marks stale runs.
 
 ### API security

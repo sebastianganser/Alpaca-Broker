@@ -55,7 +55,7 @@ sample and the verdict once.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from datetime import date
 from typing import Any
 
@@ -787,6 +787,67 @@ def _freeze_version(
     return frozen
 
 
+def _version_runs(base: pd.DataFrame) -> list[tuple[str | None, list[Any]]]:
+    """Blocks of consecutive sessions that share ONE forecaster version.
+
+    ``base`` holds the on-time directional forecasts of one horizon. The
+    sessions are those that have at least one such forecast, in ascending
+    order (the global session order of the sample rule); every block is
+    ``(version, sessions)``. A session with forecasts of several versions
+    belongs to no run (label ``None``): two forecasters in one session cannot
+    form one clean sample, so such a session separates the runs around it.
+    """
+    runs: list[tuple[str | None, list[Any]]] = []
+    for day, column in base.groupby(DATE_COL, sort=True)["forecaster_version"]:
+        versions = sorted(set(column))
+        label = versions[0] if len(versions) == 1 else None
+        if label is not None and runs and runs[-1][0] == label:
+            runs[-1][1].append(day)
+        else:
+            runs.append((label, [day]))
+    return runs
+
+
+def _analyse_versions(
+    base: pd.DataFrame, horizon: int, need: int, per_side: int
+) -> dict[str, dict[str, Any]]:
+    """Sample status of every forecaster version (the sample of a version is its
+    FIRST CONTIGUOUS run in the global session order).
+
+    * ``frozen`` - the first run reached the size (a later change of the
+      version does not touch a sample that is already full);
+    * ``insufficient_data`` - the first run is still the newest block: the
+      sample is filling up;
+    * ``aborted`` - another version followed before the sample was full: the
+      partial sample is reported and never evaluated;
+    * ``version_reused`` - the version string came back after an
+      interruption that happened before the sample was full: never frozen,
+      the forecaster has to choose a new version string to start a sample.
+    """
+    runs = _version_runs(base)
+    last = len(runs) - 1
+    occurrences: dict[str, list[tuple[int, list[Any]]]] = {}
+    for i, (label, days) in enumerate(runs):
+        if label is not None:
+            occurrences.setdefault(label, []).append((i, days))
+    out: dict[str, dict[str, Any]] = {}
+    for version, occ in occurrences.items():
+        first_block, first_days = occ[0]
+        rows = base[(base["forecaster_version"] == version)
+                    & base[DATE_COL].isin(first_days)]
+        res = _freeze_version(rows, horizon, version, need, per_side)
+        reused = len(occ) > 1
+        if res["status"] != "frozen":
+            if reused:
+                res["status"] = "version_reused"
+            elif first_block != last:
+                res["status"] = "aborted"
+        res["runs"] = len(occ)
+        res["reused"] = reused
+        out[version] = res
+    return out
+
+
 def freeze_sample(
     forecasts: pd.DataFrame,
     horizon: int = PRIMARY_HORIZON,
@@ -807,15 +868,26 @@ def freeze_sample(
     returns that happen to be (un)available. Late and neutral forecasts do
     not count.
 
-    A change of the forecaster version (prompt / skill / model) automatically
-    starts a new sample: the active version is that of the newest on-time
-    directional forecast (or ``forecaster_version``); the other versions are
-    listed under ``earlier_versions`` as ``frozen`` (reached the size) or
-    ``aborted`` (partial sample, never evaluated).
+    **Version rule** (FORECASTS.md section 6, clarified 2026-10-18 before the
+    first forecast): the sample of a version is its FIRST CONTIGUOUS run in the
+    global order of the sessions that have an on-time directional forecast
+    (any version). A change of the version before the sample is full
+    interrupts the run: the partial sample is ``aborted`` and never
+    evaluated; the same version string used again after such an interruption
+    is ``version_reused`` and never frozen (a re-used string would mix two
+    separated stretches into one sample). A sample that already reached its
+    size is unaffected by what follows.
 
-    Returns ``status`` ``insufficient_data`` (with ``progress``) or ``frozen``
+    The active version is that of the newest on-time directional forecast (or
+    ``forecaster_version``); the others are listed under ``earlier_versions``
+    with their status (``frozen`` / ``aborted`` / ``version_reused`` /
+    ``insufficient_data``).
+
+    Returns ``status`` ``insufficient_data`` (with ``progress``), ``frozen``
     with ``sessions`` (ISO dates), ``forecast_ids``, counts and a ``key``
-    (:func:`sample_key`). Step 4 persists a frozen sample once.
+    (:func:`sample_key`), or for the active version ``aborted`` /
+    ``version_reused`` (``progress`` = its first run, never evaluated).
+    ``forecast_review`` persists a frozen sample once.
     """
     h = int(horizon)
     need = int(min_dates or criterion_min_sessions(h))
@@ -826,17 +898,15 @@ def freeze_sample(
                                int(min_per_side)) | {"earlier_versions": []}
     newest = base.sort_values([DATE_COL, "forecaster_version"], kind="stable")
     active = forecaster_version or str(newest["forecaster_version"].iloc[-1])
-    out = _freeze_version(base[base["forecaster_version"] == active], h, active,
-                          need, int(min_per_side))
-    others = []
-    for version in sorted(set(base["forecaster_version"]) - {active}):
-        res = _freeze_version(base[base["forecaster_version"] == version], h,
-                              version, need, int(min_per_side))
-        others.append({
-            "forecaster_version": version,
-            "status": "frozen" if res["status"] == "frozen" else "aborted",
-            "first_date": res["first_date"], "progress": res["progress"],
-        })
+    analysed = _analyse_versions(base, h, need, int(min_per_side))
+    out = analysed.get(active) or _freeze_version(
+        base.iloc[0:0], h, active, need, int(min_per_side))
+    others = [
+        {"forecaster_version": v, "status": res["status"],
+         "first_date": res["first_date"], "progress": res["progress"],
+         "reused": res.get("reused", False)}
+        for v, res in analysed.items() if v != active
+    ]
     others.sort(key=lambda o: (o["first_date"], o["forecaster_version"]))
     out["earlier_versions"] = others
     return out
@@ -967,11 +1037,13 @@ def verdict_from_frozen(
     """
     decisive_mode = _check_mode(decisive_mode)
     if frozen.get("status") != "frozen":
+        # insufficient_data (filling up), aborted / version_reused (never frozen)
         return {
             "horizon": int(frozen["horizon"]),
             "registered": int(frozen["horizon"]) == PRIMARY_HORIZON,
             "forecaster_version": frozen["forecaster_version"],
-            "decisive_mode": decisive_mode, "status": "insufficient_data",
+            "decisive_mode": decisive_mode,
+            "status": frozen.get("status", "insufficient_data"),
             "progress": frozen["progress"],
             "earlier_versions": frozen.get("earlier_versions", []),
         }
@@ -1024,6 +1096,64 @@ def primary_criterion(
 # ── Orchestration and report ─────────────────────────────────────────
 
 
+def progress_by_version(forecasts: pd.DataFrame) -> pd.DataFrame:
+    """Counts per forecaster version and horizon - no return, no outcome.
+
+    The only thing a report may show about a version whose decisive sample is
+    not yet frozen and judged (blinding, FORECASTS.md section 6): how many
+    sessions and calls exist. Columns: ``forecaster_version``,
+    ``horizon_days``, ``first_session``, ``last_session``, ``n_sessions``
+    (sessions with an on-time forecast), ``n_up`` / ``n_down`` / ``n_neutral``
+    (on-time calls) and ``n_late``.
+    """
+    cols = ["forecaster_version", "horizon_days", "first_session", "last_session",
+            "n_sessions", "n_up", "n_down", "n_neutral", "n_late"]
+    if forecasts is None or len(forecasts) == 0:
+        return pd.DataFrame(columns=cols)
+    f = prepare_forecasts(forecasts)
+    rows = []
+    for (version, h), g in f.groupby(["forecaster_version", "horizon_days"],
+                                     sort=True):
+        ot = g[g["on_time"]]
+        rows.append({
+            "forecaster_version": version, "horizon_days": int(h),
+            "first_session": g[DATE_COL].min(), "last_session": g[DATE_COL].max(),
+            "n_sessions": int(ot[DATE_COL].nunique()),
+            "n_up": int((ot["sigma"] > 0).sum()),
+            "n_down": int((ot["sigma"] < 0).sum()),
+            "n_neutral": int((ot["sigma"] == 0).sum()),
+            "n_late": int((~g["on_time"]).sum()),
+        })
+    return pd.DataFrame(rows, columns=cols)
+
+
+def _figures(
+    on_time: pd.DataFrame, late: pd.DataFrame, horizons: Sequence[int],
+    universe_returns: pd.DataFrame, spy_returns: pd.DataFrame | None,
+    pack_candidates: pd.DataFrame | None,
+    long_run: Mapping[int, tuple[float, float]] | None,
+) -> dict[str, Any]:
+    """Performance figures per horizon of joined on-time / late forecasts."""
+    out: dict[str, Any] = {"horizons": {}, "late": {}}
+    for h in horizons:
+        if not ((on_time["horizon_days"] == h).any()
+                or (late["horizon_days"] == h).any()):
+            continue
+        lr = long_run[h] if long_run and h in long_run else long_run_shares(
+            universe_returns, h)
+        entry = evaluate_direction(on_time, h, long_run=lr)
+        entry["pending"] = int(((on_time["horizon_days"] == h)
+                                & on_time["ret"].isna()).sum())
+        entry["by_driver"] = by_driver(on_time, h)
+        if pack_candidates is not None and len(pack_candidates):
+            entry["comparison"] = compare_groups(
+                on_time, universe_returns, pack_candidates, h, spy_returns)
+        out["horizons"][h] = entry
+        if len(late):
+            out["late"][h] = evaluate_direction(late, h, intervals=False)
+    return out
+
+
 def evaluate_forecasts(
     forecasts: pd.DataFrame,
     universe_returns: pd.DataFrame,
@@ -1034,6 +1164,7 @@ def evaluate_forecasts(
     frozen: Mapping[int, Mapping[str, Any]] | None = None,
     verdicts: Mapping[int, Mapping[str, Any]] | None = None,
     long_run: Mapping[int, tuple[float, float]] | None = None,
+    reveal_versions: Collection[str] | None = None,
 ) -> dict[str, Any]:
     """Full pre-registered evaluation of a forecast set.
 
@@ -1047,6 +1178,14 @@ def evaluate_forecasts(
     positive, share of negative returns)}`` is the reference of the absolute
     block when the caller computed it over a longer history than
     ``universe_returns`` holds (default: the shares of ``universe_returns``).
+
+    **Blinding** (FORECASTS.md section 6): with ``reveal_versions=None`` the
+    performance figures cover all forecasts pooled (analysis and tests). With
+    a collection - the production report - the figures are computed per
+    version and ONLY for the versions listed (those whose decisive verdict is
+    stored); every other version contributes counts only
+    (``result["progress"]``, :func:`progress_by_version`). The result then has
+    ``blind = True`` and ``by_version``; ``horizons`` / ``late`` stay empty.
     """
     _check_mode(criterion_mode)
     joined = attach_outcomes(forecasts, universe_returns, spy_returns,
@@ -1059,22 +1198,23 @@ def evaluate_forecasts(
         "first_session": joined[DATE_COL].min() if len(joined) else None,
         "last_session": joined[DATE_COL].max() if len(joined) else None,
         "criterion_mode": criterion_mode, "horizons": {}, "late": {},
+        "progress": progress_by_version(joined),
     }
-    for h in horizons:
-        if not (joined["horizon_days"] == h).any():
-            continue
-        lr = long_run[h] if long_run and h in long_run else long_run_shares(
-            universe_returns, h)
-        entry = evaluate_direction(on_time, h, long_run=lr)
-        entry["pending"] = int(((on_time["horizon_days"] == h)
-                                & on_time["ret"].isna()).sum())
-        entry["by_driver"] = by_driver(on_time, h)
-        if pack_candidates is not None and len(pack_candidates):
-            entry["comparison"] = compare_groups(
-                on_time, universe_returns, pack_candidates, h, spy_returns)
-        res["horizons"][h] = entry
-        if len(late):
-            res["late"][h] = evaluate_direction(late, h, intervals=False)
+
+    def figures(ot: pd.DataFrame, lt: pd.DataFrame) -> dict[str, Any]:
+        return _figures(ot, lt, horizons, universe_returns, spy_returns,
+                        pack_candidates, long_run)
+
+    if reveal_versions is None:
+        res.update(figures(on_time, late))
+    else:
+        res["blind"] = True
+        res["by_version"] = {}
+        for version in sorted(set(reveal_versions)):
+            ot = on_time[on_time["forecaster_version"] == version]
+            lt = late[late["forecaster_version"] == version]
+            if len(ot) or len(lt):
+                res["by_version"][version] = figures(ot, lt)
     for h in (PRIMARY_HORIZON, 60):
         if not (joined["horizon_days"] == h).any():
             continue
@@ -1127,11 +1267,41 @@ def render_report(
     ]
     for h, crit in result.get("criterion", {}).items():
         lines += _criterion_lines(h, crit)
-    for h, r in result["horizons"].items():
-        lines += _horizon_lines(h, r)
-    late = result.get("late") or {}
+    lines += _progress_lines(result.get("progress"))
+    if result.get("blind"):
+        lines += _blind_lines(result)
+    else:
+        lines += _figure_lines(result.get("horizons") or {}, result.get("late") or {})
+    for block in extra:
+        lines += [block, ""]
+    lines += ["---", "*Automatisch erzeugt · Keine Anlageberatung*", ""]
+    return "\n".join(lines)
+
+
+def _progress_lines(progress: pd.DataFrame | None) -> list[str]:
+    """Counts per version and horizon: sessions, calls, late - no outcome."""
+    if progress is None or not len(progress):
+        return []
+    lines = ["## Fortschritt je Prognose-Version (nur Zählungen)", "",
+             "| Version | Horizont | Sitzungen | hoch | runter | neutral | "
+             "verspätet |", "|---|---|---|---|---|---|---|"]
+    for _, r in progress.iterrows():
+        lines.append(
+            f"| `{r['forecaster_version']}` | {int(r['horizon_days'])} Tage | "
+            f"{int(r['n_sessions'])} ({_d(r['first_session'])} … "
+            f"{_d(r['last_session'])}) | {int(r['n_up'])} | {int(r['n_down'])} | "
+            f"{int(r['n_neutral'])} | {int(r['n_late'])} |")
+    return [*lines, ""]
+
+
+def _figure_lines(horizons: Mapping[int, Any], late: Mapping[int, Any],
+                  suffix: str = "") -> list[str]:
+    """The performance sections: horizons and (descriptive) late forecasts."""
+    lines: list[str] = []
+    for h, r in horizons.items():
+        lines += _horizon_lines(h, r, suffix)
     if late:
-        lines += ["## Verspätete Prognosen (nur beschreibend)", ""]
+        lines += [f"## Verspätete Prognosen (nur beschreibend){suffix}", ""]
         for h, r in late.items():
             if r.get("n_up", 0) + r.get("n_down", 0):
                 lines.append(
@@ -1140,12 +1310,42 @@ def render_report(
                     f"(Basisrate {_pct(r.get('selection_base_rate'), 1, False)})"
                 )
         lines.append("")
-    for block in extra:
-        lines += [block, ""]
-    lines += ["---", "*Automatisch erzeugt · Keine Anlageberatung*", ""]
-    return "\n".join(lines)
+    return lines
 
 
+def _blind_lines(result: Mapping[str, Any]) -> list[str]:
+    """Blinded figures: only versions with a stored verdict are shown."""
+    by_version = result.get("by_version") or {}
+    lines = ["## Kennzahlen", ""]
+    if not by_version:
+        lines += [
+            "Trefferquoten, Überschussrenditen, Rang-IC und Kalibrierung einer "
+            "Prognose-Version bleiben **verborgen**, bis ihre entscheidende "
+            "Stichprobe eingefroren **und** das Urteil berechnet ist (Blindheit, "
+            "`docs/FORECASTS.md` §6): Wer laufende Leistungszahlen sieht, kann "
+            "Prompt oder Modell nachjustieren und die Vorab-Registrierung "
+            "aushöhlen. Bis dahin zeigt der Bericht nur Fortschritt (Sitzungen, "
+            "Anzahl Hoch-/Runter-Prognosen, verspätete und abgelehnte "
+            "Prognosen). Abgebrochene Versionen bekommen nie Zahlen.", ""]
+        return lines
+    lines += [
+        "Nur für Versionen mit gespeichertem Urteil (die übrigen bleiben "
+        "verborgen, siehe oben): alle rechtzeitigen Prognosen der Version, "
+        "auch jenseits der eingefrorenen Stichprobe (dort nur beschreibend).",
+        ""]
+    for version, figs in by_version.items():
+        lines += _figure_lines(figs["horizons"], figs["late"],
+                               f" – Version `{version}`")
+    return lines
+
+
+_VERSION_STATUS_TEXT = {
+    "frozen": "erreichte die Stichprobengröße",
+    "aborted": "abgebrochene Teilstichprobe, nicht ausgewertet",
+    "version_reused": "Name nach einer Unterbrechung erneut verwendet, nie "
+                      "eingefroren, nicht ausgewertet",
+    "insufficient_data": "Stichprobe füllt sich noch",
+}
 _CHECK_NAMES = {
     "relative_up_minus_down": "relativ: Hoch minus Runter (Überschuss)",
     "selection_hit_edge": "Auswahl: Trefferquote minus Basisrate",
@@ -1181,9 +1381,10 @@ def _criterion_lines(h: int, c: dict[str, Any]) -> list[str]:
     head = f"## Entscheidungskriterium {h} Tage ({tag})"
     lines = [head, "", f"Prognose-Version: `{c['forecaster_version']}`"]
     for old in c.get("earlier_versions", []):
-        what = ("erreichte die Stichprobengröße" if old["status"] == "frozen"
-                else "abgebrochene Teilstichprobe, nicht ausgewertet")
-        lines.append(f"- frühere Version `{old['forecaster_version']}` seit "
+        what = _VERSION_STATUS_TEXT.get(old["status"], old["status"])
+        if old["status"] == "frozen" and old.get("reused"):
+            what += "; der Versionsname wurde später erneut verwendet (zählt nicht)"
+        lines.append(f"- andere Version `{old['forecaster_version']}` seit "
                      f"{_d(old['first_date'])}: {what} "
                      f"({old['progress']['dates']} Sitzungen, "
                      f"{old['progress']['up']} hoch, {old['progress']['down']} "
@@ -1194,6 +1395,19 @@ def _criterion_lines(h: int, c: dict[str, Any]) -> list[str]:
                 f"Sitzungen, {p['up']}/{p['per_side_needed']} Hoch-, "
                 f"{p['down']}/{p['per_side_needed']} Runter-Prognosen. "
                 "Bis dahin sind alle Zahlen nur beschreibend.", ""]
+    if c["status"] == "aborted":
+        return [*lines, "**Teilstichprobe abgebrochen:** eine andere Version kam "
+                f"dazwischen, bevor die Stichprobe voll war ({p['dates']}/"
+                f"{p['dates_needed']} Sitzungen, {p['up']} hoch, {p['down']} "
+                "runter); sie wird nie eingefroren oder ausgewertet.", ""]
+    if c["status"] == "version_reused":
+        return [*lines, "**Versionsname erneut verwendet:** diese Version wurde "
+                "nach einer Unterbrechung noch einmal geschrieben, bevor ihre "
+                f"Stichprobe voll war (erster Lauf: {p['dates']}/"
+                f"{p['dates_needed']} Sitzungen, {p['up']} hoch, {p['down']} "
+                "runter). Sie wird nie eingefroren oder ausgewertet - für eine "
+                "neue Stichprobe einen **neuen** `forecaster_version`-Namen "
+                "wählen.", ""]
     fz = c["frozen"]
     sample = (f"eingefrorene Stichprobe: {fz['n_dates']} Sitzungen "
               f"{fz['first_date']} … {fz['last_date']}, {fz['up']} hoch, "
@@ -1227,8 +1441,8 @@ def _fmt(r: dict[str, Any], key: str, h: int) -> str:
     return _ci(*x, mark=n is not None and ci_supports_verdict(n, h))
 
 
-def _horizon_lines(h: int, r: dict[str, Any]) -> list[str]:
-    lines = [f"## Horizont {h} Handelstage", ""]
+def _horizon_lines(h: int, r: dict[str, Any], suffix: str = "") -> list[str]:
+    lines = [f"## Horizont {h} Handelstage{suffix}", ""]
     lines.append(
         f"{r['n_up']} hoch, {r['n_down']} runter, {r['n_neutral']} neutral "
         f"abgeschlossen ({r['n_dates']} Sitzungen), {r.get('pending', 0)} noch offen."

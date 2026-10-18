@@ -22,7 +22,7 @@ SET search_path TO signals, public;
 
 - The ORM (`src/trading_signals/db/base.py`) sets `MetaData(schema="signals")` with a naming convention (`ix_…`, `uq_…`, `ck_<table>_<name>`, `fk_…`, `pk_<table>`). Constraint names created by hand-written migrations are listed explicitly below.
 - `BIGSERIAL` below = `BigInteger` primary key with `autoincrement=True` in the migration.
-- `TIMESTAMP` = `timestamp without time zone`; `TIMESTAMPTZ` = `timestamp with time zone`. The `TIMESTAMPTZ` columns of `collection_log`, `news_articles`, `news_sentiment`, `ticker_blacklist` and the forecast tables (`forecast_reviews`, `forecasts`, `pack_candidates`, `forecast_criterion_samples`, migration 039) are mapped with the ORM type `TZDateTime`: naive datetimes written by the app are interpreted as Europe/Berlin wall clock, values are read back as naive Europe/Berlin wall clock (migration 031). `insider_trades.acceptance_datetime` and `cusip_map.resolved_at` use plain `DateTime(timezone=True)`.
+- `TIMESTAMP` = `timestamp without time zone`; `TIMESTAMPTZ` = `timestamp with time zone`. The `TIMESTAMPTZ` columns of `collection_log`, `news_articles`, `news_sentiment`, `ticker_blacklist` and the forecast tables (`forecast_reviews`, `forecasts`, `pack_candidates`, `forecast_criterion_samples`, migration 039) are mapped with the ORM type `TZDateTime`: naive datetimes written by the app are interpreted as Europe/Berlin wall clock, values are read back as naive Europe/Berlin wall clock (migration 031). `insider_trades.acceptance_datetime`, `cusip_map.resolved_at` and `forecast_file_seals.sealed_at` use plain `DateTime(timezone=True)` (aware values; the seal is compared with the 09:30 New York open without any wall-clock conversion).
 
 ---
 
@@ -801,7 +801,7 @@ CREATE INDEX idx_analysis_reports_date ON signals.analysis_reports(report_date);
 ```
 
 ### Forecast tables (Migration 039)
-Forecast pipeline of the strategy-neutral rework ([FORECASTS.md](FORECASTS.md), plan [2026-10-17](2026-10-17_Plan_Strategieneutral.md) step 4). **Research results, not raw data:** no retention (not listed in `retention_statements()`), append-only, never rewritten by an evaluation. The stage-2 tables of migration 035 (`stage2_reviews`, `stage2_decisions`, barrier-trade `decisions.yaml`) never held a row and are dropped by 039 (`DROP TABLE IF EXISTS`; the downgrade recreates them exactly as 035 defined them).
+Forecast pipeline of the strategy-neutral rework ([FORECASTS.md](FORECASTS.md), plan [2026-10-17](2026-10-17_Plan_Strategieneutral.md) step 4). **Research results, not raw data:** no retention (not listed in `retention_statements()`, pinned by a test), append-only, never rewritten by an evaluation, and kept by the factory reset (`POST /ops/db/reset` truncates everything except `universe`, `ticker_blacklist` and these five tables, `operations.FORECAST_RECORD_TABLES`). The stage-2 tables of migration 035 (`stage2_reviews`, `stage2_decisions`, barrier-trade `decisions.yaml`) never held a row and are dropped by 039 (`DROP TABLE IF EXISTS`; the downgrade recreates them exactly as 035 defined them).
 
 ```sql
 -- one row per ingested forecasts.yaml; a changed file = a NEW review (append-only)
@@ -854,7 +854,7 @@ CREATE TABLE signals.forecasts (
 CREATE INDEX ix_forecasts_session_date_horizon_days ON signals.forecasts (session_date, horizon_days);
 CREATE INDEX ix_forecasts_forecaster_version_horizon_days ON signals.forecasts (forecaster_version, horizon_days);
 
--- the screen candidates of a context pack (written by the pack generator, plan step 3)
+-- the screen candidates of a context pack (written by the pack generator in the same transaction, replaced per session; plan step 3)
 CREATE TABLE signals.pack_candidates (
   session_date     DATE NOT NULL,
   ticker           VARCHAR(20) NOT NULL,
@@ -891,14 +891,27 @@ CREATE TABLE signals.forecast_criterion_samples (
   CONSTRAINT ck_forecast_criterion_samples_verdict_complete CHECK ((verdict IS NULL) = (verdict_values IS NULL) AND (verdict IS NULL) = (verdict_at IS NULL)),
   CONSTRAINT uq_forecast_criterion_samples_horizon_version UNIQUE (horizon, forecaster_version)
 );
+
+-- the file as it stood before the open: written by the scheduler job forecast_seal
+-- (weekdays 09:00 / 09:15 / 09:25 New York); the on-time proof of a forecasts.yaml
+CREATE TABLE signals.forecast_file_seals (
+  id                 BIGSERIAL PRIMARY KEY,
+  session_date       DATE NOT NULL,            -- pack day d (folder name)
+  file_path          VARCHAR(300) NOT NULL,
+  file_sha256        VARCHAR(64) NOT NULL,     -- SHA-256 of the exact bytes
+  file_size          INTEGER NOT NULL,
+  sealed_at          TIMESTAMPTZ NOT NULL DEFAULT now(),   -- first sealing time of this content
+  CONSTRAINT uq_forecast_file_seals_session_date_file_sha256 UNIQUE (session_date, file_sha256)
+);
 ```
 
 How they are filled ([`derived/forecasts.py`](../src/trading_signals/derived/forecasts.py), [`analysis/forecast_review.py`](../src/trading_signals/analysis/forecast_review.py), nightly step `forecast_review`):
 
-- **Ingest:** `context_packs/<date>/forecasts.yaml` is read once per file hash. A header violation stores a `rejected` review (reported once, no forecasts); a row violation (forbidden / unknown field, enum, range, duplicate `(ticker, horizon_days)`, ticker without a feature snapshot on the session day) drops that row and makes the review `partial`. A changed file is a new review; the earlier rows stay.
+- **Ingest:** `context_packs/<date>/forecasts.yaml` is read once per file hash, and only after the deadline of its pack day (the 09:30 New York open of the next session) has passed. A header violation (including a `decided_at` without a time zone) or a folder without any feature snapshot stores a `rejected` review (reported once, no forecasts); a row violation (forbidden / unknown field, enum, range, duplicate `(ticker, horizon_days)`, ticker without a feature snapshot on the session day) drops that row and makes the review `partial`. A changed file is a new review; the earlier rows stay. Every file is stored in its own savepoint: a database error records the file as `rejected` with the error (its hash is then known), the other files are still read. `on_time` is true only if `decided_at` precedes the open AND the file's SHA-256 has a row in `forecast_file_seals` with `sealed_at` before the open (`file_mtime` is recorded but no longer decides).
 - **Evaluation frame:** per session and `on_time` flag only the rows of the latest `ok` / `partial` review count (`effective_forecasts`), so a re-written file is never counted twice.
-- **`forecast_criterion_samples`:** a sample is inserted (`ON CONFLICT DO NOTHING`, unique per horizon and forecaster version) as soon as a version has 300 sessions with at least 100 on-time `up` and `down` 20-day calls; it is never changed. The verdict (`UPDATE … WHERE verdict IS NULL`) is written once, together with `verdict_values`, when all windows are realised or the grace period (h + 10 sessions) has passed. Later reports show these rows and never recompute the verdict from live returns; `forecast_review.recompute_verdict` reproduces it from `verdict_values`.
-- **`pack_candidates`:** `derived/pack_candidates.py` (`pack_candidate_rows` + `replace_pack_candidates`, idempotent per session) turns the result of `analysis/screen.screen_cross_section` into rows; the context pack generator (plan step 3) calls it.
+- **`forecast_file_seals`:** inserted by the job `forecast_seal` (`derived/forecast_seal.py`, `ON CONFLICT DO NOTHING`: the first sealing time of a content stands). One row per distinct content per session; a job run at or after the open seals nothing.
+- **`forecast_criterion_samples`:** a sample is inserted (`ON CONFLICT DO NOTHING`, unique per horizon and forecaster version) as soon as the FIRST CONTIGUOUS run of a version has 300 sessions with at least 100 on-time `up` and `down` 20-day calls (a version that was interrupted before is never frozen, a re-used version string neither); it is never changed. The verdict (`UPDATE … WHERE verdict IS NULL`) is written once, together with `verdict_values`, when all windows are realised or the grace period (h + 10 sessions) has passed. Later reports show these rows and never recompute the verdict from live returns; `forecast_review.recompute_verdict` reproduces it from `verdict_values`.
+- **`pack_candidates`:** `derived/pack_candidates.py` (`pack_candidate_rows` + `replace_pack_candidates`, idempotent per session) turns the result of `analysis/screen.screen_cross_section` into rows; the context pack generator (`derived/context_pack/generator.py`, plan step 3) calls it for every pack.
 - The CHECK constraint names are the short ORM names (`name="status"`) because the Alembic metadata expands them with the naming convention to `ck_<table>_<name>`; an explicit `ck_…` name in a migration is expanded a second time (live 035 table: `ck_stage2_decisions_ck_stage2_decisions_action`).
 
 ### `signals.collection_log`
@@ -1013,7 +1026,7 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 | 036 | `feature_snapshots.short_interest_days_to_cover` + `short_interest_change_1m` (NUMERIC(10,4), FINRA settlement features; `FEATURE_VERSION` 2026.10-3). History: `scripts/repair/backfill_short_interest_features.py` (only these two columns) |
 | 037 | Trailing-stop trade label on `feature_snapshots`: `return_trail_60d` (NUMERIC(10,6)), `trail_exit_day` (SMALLINT), `trail_stopped` (BOOLEAN); `ADD COLUMN IF NOT EXISTS`, history via `target_backfill` (nightly chain or `features_rebuild.py --skip-ta --skip-clusters --skip-features`) |
 | 038 | Drops the 037 trailing-stop label columns again (`DROP COLUMN IF EXISTS` `return_trail_60d`, `trail_exit_day`, `trail_stopped`) – scope decision 2026-10-17: Alpaca-Broker forecasts, a separate bot trades; the downgrade re-adds the columns exactly as 037 defined them. 037 itself is unchanged. The model target of the monthly analysis is the strategy-neutral `return_60d` |
-| 039 | Forecast pipeline: tables `forecast_reviews`, `forecasts`, `pack_candidates`, `forecast_criterion_samples` (see "Forecast tables"); drops the empty stage-2 tables of 035 (`DROP TABLE IF EXISTS stage2_decisions`, `stage2_reviews`; the downgrade drops the new tables and recreates the stage-2 tables exactly as 035). Applied with the deploy after 2026-10-18. Tested on a fresh `postgres:18`: `upgrade head`, `alembic check` (clean), `downgrade 038` (stage-2 DDL identical to 035), `upgrade head` again |
+| 039 | Forecast pipeline: tables `forecast_reviews`, `forecasts`, `pack_candidates`, `forecast_criterion_samples`, `forecast_file_seals` (see "Forecast tables"); drops the empty stage-2 tables of 035 (`DROP TABLE IF EXISTS stage2_decisions`, `stage2_reviews`; the downgrade drops the new tables and recreates the stage-2 tables exactly as 035). Applied with the deploy after 2026-10-18 (039 was extended with `forecast_file_seals` before its first deploy). Tested on a fresh `postgres:18`: `upgrade head`, `alembic check` (clean), `downgrade 038` (stage-2 DDL identical to 035), `upgrade head` again |
 
 > [!NOTE]
 > Migration 024 was extended after production had applied it (commit `81446a4` added `sector_relative_return_20d` / `sector_relative_momentum`), so 025 (`32168a0`) created the two columns in production. On an empty database both added them and `alembic upgrade head` failed at 025. **Fixed 2026-10-16:** 025 uses `ADD COLUMN IF NOT EXISTS` and its downgrade is a no-op (024's downgrade drops the columns). Verified on a throwaway `postgres:18`: fresh `upgrade head` → 035, round trip `025 → 023 → head`, and the production history (old 024 without the columns → 025 creates them). No effect on databases already at 025 or later.

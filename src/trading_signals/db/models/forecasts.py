@@ -6,6 +6,8 @@
   the pack generator), the benchmark of the value-add comparison.
 * :class:`ForecastCriterionSample` - the frozen decisive sample of the
   pre-registered criterion and its verdict, each written ONCE.
+* :class:`ForecastFileSeal` - SHA-256 of a ``forecasts.yaml`` as it stood
+  before the open (the scheduler job ``forecast_seal``); the on-time proof.
 """
 
 from datetime import date, datetime
@@ -16,6 +18,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     ForeignKey,
     Index,
     Integer,
@@ -240,4 +243,42 @@ class ForecastCriterionSample(Base):
         return (
             f"<ForecastCriterionSample({self.horizon}d, {self.forecaster_version}, "
             f"{self.sample_key[:8]}, {state})>"
+        )
+
+
+class ForecastFileSeal(Base):
+    """A ``forecasts.yaml`` as it stood before the open of the next session.
+
+    The scheduler job ``forecast_seal`` (09:00 / 09:15 / 09:25 New York on NYSE
+    sessions) stores the SHA-256 and size of the file of the pack whose
+    deadline is the coming 09:30 open. The ingest counts a file as *on time*
+    only if its hash was sealed before that open: file mtime and ``decided_at``
+    are chosen by the writer, ``sealed_at`` is not (``docs/FORECASTS.md``
+    section 2). Append-only; one row per distinct content per session.
+    """
+
+    __tablename__ = "forecast_file_seals"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_date",
+            "file_sha256",
+            name="uq_forecast_file_seals_session_date_file_sha256",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    file_path: Mapped[str] = mapped_column(String(300), nullable=False)
+    file_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    # timezone-aware on purpose (not TZDateTime): compared with the 09:30 New
+    # York open without any wall-clock conversion
+    sealed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ForecastFileSeal({self.session_date}, {self.file_sha256[:8]}, "
+            f"{self.sealed_at})>"
         )

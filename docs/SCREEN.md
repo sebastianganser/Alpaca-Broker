@@ -1,6 +1,6 @@
 # Candidate Screen – quality gate, evidence groups, buckets
 
-Status: `screen/v1`, implemented 2026-10-17 and reviewed the same day (partly covered groups, loss-makers, see §2 and §4; not deployed, so no version bump) (plan [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md), step 2). Code: [`analysis/screen.py`](../src/trading_signals/analysis/screen.py); historical validation: [`analysis/screen_backtest.py`](../src/trading_signals/analysis/screen_backtest.py) + `scripts/analysis/screen_backtest.py`. The context pack (step 3) will call the screen; the forecasts it produces are evaluated as described in [FORECASTS.md](FORECASTS.md).
+Status: `screen/v1`, implemented 2026-10-17 and reviewed the same day (partly covered groups, loss-makers, see §2 and §4; not deployed, so no version bump) (plan [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md), step 2). Code: [`analysis/screen.py`](../src/trading_signals/analysis/screen.py); historical validation: [`analysis/screen_backtest.py`](../src/trading_signals/analysis/screen_backtest.py) + `scripts/analysis/screen_backtest.py`. The context pack v2 calls the screen (step 3, implemented 2026-10-18, [CONTEXT_PACK.md](CONTEXT_PACK.md); deploy pending); the forecasts it produces are evaluated as described in [FORECASTS.md](FORECASTS.md).
 
 ## 1. What the screen is for
 

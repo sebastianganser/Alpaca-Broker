@@ -233,7 +233,7 @@
 - **Output format:** one folder per day with an overview and up to 5 candidate Markdown files (`00_uebersicht.md`, `01_<TICKER>.md`, …).
 - **Pack location:** `/mnt/user/Workfiles/AlpacaBroker` on Unraid; the path is an environment setting (`CONTEXT_PACK_PATH`) to stay portable.
 
-**Status:** Output format and path are implemented (F2 MVP, Sprint 9.5c). The guardrails and their UI-configurable thresholds are still open under F1 (ROADMAP); the stage-1 risk pre-filter currently uses fixed constants in `derived/context_pack_generator.py` (ATR 1–3 %, earnings window, dollar volume > 0).
+**Status:** Output format and path are implemented (F2 MVP, Sprint 9.5c). The guardrails and their UI-configurable thresholds are still open under F1 (ROADMAP); the stage-1 risk pre-filter currently uses fixed constants in `derived/context_pack_generator.py` (ATR 1–3 %, earnings window, dollar volume > 0). *Superseded 2026-10-18 (plan step 3): pack format 2 has no risk pre-filter; the quality gate and the neutral screen replace it, the generator is the package `derived/context_pack/`, see [CONTEXT_PACK.md](CONTEXT_PACK.md).*
 
 ---
 
@@ -347,6 +347,16 @@ None of these is Bonferroni-significant (~435 tests) and all data up to 2026-10-
 - **Gate of the evaluation = gate of the screen.** `forecast_review.gate_flags` uses the same building blocks as `screen_cross_section` without ranks and buckets (a test pins the equality), so rebuilding the gate for every forecast session each night costs seconds, not minutes (330 sessions x 60 tickers: 13 s with the full screen, 3.6 s with the gate only).
 - **Removed with it:** the stage-2 parser, evaluation, ORM and chain step; migration 039 drops the (empty) `stage2_*` tables, approved by Sebastian on 2026-10-17.
 **Consequence:** the verdict is reproducible and cannot move with later data. The step writes `forecast_auswertung.md`; rejected rows or files make the nightly step `partial` once.
+
+### [2026-10-18] Forecast Evaluation Hardening (Review of Steps 3 and 4)
+**Context:** An Opus review of the pack v2 and the forecast ingest found gaps in the registered evaluation *before the first forecast existed*: the per-version sample rule allowed a gappy sample (A -> B -> A), the on-time proof (`decided_at`, file mtime) was writer-controlled, running results could steer the forecaster, and several robustness holes. Sebastian decided all open points on 2026-10-18. No registered constant changes (300 sessions, 100 per side, mode `system`, jackknife, grace 10); the points are clarifications of the rules, noted as amendments in [FORECASTS.md](FORECASTS.md).
+**Decision:**
+- **Version rule.** The sample of a `forecaster_version` is its first contiguous run in the global session order of on-time directional 20-day forecasts. An interrupted version is `aborted` (never frozen), a name used again after an interruption is `version_reused` (never frozen; the run is `partial` until a new name is chosen), a sample that had already reached its size is unaffected.
+- **Sealing.** A new scheduler job `forecast_seal` (27th job; Mon-Fri 09:00 / 09:15 / 09:25 America/New_York, NYSE sessions only) stores the SHA-256 of the due `forecasts.yaml` in `forecast_file_seals` (added to migration 039, still unapplied). `on_time` is true only if `decided_at` precedes the open AND the file's content was sealed before it; the modification time no longer decides, a never-sealed file is late, and the job refuses to seal at or after the open. The ingest reads a folder only after its deadline. Cost: the skill has to finish before 09:25 New York, and no deploy / restart may fall into the seal window.
+- **Blinding.** The report shows no running performance figure of a version before its sample is frozen and its verdict stored (counts only); aborted and re-used versions never get figures. Reason: figures invite prompt and model tuning that would hollow out the registration.
+- **Random controls stay non-blind** (`screen.csv` lets Claude infer them): accepted, they measure the screen's own effect.
+- **Robustness.** `decided_at` without a time zone rejects the file (no guessing Berlin time); a folder without any feature snapshot is rejected as a whole; each file is stored in its own savepoint (a database or IO error records a `rejected` review instead of blocking every later night); control characters are removed from text fields; `requested_tickers.txt` is read as UTF-8 / UTF-16 / Windows-1252; the factory reset keeps the five forecast tables; a pack that has `forecasts.yaml` or stored `pack_candidates` is never regenerated and only generator-written files are deleted on a re-run.
+**Consequence:** the verdict rests on evidence the writer cannot choose (seal time) and on a sample that cannot be assembled from separated stretches; the price is operational discipline (finish before 09:25 New York, one version name per stretch).
 
 ### Known Limits
 - `universe.sector` is not point-in-time.

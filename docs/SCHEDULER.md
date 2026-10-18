@@ -5,9 +5,9 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** 17 October 2026 (verified against `scheduler/setup.py` + `scheduler/registry.py`; production `job_count` 26)
+**Last updated:** 18 October 2026 (verified against `scheduler/setup.py` + `scheduler/registry.py`; production `job_count` is 26 until the next deploy, then 27 with `forecast_seal`)
 
-**26 registered jobs:** 13 daily (11 upstream jobs, `log_retention`, `nightly_chain`), 7 weekly (Sunday, incl. `data_retention`, `universe_validation`), 2 monthly, 4 paused chain steps. All times Europe/Berlin. (`universe_validation` is live since the deploy of 2026-10-17; production reports `job_count` 26.)
+**27 registered jobs:** 13 daily (11 upstream jobs, `log_retention`, `nightly_chain`), 1 weekday job in New York time (`forecast_seal`), 7 weekly (Sunday, incl. `data_retention`, `universe_validation`), 2 monthly, 4 paused chain steps. All times Europe/Berlin except `forecast_seal` (America/New_York). (Production reports `job_count` 26 until `forecast_seal` is deployed together with migration 039 and the pack v2; `universe_validation` has been live since the deploy of 2026-10-17.)
 
 **Log names:** `collection_log.collector_name` differs from the job id for some jobs (`scheduler/registry.JOB_COLLECTOR_NAMES`), e.g. `price_collector` → `prices_alpaca`, `news_collector` → `news_alpaca`, `fundamentals_collector` → `fundamentals_yf`, `short_interest_positions_collector` → `short_interest_positions`. The jobs `ark_holdings` and `form4_collector` additionally write the follow-up runs `ark_deltas` and `insider_clusters`.
 
@@ -31,6 +31,14 @@ All collectors label their data with the **last completed NYSE session** (`utils
 | 01:30 | `estimates_collector` | EPS/revenue consensus + revisions (rolling 90-day window – critical, startup catch-up) |
 | 04:15 | `fred_collector` | FRED macro series |
 
+## Weekdays – Forecast Seal (America/New_York)
+
+| Time | Job | Description |
+|---|---|---|
+| Mon-Fri 09:00, 09:15, 09:25 **New York** (15:00 / 15:15 / 15:25 Berlin; one hour earlier Berlin time in the few weeks where the US and Europe are on different clock-change schedules) | `forecast_seal` | Seals `context_packs/<previous session>/forecasts.yaml` - the pack whose deadline is the coming 09:30 open: SHA-256 and size go to `forecast_file_seals` together with the time of sealing (`derived/forecast_seal.py`). The ingest counts a file as on time only if its exact content was sealed before the open ([FORECASTS.md](FORECASTS.md) §2): the file has to be **in place before 09:25 New York**, later edits are late. NYSE sessions only (holiday → `skipped`, no file → `skipped`); a run at or after the open seals nothing and ends `partial` (alert). Three runs because a half-written file or a changed content must be caught by a later run; the same content is sealed once and keeps its first time. `misfire_grace_time` 300 s: a run that is delayed by more is dropped as missed. Not part of the nightly chain, not a startup catch-up job |
+
+**Do not deploy or restart the container between 14:55 and 15:35 Berlin time** (13:55-14:35 in the weeks of the clock change): a restart in the seal window can cost the runs after it, and a forecast file without a seal is late for good. `alpaca-ops deploy`/`restart` refuse Mon-Fri 08:55-09:35 New York time (`guard_seal_window`, in addition to 22:15-05:15 Berlin and running jobs/scripts); the seal runs take well under a second.
+
 ## Daily – Nightly Chain (04:30)
 
 `nightly_chain` runs sequentially for the target session `last_completed_session()`. If that session was already processed successfully (weekends/holidays), the run ends as `skipped` (`no new session`).
@@ -39,8 +47,8 @@ All collectors label their data with the **last completed NYSE session** (`utils
 2. **Session catch-up** – `feature_pipeline` for earlier sessions with missing snapshots (see below)
 3. `feature_pipeline` (skipped on non-trading days → status `skipped`)
 4. `target_backfill` (target = `close(d+h) / open(d+1) − 1` + barrier label; retries up to 3× on PostgreSQL deadlock since `97fcdb0`)
-5. `forecast_review` (replaces `stage2_review`, migration 039; reads new `forecasts.yaml` files append-only, freezes the decisive sample of the pre-registered criterion and computes its verdict - each written once -, writes `context_packs/forecast_auswertung.md`; see [FORECASTS.md](FORECASTS.md)). Rejected files or rows make the step `partial`; no files = `success` with a report that says so. Two transactions: the ingest is committed before the evaluation starts, the freeze / verdict before the report is rendered
-6. `context_pack_generator` (only if `feature_pipeline` ended `success`/`partial`, otherwise `skipped`)
+5. `forecast_review` (replaces `stage2_review`, migration 039; reads new `forecasts.yaml` files append-only - only folders whose deadline (the 09:30 New York open of the next session) has passed, on time only if the file was sealed by `forecast_seal` -, freezes the decisive sample of the pre-registered criterion and computes its verdict - each written once -, writes `context_packs/forecast_auswertung.md`; see [FORECASTS.md](FORECASTS.md)). Rejected files or rows make the step `partial`; no files = `success` with a report that says so. Two transactions: the ingest is committed before the evaluation starts, the freeze / verdict before the report is rendered
+6. `context_pack_generator` (context pack v2, [CONTEXT_PACK.md](CONTEXT_PACK.md); only if `feature_pipeline` ended `success`/`partial`, otherwise `skipped`; writes `00_uebersicht.md`, `screen.csv`, the alphabetical ticker files and the `pack_candidates` rows of the session. **A pack that exists is never regenerated:** if the session folder holds a `forecasts.yaml` or `pack_candidates` rows of the session exist, the step keeps the pack (`success`, notes `pack kept (…) - not regenerated`, repeated in the chain notes), so a `partial` chain re-run for the same session on a later day - weekend, holiday - cannot rewrite what Claude has already worked on)
 
 Before starting, the chain waits up to 2 h for upstream collectors (`registry.NIGHTLY_UPSTREAM`) that are still running. Inputs without a fresh run (started after the close of the target session) are listed in the notes and the chain ends as `partial`; `failed` if `feature_pipeline` failed. **Critical inputs** (`True` in `NIGHTLY_UPSTREAM`, i.e. `prices_alpaca`, plus a coverage check: real price rows of the target session ≥ 80 % (`MIN_PRICE_COVERAGE`) of the maximum over the last 5 sessions (`COVERAGE_BASELINE_SESSIONS`), and never 0; a failing coverage query also counts as critical) are different: TA, `target_backfill` and `forecast_review` still run, `feature_pipeline` and `context_pack_generator` are `skipped` (each writes a `skipped` log row), the chain ends `failed` (alert) with `critical inputs stale: …` and a repair hint in its notes. Reason: without the session's prices the pipeline would silently reuse the previous session's price features under the new date, and the next night already targets the next session. Repair: automatic – the session catch-up below rebuilds the session on the next chain runs once its prices are complete; manually `scripts/recompute_features.py --start D --end D --all-trading-days` (via `alpaca-ops run`). Steps run without individual alerts – the chain alerts once. `feature_pipeline`, `target_backfill`, `forecast_review` and `context_pack_generator` are registered as **paused** jobs (no own schedule); a manual trigger runs a one-shot clone.
 
@@ -53,7 +61,7 @@ Before starting, the chain waits up to 2 h for upstream collectors (`registry.NI
 | Time | Job | Description |
 |---|---|---|
 | daily 03:30 | `log_retention` | Delete collection_logs older than 90 days; mark stale `running` rows (> 6 h) as `failed` |
-| Sun 03:00 | `data_retention` | Rolling **20-quarter** retention (decision 2026-10-05, no backups). Savepoint per table; insider by `filing_date`, politicians by `disclosure_date`, news sentiment via cascade |
+| Sun 03:00 | `data_retention` | Rolling **20-quarter** retention (decision 2026-10-05, no backups). Savepoint per table; insider by `filing_date`, politicians by `disclosure_date`, news sentiment via cascade. Excluded: `earnings_calendar`, `collection_log`, `universe` / `ticker_blacklist` / `index_membership` and the forecast evaluation records `forecast_reviews`, `forecasts`, `forecast_criterion_samples`, `forecast_file_seals`, `pack_candidates` (pinned by a unit test) |
 
 ## Weekly (Sunday)
 
@@ -82,7 +90,7 @@ All `POST` endpoints under `/ops/*` and `/analysis/*` require the header `X-API-
 | Price Backfill | `POST /ops/backfill/prices` | Full-history refresh from `data_start_date()` (rolling 20 quarters) |
 | Indicator Backfill | `POST /ops/backfill/indicators` | Recompute all TA indicators |
 | Sector Enrichment | `POST /ops/backfill/sectors` | Reload sectors/industries + ETF blacklist check |
-| DB Reset | `POST /ops/db/reset?confirm=RESET` | Factory reset (all data tables except universe/blacklist) |
+| DB Reset | `POST /ops/db/reset?confirm=RESET` | Factory reset (all data tables except `universe`, `ticker_blacklist` and the forecast evaluation records `forecasts`, `forecast_reviews`, `forecast_criterion_samples`, `forecast_file_seals`, `pack_candidates`) |
 | VACUUM/ANALYZE | `POST /ops/db/vacuum` | PostgreSQL maintenance |
 | Trigger Job | `POST /ops/scheduler/{job_id}/trigger` | Trigger any job (chain steps as one-shot clone) |
 | Feature Analysis | `POST /analysis/trigger` | Async (202), 409 if already running |
@@ -94,7 +102,7 @@ All `POST` endpoints under `/ops/*` and `/analysis/*` require the header `X-API-
 Jobs are registered in `src/trading_signals/scheduler/setup.py`; job → collector-name mapping in `scheduler/registry.py`; the shared wrapper `run_logged_job` in `scheduler/runner.py`.
 
 **Key design choices:**
-- **APScheduler** – BackgroundScheduler in the FastAPI process, CronTrigger in `Europe/Berlin`, `coalesce`, `max_instances=1`
+- **APScheduler** – BackgroundScheduler in the FastAPI process, CronTrigger in `Europe/Berlin` (a job may bring its own `timezone` in its cron dict: `forecast_seal` runs in `America/New_York`), `coalesce`, `max_instances=1`
 - **run_logged_job** – every job writes a `collection_log` row (status constants from `utils/job_status.py`: running/success/partial/failed/skipped), captures logs (thread-filtered, secrets redacted) and holds a per-collector lock
 - **Alerting** – `partial`/`failed` runs, `EVENT_JOB_ERROR` and `EVENT_JOB_MISSED` trigger a push via `ALERT_WEBHOOK_URL` (ntfy-compatible, optional)
 - **Startup catch-up** – price collector, estimates and nightly chain are re-run after a restart if their last run was missed

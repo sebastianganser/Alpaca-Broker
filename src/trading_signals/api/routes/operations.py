@@ -29,8 +29,24 @@ from trading_signals.utils.retention import data_start_date
 
 router = APIRouter(prefix="/ops")
 
-#: Tables kept by the factory reset (ticker definitions + learned ETF filter).
-RESET_PRESERVED_TABLES = frozenset({"universe", "ticker_blacklist"})
+#: Tables kept by the factory reset: ticker definitions, the learned ETF filter
+#: and the forecast evaluation records. The forecasts, their reviews, the seals
+#: that prove they were on time, the frozen criterion samples with their
+#: verdicts and the pack candidates are the record of a pre-registered
+#: forward test (``docs/FORECASTS.md`` section 6): they cannot be re-collected
+#: and a reset of the market data must not erase them.
+FORECAST_RECORD_TABLES = frozenset(
+    {
+        "forecasts",
+        "forecast_reviews",
+        "forecast_criterion_samples",
+        "pack_candidates",
+        "forecast_file_seals",
+    }
+)
+RESET_PRESERVED_TABLES = frozenset({"universe", "ticker_blacklist"}) | (
+    FORECAST_RECORD_TABLES
+)
 RESET_CONFIRMATION = "RESET"
 
 
@@ -485,7 +501,8 @@ def reset_database(
     """Reset ALL data tables to empty state (factory reset).
 
     Truncates all data tables in the signals schema EXCEPT
-    the universe table (ticker definitions), the ticker blacklist
+    the universe table (ticker definitions), the ticker blacklist, the
+    forecast evaluation records (``FORECAST_RECORD_TABLES``)
     and alembic_version.
     Requires ``?confirm=RESET`` or JSON body ``{"confirm": "RESET"}``.
     This is a destructive operation!

@@ -47,7 +47,7 @@
 |---|---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Deployment topology (Unraid, container, volumes), project structure, data flow, nightly chain, context-pack output | On structural changes |
 | [DATABASE.md](DATABASE.md) | Database schema – all tables, migration history 001–038, retention per table | On schema changes / migrations |
-| [SCHEDULER.md](SCHEDULER.md) | Execution schedule – all 26 jobs, nightly chain, manual operations | When jobs change |
+| [SCHEDULER.md](SCHEDULER.md) | Execution schedule – all 27 jobs, nightly chain, forecast seal, manual operations | When jobs change |
 
 ### Data Sources
 
@@ -86,7 +86,8 @@
 | [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md) | Plan to make Alpaca-Broker strategy-neutral after Sebastian's scope clarification: context pack v2 for Claude's Wall-Street-style forecasts, `forecasts.yaml`, neutral screen, removal of the barrier label and stage-2 tables | Approved 2026-10-17 – implementation running (steps 1–2 done, see ROADMAP) |
 | [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) | File format `decisions.yaml` written by the analysis skill, formerly read by `stage2_review` | Historical – removed from the code 2026-10-18 (replaced by `forecast_review`), valid in the running container until the deploy of migration 039 |
 | [FORECASTS.md](FORECASTS.md) | File format `forecasts.yaml` (`forecasts/v1`, absolute direction per ticker and horizon), pre-registered evaluation (absolute and relative), decisive criterion (pre-registered 2026-10-18, 300 sessions) | Design 2026-10-17; ingest, persistence and nightly step implemented 2026-10-18 (plan step 4, deploy pending) |
-| [SCREEN.md](SCREEN.md) | Neutral candidate screen: quality gate, 12 evidence groups with a-priori literature signs, event triggers, buckets (option D), historical validation | Implemented 2026-10-17 (`analysis/screen.py`); used by the context pack in plan step 3 |
+| [SCREEN.md](SCREEN.md) | Neutral candidate screen: quality gate, 12 evidence groups with a-priori literature signs, event triggers, buckets (option D), historical validation | Implemented 2026-10-17 (`analysis/screen.py`); used by the context pack v2 (2026-10-18) |
+| [CONTEXT_PACK.md](CONTEXT_PACK.md) | Context pack v2 (`pack_format: 2`) for the person writing the analysis skill prompt: files (`00_uebersicht.md`, `screen.csv`, alphabetical `TICKER.md`), selection, ticker-file sections, percentiles, point-in-time rules, how to write `forecasts.yaml`, deadline | Implemented in code 2026-10-18 (`derived/context_pack/`), deploy pending with plan step 4 |
 
 ### Reports (`docs/reports/`, generated 2026-10-06, 2026-10-16 and 2026-10-17)
 

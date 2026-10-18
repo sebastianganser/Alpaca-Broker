@@ -129,6 +129,48 @@ class TestReset:
         )
 
 
+    def test_reset_keeps_the_forecast_evaluation_records(self):
+        names = operations.reset_table_names()
+        records = (
+            "forecasts",
+            "forecast_reviews",
+            "forecast_criterion_samples",
+            "pack_candidates",
+            "forecast_file_seals",
+        )
+        for table in records:
+            assert table in operations.RESET_PRESERVED_TABLES
+            assert f"signals.{table}" not in names
+        assert operations.FORECAST_RECORD_TABLES == frozenset(records)
+        # the preserved set is exactly reference data + evaluation records
+        assert operations.RESET_PRESERVED_TABLES == {
+            "universe",
+            "ticker_blacklist",
+            *records,
+        }
+        # every forecast table of the ORM is on the list (a new one must be added)
+        import trading_signals.db.models  # noqa: F401
+        from trading_signals.db.base import Base
+
+        orm = {
+            t.name
+            for t in Base.metadata.tables.values()
+            if t.name.startswith("forecast") or t.name == "pack_candidates"
+        }
+        assert orm == set(records)
+
+    def test_reset_statement_truncates_no_forecast_table(self):
+        db = MagicMock()
+        c = _app(operations.router, db=db)
+        r = c.post("/api/v1/ops/db/reset?confirm=RESET", headers=WRITE_HEADERS)
+        assert r.status_code == 200
+        sql = str(db.execute.call_args.args[0])
+        for table in ("forecasts", "forecast_reviews", "forecast_file_seals",
+                      "forecast_criterion_samples", "pack_candidates"):
+            assert f"signals.{table}" not in sql.replace(",", " ").split(), table
+        assert "forecast_file_seals" in r.json()["message"]
+
+
 class TestTrigger:
     def _scheduler(self, next_run):
         job = MagicMock(next_run_time=next_run, func=lambda: None)

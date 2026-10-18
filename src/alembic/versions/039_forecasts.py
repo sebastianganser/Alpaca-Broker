@@ -12,7 +12,10 @@ Plan ``docs/2026-10-17_Plan_Strategieneutral.md`` step 4 / ``docs/FORECASTS.md``
 * ``pack_candidates`` - the screen candidates of a context pack (written by
   the pack generator, benchmark of the value-add comparison);
 * ``forecast_criterion_samples`` - the frozen decisive sample of the
-  pre-registered criterion and its verdict, each written once.
+  pre-registered criterion and its verdict, each written once;
+* ``forecast_file_seals`` - SHA-256 of a ``forecasts.yaml`` as it stood before
+  the open of the next session (scheduler job ``forecast_seal``); the ingest
+  counts a file as on time only if its hash was sealed in time.
 
 The stage-2 tables of migration 035 (barrier-trade ``decisions.yaml``) never
 held a row and are replaced by the tables above (Sebastian approved dropping
@@ -243,12 +246,34 @@ def upgrade() -> None:
         schema=SCHEMA,
     )
 
+    op.create_table(
+        "forecast_file_seals",
+        sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
+        sa.Column("session_date", sa.Date(), nullable=False),
+        sa.Column("file_path", sa.String(300), nullable=False),
+        sa.Column("file_sha256", sa.String(64), nullable=False),
+        sa.Column("file_size", sa.Integer(), nullable=False),
+        sa.Column(
+            "sealed_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.UniqueConstraint(
+            "session_date",
+            "file_sha256",
+            name="uq_forecast_file_seals_session_date_file_sha256",
+        ),
+        schema=SCHEMA,
+    )
+
     # the stage-2 tables never held a row; replaced by the tables above
     op.execute(f"DROP TABLE IF EXISTS {SCHEMA}.stage2_decisions")
     op.execute(f"DROP TABLE IF EXISTS {SCHEMA}.stage2_reviews")
 
 
 def downgrade() -> None:
+    op.drop_table("forecast_file_seals", schema=SCHEMA)
     op.drop_table("forecast_criterion_samples", schema=SCHEMA)
     op.drop_table("pack_candidates", schema=SCHEMA)
     op.drop_table("forecasts", schema=SCHEMA)

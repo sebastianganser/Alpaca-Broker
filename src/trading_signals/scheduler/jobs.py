@@ -419,14 +419,27 @@ def _target_backfill_body() -> int:
 
 
 def _context_pack_body(target_date: date) -> JobOutcome:
+    """Generate the pack of ``target_date`` - unless it exists already.
+
+    A pack that has been assessed (``forecasts.yaml`` in its folder) or whose
+    candidates are stored (``pack_candidates``) is never regenerated: neither
+    its files nor its candidates are replaced or deleted
+    (``ContextPackGenerator.skip_reason``). This is a successful outcome - the
+    pack exists -, noted as ``pack kept``, so a PARTIAL chain run for the same
+    session on a later day (weekend, holiday) cannot rewrite a pack Claude has
+    already worked on.
+    """
     from trading_signals.db.session import get_session
-    from trading_signals.derived.context_pack_generator import ContextPackGenerator
+    from trading_signals.derived.context_pack import ContextPackGenerator
 
     with get_session() as session:
-        written = ContextPackGenerator(session).generate_daily(target_date)
-    return JobOutcome(
-        records_written=written or 0, notes=f"session={target_date.isoformat()}"
-    )
+        generator = ContextPackGenerator(session)
+        written = generator.generate_daily(target_date)
+        kept = generator.skip_reason
+    notes = f"session={target_date.isoformat()}"
+    if kept:
+        notes += f"; pack kept ({kept}) - not regenerated"
+    return JobOutcome(records_written=written or 0, notes=notes)
 
 
 def _forecast_review_body() -> JobOutcome:
@@ -462,6 +475,38 @@ def _forecast_review_body() -> JobOutcome:
         records_written=ingest.forecasts,
         records_fetched=ingest.files,
         notes=notes,
+    )
+
+
+def _forecast_seal_body() -> JobOutcome:
+    """Seal ``forecasts.yaml`` of the pack that is due at the coming open.
+
+    ``docs/FORECASTS.md`` section 2: the file counts as on time only if its
+    SHA-256 was recorded before 09:30 New York of the next session. Fires at
+    09:00, 09:15 and 09:25 New York on every weekday; a holiday, a missing
+    file and a delayed run (at or after the open: nothing is sealed) are
+    reported, none of them can seal anything.
+    """
+    from pathlib import Path
+
+    from trading_signals.config import get_settings
+    from trading_signals.db.session import get_session
+    from trading_signals.derived import forecast_seal as seal
+
+    root = Path(get_settings().CONTEXT_PACK_PATH)
+    with get_session() as session:
+        result = seal.seal_forecast_file(seal.SqlSealStore(session), root)
+    if result.status in (seal.SEALED, seal.UNCHANGED):
+        status = job_status.SUCCESS
+    elif result.status == seal.TOO_LATE:
+        status = job_status.PARTIAL  # a seal opportunity was lost: alert
+    else:  # no NYSE session today / no forecasts.yaml (yet)
+        status = job_status.SKIPPED
+    return JobOutcome(
+        status=status,
+        records_written=1 if result.status == seal.SEALED else 0,
+        records_fetched=0 if result.sha256 is None else 1,
+        notes=result.notes(),
     )
 
 
@@ -504,14 +549,23 @@ def run_forecast_review() -> None:
     run_logged_job("forecast_review", "forecast_review", _forecast_review_body)
 
 
+def run_forecast_seal() -> None:
+    """Forecast seal: SHA-256 of ``forecasts.yaml`` before the open (3x per session).
+
+    Scheduled in America/New_York at 09:00, 09:15 and 09:25 on weekdays (NYSE
+    sessions only); not part of the nightly chain. Without a seal a file is
+    late (``docs/FORECASTS.md`` section 2).
+    """
+    run_logged_job("forecast_seal", "forecast_seal", _forecast_seal_body)
+
+
 def run_context_pack_generator() -> None:
-    """Context Pack generation for top candidates.
+    """Context pack v2 for the last completed session.
 
     Normally executed as step 5 of :func:`run_nightly_chain` (manual
-    trigger otherwise). Generates Markdown reports with YAML frontmatter for
-    the top 5 candidates of the last completed session.
-
-    Sprint 9.5c F2.
+    trigger otherwise). Writes ``00_uebersicht.md``, ``screen.csv`` and one
+    file per screened ticker (``docs/CONTEXT_PACK.md``) and stores the
+    candidates in ``pack_candidates``.
     """
     target = _target_session()
     run_logged_job(
@@ -970,6 +1024,8 @@ def _nightly_chain_body() -> JobOutcome:
             "sessions), manually scripts/recompute_features.py "
             f"--start {d} --end {d} --all-trading-days"
         )
+    if cp.notes and "pack kept" in cp.notes:
+        notes += f"; context pack: {cp.notes.split('; ', 1)[1]}"
     if catchup_note:
         notes += f"; {catchup_note}"
     non_critical = [n for n in stale if not NIGHTLY_UPSTREAM.get(n)]
@@ -1286,7 +1342,12 @@ def run_data_retention() -> None:
 
     Scheduled for Sunday 03:00 Europe/Berlin (weekly).
     Excludes: earnings_calendar (historical value), collection_log
-    (has its own 90-day retention), universe/blacklist/index_membership.
+    (has its own 90-day retention), universe/blacklist/index_membership, and
+    the forecast evaluation records ``forecast_reviews``, ``forecasts``,
+    ``forecast_criterion_samples``, ``forecast_file_seals`` and
+    ``pack_candidates`` (research results of a pre-registered test, written
+    once and never purged: ``retention_statements`` lists the purged tables
+    explicitly and none of these is among them).
 
     Uses quarter-based cutoff so boundaries align with calendar quarters.
     """

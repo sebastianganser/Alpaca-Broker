@@ -28,6 +28,7 @@ JOB_COLLECTOR_NAMES: dict[str, str] = {
     "target_backfill": "target_backfill",
     "context_pack_generator": "context_pack_generator",
     "forecast_review": "forecast_review",
+    "forecast_seal": "forecast_seal",
     "form13f_collector": "form13f_collector",
     "politician_trades_collector": "politician_trades_collector",
     "short_interest_positions_collector": "short_interest_positions",

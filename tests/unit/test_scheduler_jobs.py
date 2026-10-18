@@ -42,6 +42,24 @@ class TestRetentionStatements:
         assert "earnings_calendar" not in labels
         assert "collection_log" not in labels
 
+    def test_forecast_evaluation_records_are_never_purged(self):
+        # research results of a pre-registered test: written once, no retention
+        stmts = jobs.retention_statements(date(2021, 7, 1))
+        labels = {label for label, _ in stmts}
+        sql = " ".join(_sql(stmt) for _, stmt in stmts)
+        for table in (
+            "forecasts",
+            "forecast_reviews",
+            "forecast_criterion_samples",
+            "forecast_file_seals",
+            "pack_candidates",
+        ):
+            assert table not in labels, table
+            assert f"signals.{table} " not in sql + " ", table
+        assert "forecast" not in sql and "pack_candidates" not in sql
+        doc = jobs.run_data_retention.__doc__
+        assert "forecast_criterion_samples" in doc and "pack_candidates" in doc
+
     def test_event_date_columns(self):
         stmts = dict(jobs.retention_statements(date(2021, 7, 1)))
         assert "filing_date <" in _sql(stmts["insider_trades"])
@@ -553,6 +571,22 @@ class TestNightlyChain:
         assert "context_pack_generator" in [c[0] for c in calls]
         assert out.status == job_status.PARTIAL
         assert "forecast_review=partial" in out.notes
+
+    def test_a_kept_pack_does_not_make_the_chain_partial_and_is_noted(self):
+        # a PARTIAL chain re-run for the same session (weekend, holiday) must
+        # not rewrite a pack Claude has already worked on: the generator keeps
+        # it, the step still succeeds and the chain says so
+        kept = JobOutcome(
+            notes="session=2026-10-02; pack kept (forecasts.yaml exists) - "
+            "not regenerated"
+        )
+        out, calls = self._run({"context_pack_generator": kept})
+        assert out.status == job_status.SUCCESS
+        assert "context_pack=success" in out.notes
+        assert "context pack: pack kept (forecasts.yaml exists)" in out.notes
+        # without the note the chain notes carry nothing about the pack
+        plain, _ = self._run({})
+        assert "pack kept" not in plain.notes
 
     def test_pipeline_failure_skips_context_pack(self):
         out, calls = self._run({"feature_pipeline": job_status.FAILED})

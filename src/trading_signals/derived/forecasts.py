@@ -6,19 +6,23 @@ nightly step ``forecast_review`` reads every such file, validates it and
 stores it append-only in ``signals.forecast_reviews`` / ``signals.forecasts``.
 
 * :func:`parse_forecasts` - validate one file (pure). A format violation of the
-  header (YAML, schema, session, ``decided_at``, ``forecaster_version``,
-  ``forecasts``) rejects the file; a violation inside a forecast (forbidden or
-  unknown field, enum, range, duplicate, unknown ticker) rejects only that
-  row and is reported. Reason: all forecasts of a day are on time or late
-  together, and a fixed file is written after the open (late), so dropping the
-  valid rows with one typo would lose the whole day.
+  header (YAML, schema, session, ``decided_at`` with a time zone,
+  ``forecaster_version``, ``forecasts``) rejects the file; a violation inside a
+  forecast (forbidden or unknown field, enum, range, duplicate, unknown
+  ticker) rejects only that row and is reported. Reason: all forecasts of a day
+  are on time or late together, and a fixed file is written after the open
+  (late), so dropping the valid rows with one typo would lose the whole day.
 * :func:`next_session_open` / :func:`is_on_time` - a forecast counts for the
-  pre-registered evaluation only if the decision and the last write of the
-  file precede the open of the session after the pack day (the evaluated
-  return starts at that open). Late forecasts are stored with
-  ``on_time = false``.
+  pre-registered evaluation only if ``decided_at`` precedes the open of the
+  session after the pack day (the evaluated return starts at that open) AND
+  the SHA-256 of the file was sealed before that open (scheduler job
+  ``forecast_seal``, ``derived/forecast_seal.py``): the modification time of
+  the file and ``decided_at`` are chosen by the writer, the seal is not. Late
+  forecasts are stored with ``on_time = false``.
 * :func:`ingest_forecasts` - scan the pack folders; a file is ingested once
   (SHA-256), a changed file for the same session is a new review (append-only).
+  A folder is read only after its deadline has passed (the seals are final
+  then); one bad file never blocks the others.
 """
 
 from __future__ import annotations
@@ -35,7 +39,6 @@ from typing import Protocol
 import yaml
 
 from trading_signals.analysis.screen import GROUP_NAMES
-from trading_signals.db.base import APP_TIMEZONE
 from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -113,6 +116,18 @@ STATUS_PARTIAL = "partial"
 STATUS_REJECTED = "rejected"
 
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
+#: Control characters (NUL, C0 except tab / line breaks, DEL, C1) and lone
+#: surrogates. PostgreSQL text / JSONB cannot store NUL and the driver fails on
+#: surrogates: one such character would make the insert - and, because the file
+#: is never recorded, the ingest of every later night - fail.
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff]")
+#: Length cap of a stored error message.
+MAX_ERROR_LEN = 500
+
+
+def clean_text(text: str) -> str:
+    """``text`` without control characters (tab and line breaks stay)."""
+    return _CONTROL_RE.sub("", text)
 
 
 class ForecastFileError(ValueError):
@@ -204,8 +219,14 @@ def _as_datetime(val, what: str) -> datetime:
             ) from e
     if not isinstance(val, datetime):
         raise ForecastFileError(f"{what}: kein Zeitpunkt (ISO 8601): {val!r}")
-    # without a zone the skill means German wall-clock time
-    return val if val.tzinfo else val.replace(tzinfo=APP_TIMEZONE)
+    if val.tzinfo is None:
+        # a wall-clock time without a zone cannot be compared with the open
+        # reliably (Berlin vs New York, summer time): reject instead of guessing
+        raise ForecastFileError(
+            f"{what}: Zeitzone fehlt - ISO 8601 mit Offset angeben, z. B. "
+            f"2026-10-17T09:40:00+02:00 (gelesen: {val.isoformat()})"
+        )
+    return val
 
 
 def _number(val, what: str) -> float:
@@ -232,7 +253,7 @@ def _text(val, what: str) -> str | None:
         return None
     if not isinstance(val, str | int | float):
         raise RowError(f"{what}: kein Text: {val!r}")
-    text = str(val).strip()
+    text = clean_text(str(val)).strip()
     return text[:MAX_TEXT_LEN] if text else None
 
 
@@ -382,6 +403,8 @@ def parse_forecasts(text: str, folder_date: date) -> ParsedFile:
             "(Skill-/Prompt-Version + Modell)"
         )
     version = version.strip()
+    if clean_text(version) != version:
+        raise ForecastFileError("forecaster_version enthält Steuerzeichen")
     if len(version) > MAX_VERSION_LEN:
         raise ForecastFileError(
             f"forecaster_version hat {len(version)} Zeichen "
@@ -451,10 +474,19 @@ def next_session_open(session_date: date) -> datetime:
 
 
 def is_on_time(
-    decided_at: datetime, file_mtime: datetime, entry_open: datetime
+    decided_at: datetime, sealed_at: datetime | None, entry_open: datetime
 ) -> bool:
-    """True if the decision and the last file write precede the entry open."""
-    return decided_at < entry_open and file_mtime < entry_open
+    """True if the decision and the SEAL of the file precede the entry open.
+
+    ``sealed_at`` is the first time the file's exact content (SHA-256) was
+    recorded by the scheduler job ``forecast_seal`` (``None``: never sealed).
+    The modification time of the file no longer decides: the writer controls
+    it, the seal he does not. A file that was never sealed - written after the
+    last seal run at 09:25 New York, or while the scheduler was down - is late.
+    """
+    return (
+        decided_at < entry_open and sealed_at is not None and sealed_at < entry_open
+    )
 
 
 # ── Storage ──────────────────────────────────────────────────────────
@@ -505,6 +537,9 @@ class ForecastStore(Protocol):
 
     def session_tickers(self, session_date: date) -> set[str]: ...
 
+    def seal_times(self, session_date: date) -> dict[str, datetime]:
+        """``{sha256: first sealed_at (timezone-aware)}`` of the session's seals."""
+
     def add_review(
         self, review: ReviewRecord, forecasts: Sequence[ForecastRecord]
     ) -> int: ...
@@ -536,49 +571,64 @@ class SqlForecastStore:
             ).scalars()
         )
 
+    def seal_times(self, session_date: date) -> dict[str, datetime]:
+        from sqlalchemy import func, select
+
+        from trading_signals.db.models.forecasts import ForecastFileSeal as Seal
+
+        rows = self.session.execute(
+            select(Seal.file_sha256, func.min(Seal.sealed_at))
+            .where(Seal.session_date == session_date)
+            .group_by(Seal.file_sha256)
+        ).all()
+        return {sha: at for sha, at in rows}
+
     def add_review(
         self, review: ReviewRecord, forecasts: Sequence[ForecastRecord]
     ) -> int:
         from trading_signals.db.models.forecasts import Forecast, ForecastReview
 
-        row = ForecastReview(
-            session_date=review.session_date,
-            file_path=review.file_path[:300],
-            file_sha256=review.file_sha256,
-            file_mtime=review.file_mtime,
-            schema=review.schema,
-            forecaster_version=review.forecaster_version,
-            decided_at=review.decided_at,
-            on_time=review.on_time,
-            status=review.status,
-            n_forecasts=review.n_forecasts,
-            n_rejected=review.n_rejected,
-            errors=review.errors or None,
-        )
-        self.session.add(row)
-        self.session.flush()
-        for f in forecasts:
-            self.session.add(
-                Forecast(
-                    review_id=row.id,
-                    session_date=f.session_date,
-                    ticker=f.ticker,
-                    horizon_days=f.horizon_days,
-                    direction=f.direction,
-                    confidence=f.confidence,
-                    conviction=f.conviction,
-                    expected_pct=f.expected_pct,
-                    drivers=f.drivers or None,
-                    reason=f.reason,
-                    risks=f.risks,
-                    forecaster_version=f.forecaster_version,
-                    decided_at=f.decided_at,
-                    valid_from=f.valid_from,
-                    on_time=f.on_time,
-                )
+        # own savepoint: a failing insert rolls back this file only and leaves
+        # the transaction usable for the next file (and for the fallback row)
+        with self.session.begin_nested():
+            row = ForecastReview(
+                session_date=review.session_date,
+                file_path=review.file_path[:300],
+                file_sha256=review.file_sha256,
+                file_mtime=review.file_mtime,
+                schema=review.schema,
+                forecaster_version=review.forecaster_version,
+                decided_at=review.decided_at,
+                on_time=review.on_time,
+                status=review.status,
+                n_forecasts=review.n_forecasts,
+                n_rejected=review.n_rejected,
+                errors=review.errors or None,
             )
-        self.session.flush()
-        return row.id
+            self.session.add(row)
+            self.session.flush()
+            for f in forecasts:
+                self.session.add(
+                    Forecast(
+                        review_id=row.id,
+                        session_date=f.session_date,
+                        ticker=f.ticker,
+                        horizon_days=f.horizon_days,
+                        direction=f.direction,
+                        confidence=f.confidence,
+                        conviction=f.conviction,
+                        expected_pct=f.expected_pct,
+                        drivers=f.drivers or None,
+                        reason=f.reason,
+                        risks=f.risks,
+                        forecaster_version=f.forecaster_version,
+                        decided_at=f.decided_at,
+                        valid_from=f.valid_from,
+                        on_time=f.on_time,
+                    )
+                )
+            self.session.flush()
+            return row.id
 
 
 # ── Ingest ───────────────────────────────────────────────────────────
@@ -589,19 +639,25 @@ class IngestResult:
     files: int = 0
     ingested: int = 0
     unchanged: int = 0
+    #: Files whose deadline (the open) has not passed yet: read on a later night.
+    pending: int = 0
     forecasts: int = 0
     late: int = 0
     rejected_files: int = 0
     rejected_rows: int = 0
     errors: list[str] = field(default_factory=list)
+    #: Why a stored file counts as late (for the run notes).
+    late_notes: list[str] = field(default_factory=list)
 
     def notes(self) -> str:
         text = (
             f"files={self.files}, ingested={self.ingested}, "
-            f"unchanged={self.unchanged}, "
+            f"unchanged={self.unchanged}, pending={self.pending}, "
             f"forecasts={self.forecasts}, late={self.late}, "
             f"rejected_files={self.rejected_files}, rejected_rows={self.rejected_rows}"
         )
+        if self.late_notes:
+            text += "; late: " + "; ".join(self.late_notes[:3])
         if self.errors:
             text += "; " + "; ".join(self.errors[:5])
             if len(self.errors) > 5:
@@ -614,12 +670,9 @@ def _check_tickers(
 ) -> tuple[list[ParsedForecast], list[RejectedRow]]:
     """Reject forecasts of tickers without a feature snapshot on the session day.
 
-    Such a forecast could never be scored. An empty ``known`` set means the
-    snapshots of the session do not exist (yet): no judgement is possible and
-    every row is accepted.
+    Such a forecast could never be scored. Callers handle an empty ``known``
+    set (no snapshot at all on that day) before: the whole file is rejected.
     """
-    if not known:
-        return parsed.forecasts, []
     keep: list[ParsedForecast] = []
     bad: list[RejectedRow] = []
     for f in parsed.forecasts:
@@ -638,10 +691,85 @@ def _check_tickers(
     return keep, bad
 
 
+def _message(text: object) -> str:
+    """A stored / reported message: no control characters, bounded length."""
+    return clean_text(str(text))[:MAX_ERROR_LEN]
+
+
+def _rejected_review(
+    folder_date: date, path: Path, sha: str, mtime: datetime, errors: list[str]
+) -> ReviewRecord:
+    """A ``rejected`` review without forecasts (records the hash of the file)."""
+    return ReviewRecord(
+        session_date=folder_date,
+        file_path=str(path),
+        file_sha256=sha,
+        file_mtime=mtime,
+        schema=None,
+        forecaster_version=None,
+        decided_at=None,
+        on_time=False,
+        status=STATUS_REJECTED,
+        n_forecasts=0,
+        n_rejected=0,
+        errors=errors,
+    )
+
+
+def _store_review(
+    store: ForecastStore,
+    review: ReviewRecord,
+    records: Sequence[ForecastRecord],
+    result: IngestResult,
+) -> bool:
+    """Store one file's review; a failure must not stop the other files.
+
+    If the insert fails (database or encoding error) the file is recorded as a
+    ``rejected`` review with the error, so its hash is known and it is not
+    retried - and fails - every night. If even that fails, the file stays
+    unrecorded (reported every night) and the next file is still read.
+    Returns whether the ORIGINAL review was stored.
+    """
+    try:
+        store.add_review(review, records)
+        return True
+    except Exception as e:
+        # first line only: a driver error carries the whole failing statement
+        first = (str(e).splitlines() or [""])[0]
+        msg = _message(f"{type(e).__name__}: {first}")
+        logger.error(
+            f"[forecast_review] storing {review.file_path} failed: {msg}",
+            exc_info=True,
+        )
+        result.errors.append(f"{review.session_date}: Speichern fehlgeschlagen: {msg}")
+        result.rejected_files += 1
+        fallback = _rejected_review(
+            review.session_date,
+            Path(review.file_path),
+            review.file_sha256,
+            review.file_mtime,
+            [f"Speichern fehlgeschlagen: {msg}"],
+        )
+        try:
+            store.add_review(fallback, [])
+        except Exception as e2:
+            logger.error(
+                f"[forecast_review] cannot record {review.file_path} as rejected: "
+                f"{type(e2).__name__}: {e2}",
+                exc_info=True,
+            )
+            result.errors.append(
+                f"{review.session_date}: Ablehnung nicht speicherbar "
+                f"({type(e2).__name__}) - die Datei wird jede Nacht erneut gemeldet"
+            )
+        return False
+
+
 def ingest_forecasts(
     store: ForecastStore,
     root: Path,
     open_fn: Callable[[date], datetime] = next_session_open,
+    now: datetime | None = None,
 ) -> IngestResult:
     """Read new ``forecasts.yaml`` files below ``root`` into the store.
 
@@ -652,11 +780,20 @@ def ingest_forecasts(
     stored as ``rejected`` reviews (reported once, not on every night), invalid
     rows are dropped from an otherwise valid file; both are listed in
     ``errors``.
+
+    A folder is only read once its deadline has passed (``now`` >= the open of
+    the session after the pack day): the file may still be edited and sealed
+    before, and a file read too early would be stored as late for good. A
+    folder without a feature snapshot on its date (no NYSE session, or no
+    features) is rejected as a whole. A file is *on time* only if its hash was
+    sealed before the open (:func:`is_on_time`). One unreadable or unstorable
+    file never stops the others.
     """
     result = IngestResult()
     if not root.is_dir():
         logger.warning(f"[forecast_review] context pack folder missing: {root}")
         return result
+    now = now or datetime.now(UTC)
     known_hashes = store.known_hashes()
 
     for day_dir in sorted(p for p in root.iterdir() if p.is_dir()):
@@ -668,48 +805,63 @@ def ingest_forecasts(
         if not path.is_file():
             continue
         result.files += 1
-        raw = path.read_bytes()
+        entry_open = open_fn(folder_date)
+        if now < entry_open:
+            result.pending += 1
+            logger.info(
+                f"[forecast_review] {folder_date}: deadline {entry_open.isoformat()} "
+                "not reached - file is read later"
+            )
+            continue
+        try:
+            raw = path.read_bytes()
+            mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+        except OSError as e:
+            msg = _message(f"{type(e).__name__}: {e}")
+            logger.error(f"[forecast_review] cannot read {path}: {msg}")
+            result.errors.append(f"{folder_date}: Datei nicht lesbar: {msg}")
+            continue
         sha = hashlib.sha256(raw).hexdigest()
         if sha in known_hashes:
             result.unchanged += 1
             continue
-        mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
-        entry_open = open_fn(folder_date)
+
+        def reject(errors: list[str], *, folder_date=folder_date, path=path,
+                   sha=sha, mtime=mtime) -> None:
+            result.errors.extend(f"{folder_date}: {e}" for e in errors)
+            result.rejected_files += 1
+            _store_review(
+                store,
+                _rejected_review(folder_date, path, sha, mtime, errors),
+                [],
+                result,
+            )
+            known_hashes.add(sha)
 
         try:
             parsed = parse_forecasts(raw.decode("utf-8-sig"), folder_date)
         except (ForecastFileError, UnicodeDecodeError) as e:
-            msg = f"{folder_date}: {e}"
             logger.warning(f"[forecast_review] invalid {path}: {e}")
-            result.errors.append(msg)
-            result.rejected_files += 1
-            store.add_review(
-                ReviewRecord(
-                    session_date=folder_date,
-                    file_path=str(path),
-                    file_sha256=sha,
-                    file_mtime=mtime,
-                    schema=None,
-                    forecaster_version=None,
-                    decided_at=None,
-                    on_time=False,
-                    status=STATUS_REJECTED,
-                    n_forecasts=0,
-                    n_rejected=0,
-                    errors=[str(e)],
-                ),
-                [],
-            )
-            known_hashes.add(sha)
+            reject([_message(e)])
             continue
 
-        kept, unknown = _check_tickers(parsed, store.session_tickers(folder_date))
+        known = store.session_tickers(folder_date)
+        if not known:
+            msg = (
+                f"kein Feature-Snapshot am {folder_date} (kein NYSE-Handelstag "
+                "oder keine Features der Sitzung): Datei abgelehnt"
+            )
+            logger.warning(f"[forecast_review] {path}: {msg}")
+            reject([msg])
+            continue
+        kept, unknown = _check_tickers(parsed, known)
         rejected = sorted([*parsed.rejected, *unknown], key=lambda r: r.index)
-        on_time = is_on_time(parsed.decided_at, mtime, entry_open)
+        sealed_at = store.seal_times(folder_date).get(sha)
+        on_time = is_on_time(parsed.decided_at, sealed_at, entry_open)
         status = (
             STATUS_OK if not rejected else (STATUS_PARTIAL if kept else STATUS_REJECTED)
         )
-        messages = [r.message() for r in rejected]
+        messages = [_message(r.message()) for r in rejected]
         records = [
             ForecastRecord(
                 session_date=folder_date,
@@ -729,29 +881,35 @@ def ingest_forecasts(
             )
             for f in kept
         ]
-        store.add_review(
-            ReviewRecord(
-                session_date=folder_date,
-                file_path=str(path),
-                file_sha256=sha,
-                file_mtime=mtime,
-                schema=parsed.schema,
-                forecaster_version=parsed.forecaster_version,
-                decided_at=parsed.decided_at,
-                on_time=on_time,
-                status=status,
-                n_forecasts=len(kept),
-                n_rejected=len(rejected),
-                errors=messages[:MAX_STORED_ERRORS],
-            ),
-            records,
+        review = ReviewRecord(
+            session_date=folder_date,
+            file_path=str(path),
+            file_sha256=sha,
+            file_mtime=mtime,
+            schema=parsed.schema,
+            forecaster_version=parsed.forecaster_version,
+            decided_at=parsed.decided_at,
+            on_time=on_time,
+            status=status,
+            n_forecasts=len(kept),
+            n_rejected=len(rejected),
+            errors=messages[:MAX_STORED_ERRORS],
         )
         known_hashes.add(sha)
+        if not _store_review(store, review, records, result):
+            continue
         result.ingested += 1
         result.forecasts += len(kept)
         result.rejected_rows += len(rejected)
         if not on_time:
             result.late += len(kept)
+            if parsed.decided_at >= entry_open:
+                why = "decided_at nach der Eröffnung"
+            elif sealed_at is None:
+                why = "Datei vor der Eröffnung nicht versiegelt"
+            else:
+                why = "Siegel nach der Eröffnung"
+            result.late_notes.append(f"{folder_date} ({why})")
         result.errors.extend(f"{folder_date}: {m}" for m in messages)
         logger.info(
             f"[forecast_review] {folder_date}: {len(kept)} forecasts "
@@ -776,6 +934,7 @@ __all__ = [
     "ReviewRecord",
     "RowError",
     "SqlForecastStore",
+    "clean_text",
     "ingest_forecasts",
     "is_on_time",
     "next_session_open",

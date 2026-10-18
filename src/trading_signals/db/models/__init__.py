@@ -10,6 +10,7 @@ from trading_signals.db.models.features import FeatureSnapshot
 from trading_signals.db.models.forecasts import (
     Forecast,
     ForecastCriterionSample,
+    ForecastFileSeal,
     ForecastReview,
     PackCandidate,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "FeatureSnapshot",
     "Forecast",
     "ForecastCriterionSample",
+    "ForecastFileSeal",
     "ForecastReview",
     "Form13FHolding",
     "FundamentalsSnapshot",

@@ -322,6 +322,43 @@ def test_a_new_forecaster_version_gets_its_own_sample():
     assert first.verdict is not None and first.verdict_at == NOW
 
 
+def relabel(fc, blocks):
+    """Give the sessions of ``fc`` the versions of ``blocks`` = [(version, n)]."""
+    days = list(pd.bdate_range("2023-01-02", periods=sum(n for _, n in blocks)))
+    label, i = {}, 0
+    for version, n in blocks:
+        for d in days[i : i + n]:
+            label[d] = version
+        i += n
+    return fc.assign(forecaster_version=fc["session_date"].map(label))
+
+
+def test_a_version_that_returns_after_another_one_is_never_frozen():
+    # A 80 + B 20 + A 40: 120 A sessions in total (the old per-version rule
+    # froze a gappy sample of them), but the first A run has only 80
+    uni, fc, spy, pack = world()
+    fc = relabel(fc, [("A", 80), ("B", 20), ("A", 40)])
+    store = MemoryStore()
+    update = run(store, uni, fc, spy, pack)
+    assert store.rows == {} and update.frozen == []
+    assert len(update.problems) == 1
+    assert "A was used again" in update.problems[0]
+    assert "choose a new version name" in update.problems[0]
+    assert update.notes() == update.problems[0]
+
+
+def test_a_changed_version_aborts_the_partial_sample_and_freezes_the_new_one():
+    uni, fc, spy, pack = world(n_dates=200)
+    fc = relabel(fc, [("A", 50), ("B", 150)])
+    store = MemoryStore()
+    update = run(store, uni, fc, spy, pack, latest=pd.bdate_range(
+        "2023-01-02", periods=200)[-1].date())
+    assert [r.forecaster_version for r in update.frozen] == ["B"]
+    assert update.problems == []  # an aborted version is reported in the report only
+    assert [r.forecaster_version for r in store.samples()] == ["B"]
+    assert store.samples()[0].sessions[0] == "2023-03-13"  # B's first session
+
+
 # ── verdict: computed once, from the persisted values ────────────────
 
 
@@ -508,6 +545,8 @@ def test_the_report_shows_the_persisted_verdict_and_sample():
         files=3,
         ingested=1,
         unchanged=2,
+        pending=1,
+        late_notes=["2026-10-15 (Datei vor der Eröffnung nicht versiegelt)"],
         forecasts=20,
         late=0,
         rejected_files=0,
@@ -518,6 +557,8 @@ def test_the_report_shows_the_persisted_verdict_and_sample():
     assert "**Urteil: bestanden**" in text and rec.sample_key[:12] in text
     assert "## Eingelesene Dateien" in text and "partial" in text
     assert "stop nicht erlaubt" in text
+    assert "noch vor der Frist 1" in text
+    assert "Verspätet eingelesen" in text and "nicht versiegelt" in text
     assert "## Gespeicherte Stichproben und Urteile (einmalig geschrieben)" in text
     assert "bestanden" in text.split("## Gespeicherte Stichproben")[1]
     assert text.rstrip().endswith("*Automatisch erzeugt · Keine Anlageberatung*")
@@ -531,6 +572,8 @@ def test_the_report_before_the_first_forecast_says_so():
         files=0,
         ingested=0,
         unchanged=0,
+        pending=0,
+        late_notes=[],
         forecasts=0,
         late=0,
         rejected_files=0,
@@ -557,6 +600,154 @@ def test_the_open_sample_is_listed_without_a_verdict():
     section = "\n".join(fr.render_samples_section([rec]))
     assert "Urteil ausstehend" in section and "aaaaaaaaaaaa" in section
     assert fr.render_samples_section([]) == []
+
+
+# ── blinding: no running figures before the verdict ──────────────────
+
+#: Rendered figure sections (the explanatory text of the blinded report names the
+#: metrics in prose, so the markers are the headings / row labels).
+FIGURE_MARKERS = (
+    "## Horizont",
+    "| Kennzahl |",
+    "Auswahl-Trefferquote (querschnittlich",
+    "Rang-IC (Konviktion",
+    "- Kalibrierung:",
+    "Brier",
+    "### Absolut",
+    "### Claude gegen Shortlist",
+    "## Verspätete Prognosen",
+    "Hoch-Prognosen Ø Rendite",
+)
+
+
+@pytest.fixture
+def small_sample(monkeypatch):
+    """Registered size 300 -> 120 sessions (per side stays 100) for the test world."""
+    monkeypatch.setattr(fe, "CRITERION_MIN_SESSIONS", MIN_DATES)
+
+
+def review(fc, uni, spy, pack, store, latest=LATEST, today=date(2026, 10, 18)):
+    return fr.build_review(
+        fc, [], uni, spy, pack, None, latest, store, None, today, NOW, lambda: None
+    )
+
+
+def no_figures(text):
+    return [m for m in FIGURE_MARKERS if m in text]
+
+
+def test_no_running_figures_before_the_sample_is_frozen(small_sample):
+    uni, fc, spy, pack = world(n_dates=100)  # 120 sessions needed
+    store = MemoryStore()
+    res = review(fc, uni, spy, pack, store)
+    assert res.update.frozen == [] and store.rows == {}
+    text = res.report
+    assert no_figures(text) == []
+    assert "## Fortschritt je Prognose-Version (nur Zählungen)" in text
+    assert "| `skill/1` | 20 Tage | 100 (2023-01-02 … 2023-05-19) |" in text
+    assert "bleiben **verborgen**" in text
+    assert "Noch kein Urteil: 100/120" in text.replace("**", "")
+
+
+def test_no_running_figures_while_the_verdict_is_pending(small_sample):
+    uni, fc, spy, pack = world()
+    open_uni = uni.copy()
+    open_uni.loc[open_uni["snapshot_date"].isin(DAYS[100:]), "return_20d"] = np.nan
+    store = MemoryStore()
+    res = review(fc, open_uni, spy, pack, store, latest=DAYS[125].date())
+    assert len(res.update.frozen) == 1 and store.verdict_calls == 0
+    assert no_figures(res.report) == []
+    assert "Stichprobe eingefroren, Urteil ausstehend" in res.report
+    # the frozen sample is listed with counts, not with a result
+    assert "Urteil ausstehend (Fenster noch offen)" in res.report
+
+
+def test_figures_appear_with_the_verdict_for_that_version(small_sample):
+    uni, fc, spy, pack = world()
+    store = MemoryStore()
+    res = review(fc, uni, spy, pack, store)
+    assert [s for _, s in res.update.verdicts] == ["passed"]
+    text = res.report
+    assert "**Urteil: bestanden**" in text
+    assert "## Horizont 20 Handelstage – Version `skill/1`" in text
+    assert "Rang-IC (Konviktion" in text and "- Kalibrierung:" in text
+    assert "bleiben **verborgen**" not in text
+
+
+def test_an_aborted_version_never_gets_figures_even_next_to_a_judged_one(small_sample):
+    uni, fc, spy, pack = world(n_dates=200)
+    fc = relabel(fc, [("A", 50), ("B", 150)])
+    store = MemoryStore()
+    latest = pd.bdate_range("2023-01-02", periods=200)[-1].date()
+    res = review(fc, uni, spy, pack, store, latest=latest)
+    assert [s for _, s in res.update.verdicts] == ["passed"]
+    text = res.report
+    # B is judged and shown; A is aborted: counts only, no figures of any kind
+    assert "– Version `B`" in text and "– Version `A`" not in text
+    assert "| `A` | 20 Tage | 50 (" in text and "| `B` | 20 Tage | 150 (" in text
+    assert "abgebrochene Teilstichprobe" in text
+    a_part = text.split("– Version `B`")[0]
+    assert no_figures(a_part.split("## Kennzahlen")[0]) == []
+
+
+def test_late_forecasts_of_an_unjudged_version_show_counts_only(small_sample):
+    uni, fc, spy, pack = world(n_dates=100)
+    late = fc.iloc[:30].assign(
+        forecast_id=lambda d: "L" + d["forecast_id"], on_time=False, review_id=900
+    )
+    both = pd.concat([fc, late], ignore_index=True)
+    res = review(both, uni, spy, pack, MemoryStore())
+    assert no_figures(res.report) == []
+    assert "| 30 |" in res.report  # the late count in the progress table
+
+
+def _wired_run(fc, uni, spy, pack, store):
+    """``evaluate_and_persist`` with the database replaced by in-memory pieces."""
+    from contextlib import contextmanager
+    from unittest.mock import patch
+
+    session = MagicMock()
+
+    @contextmanager
+    def fake_session():
+        yield session
+
+    with (
+        patch("trading_signals.db.session.get_session", fake_session),
+        patch.object(fr, "load_forecast_rows", return_value=fc),
+        patch.object(fr, "load_review_overview", return_value=[]),
+        patch.object(fr, "SqlCriterionStore", return_value=store),
+        patch.object(fr, "load_universe_returns", return_value=uni),
+        patch.object(fr, "load_pack_candidates", return_value=pack),
+        patch.object(fr, "load_long_run_shares", return_value=None),
+        patch.object(fr, "load_latest_session", return_value=LATEST),
+        patch(
+            "trading_signals.analysis.benchmark.load_benchmark_returns",
+            return_value=spy.reset_index(),
+        ),
+    ):
+        return fr.evaluate_and_persist(None, date(2026, 10, 18), NOW), session
+
+
+def test_the_nightly_step_is_wired_to_the_blinded_report(small_sample):
+    uni, fc, spy, pack = world(n_dates=100)  # not frozen yet
+    result, session = _wired_run(fc, uni, spy, pack, MemoryStore())
+    assert no_figures(result.report) == [] and "bleiben **verborgen**" in result.report
+    session.commit.assert_called_once()  # the freeze / verdict are committed first
+
+    uni, fc, spy, pack = world()  # frozen and judged in one run
+    store = MemoryStore()
+    result, _ = _wired_run(fc, uni, spy, pack, store)
+    assert [s for _, s in result.update.verdicts] == ["passed"]
+    assert "## Horizont 20 Handelstage – Version `skill/1`" in result.report
+
+
+def test_revealed_versions_are_exactly_those_with_a_stored_verdict():
+    done = fr.SampleRecord("a" * 64, 20, "v1", "system", 300, 100, 1, 1, ["x"], ["1"])
+    done.verdict, done.verdict_values = {"status": "passed"}, []
+    open_ = fr.SampleRecord("b" * 64, 20, "v2", "system", 300, 100, 1, 1, ["x"], ["1"])
+    assert fr.revealed_versions([done, open_]) == {"v1"}
+    assert fr.revealed_versions([]) == set()
 
 
 # ── the SQL store (statements only, no connection) ───────────────────

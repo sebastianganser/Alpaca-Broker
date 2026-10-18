@@ -35,7 +35,7 @@ Poll `curl -s -m 10 http://192.168.1.93:8090/api/v1/health` until HTTP 200 (star
 
 - `health`: `status: ok`, `scheduler_running` and `db_connected` true.
 - `system_health.alembic_revision` equals the newest migration number in `src/alembic/versions/`.
-- `system_health.job_count` equals the number of jobs in `docs/SCHEDULER.md` (26 at the time of writing).
+- `system_health.job_count` equals the number of jobs in `docs/SCHEDULER.md` (27 once migration 039 / `forecast_seal` is deployed, 26 before). Do not deploy or restart between 14:55 and 15:35 Berlin time (13:55-14:35 in the weeks of the clock change): that is the window of the `forecast_seal` runs (`alpaca-ops` refuses deploy/restart Mon-Fri 08:55-09:35 New York time).
 - `system_health.uptime_seconds` is small (new container).
 - `table_stats[]`: no `row_count < 0`.
 - `curl -s "http://192.168.1.93:8090/api/v1/logs?status=failed&limit=5"`: no new failed run started after the deploy.

@@ -44,6 +44,18 @@ guard_window() {
     fi
 }
 
+# forecast_seal hashes the forecasts.yaml files Mon-Fri at 09:00, 09:15 and
+# 09:25 New York time; a restart then can cost the seals (= forecasts late).
+# Only deploy/restart are blocked – scripts do not restart the container.
+guard_seal_window() {
+    local dow hm
+    dow=$(TZ=America/New_York date +%u)
+    hm=$(TZ=America/New_York date +%H%M)
+    if [ "$dow" -le 5 ] && [ "$hm" -ge 0855 ] && [ "$hm" -lt 0935 ]; then
+        die "no deploy/restart between 08:55 and 09:35 New York time on weekdays (forecast_seal), now $(TZ=America/New_York date +%H:%M) New York"
+    fi
+}
+
 # Daytime runs (weekly Sunday jobs, monthly analysis, manual triggers).
 # If the API is down there is nothing to protect – allow the deploy.
 guard_no_running_jobs() {
@@ -96,7 +108,7 @@ deploy_worker() {
     # The guards were checked when "deploy" was started, but the build takes
     # ~7 min: the window may have opened or a job may have started meanwhile.
     # Re-check right before the recreate (in a subshell: die exits only that).
-    if ! (guard_window && guard_no_running_jobs && guard_no_running_scripts); then
+    if ! (guard_window && guard_seal_window && guard_no_running_jobs && guard_no_running_scripts); then
         die "image built, recreate skipped – run deploy again later (old container keeps running)"
     fi
     compose up -d || die "compose up failed"
@@ -176,6 +188,7 @@ EOF
         ;;
     deploy)
         guard_window
+        guard_seal_window
         guard_no_running_jobs
         guard_no_running_scripts
         # Before cp and the log redirect below: a second deploy must neither
@@ -193,6 +206,7 @@ EOF
         ;;
     restart)
         guard_window
+        guard_seal_window
         guard_no_running_jobs
         guard_no_running_scripts
         docker restart "$CONTAINER"

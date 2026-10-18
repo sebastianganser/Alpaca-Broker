@@ -51,8 +51,46 @@ class TestCreateScheduler:
         assert (fa["day"], fa["hour"], fa["minute"]) == ("1", "7", "0")
 
     def test_job_count(self):
-        assert len(JOB_DEFINITIONS) == 26
-        assert len(create_scheduler().get_jobs()) == 26
+        assert len(JOB_DEFINITIONS) == 27
+        assert len(create_scheduler().get_jobs()) == 27
+
+    def test_forecast_seal_fires_before_the_us_open_in_new_york_time(self):
+        from datetime import UTC, datetime
+        from zoneinfo import ZoneInfo
+
+        job = create_scheduler().get_job("forecast_seal")
+        f = {x.name: str(x) for x in job.trigger.fields}
+        assert (f["day_of_week"], f["hour"], f["minute"]) == ("mon-fri", "9", "0,15,25")
+        assert str(job.trigger.timezone) == "America/New_York"
+        # not a chain step: it has its own schedule
+        assert "forecast_seal" not in CHAIN_STEP_JOB_IDS
+        # DST-proof: the three runs of a summer day and of a winter day are
+        # 09:00 / 09:15 / 09:25 New York = 13:00-13:25 UTC resp. 14:00-14:25 UTC
+        ny = ZoneInfo("America/New_York")
+        summer, winter = datetime(2026, 10, 19), datetime(2026, 11, 30)
+        for day, utc_hour in ((summer, 13), (winter, 14)):
+            before = datetime(day.year, day.month, day.day, 0, 0, tzinfo=ny)
+            fire = job.trigger.get_next_fire_time(None, before)
+            times = []
+            while fire is not None and fire.date() == before.date():
+                times.append(fire.astimezone(UTC))
+                fire = job.trigger.get_next_fire_time(fire, fire)
+            assert [(t.hour, t.minute) for t in times] == [
+                (utc_hour, 0), (utc_hour, 15), (utc_hour, 25)
+            ]
+        # a delayed run is dropped (and reported as missed) instead of running late
+        assert job.misfire_grace_time == 300
+        assert JOB_COLLECTOR_NAMES["forecast_seal"] == "forecast_seal"
+
+    def test_forecast_seal_skips_the_weekend(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        job = create_scheduler().get_job("forecast_seal")
+        ny = ZoneInfo("America/New_York")
+        saturday = datetime(2026, 10, 17, 0, 0, tzinfo=ny)
+        fire = job.trigger.get_next_fire_time(None, saturday)
+        assert (fire.weekday(), fire.hour, fire.minute) == (0, 9, 0)  # Monday 09:00
 
     def test_forecast_review_replaces_stage2_review_in_the_chain(self):
         from trading_signals.scheduler import jobs

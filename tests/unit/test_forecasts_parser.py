@@ -14,6 +14,7 @@ from trading_signals.derived.forecasts import (
     DRIVER_TAGS,
     FORBIDDEN_FIELDS,
     ForecastFileError,
+    clean_text,
     is_on_time,
     next_session_open,
     parse_forecasts,
@@ -93,9 +94,19 @@ def test_empty_forecasts_means_reviewed_without_calls():
     assert r.forecasts == [] and r.status == "ok"
 
 
-def test_naive_decided_at_is_berlin_time():
-    r = parse_forecasts(_file(_row(), decided_at="2026-10-17T09:40:00"), D)
-    assert r.decided_at.utcoffset() == timedelta(hours=2)  # CEST in October
+def test_decided_at_without_a_time_zone_rejects_the_file():
+    # a wall-clock time cannot be compared with the 09:30 New York open reliably
+    with pytest.raises(ForecastFileError, match="Zeitzone fehlt"):
+        parse_forecasts(_file(_row(), decided_at="2026-10-17T09:40:00"), D)
+    with pytest.raises(ForecastFileError, match="Zeitzone fehlt"):
+        parse_forecasts(
+            VALID.replace("2026-10-17T09:40:00+02:00", "2026-10-17 09:40:00"), D
+        )
+    # any explicit offset (also UTC / Z) is fine
+    for stamp in ("2026-10-17T07:40:00Z", "2026-10-17T03:40:00-04:00"):
+        r = parse_forecasts(VALID.replace("2026-10-17T09:40:00+02:00", stamp), D)
+        assert r.decided_at.utcoffset() is not None
+        assert r.decided_at == datetime(2026, 10, 17, 7, 40, tzinfo=UTC)
 
 
 def test_long_text_is_truncated_not_rejected():
@@ -303,7 +314,7 @@ def test_next_session_open_skips_a_holiday_and_follows_the_clock_change():
     assert tue.astimezone(UTC) == datetime(2026, 10, 14, 13, 30, tzinfo=UTC)
 
 
-def test_is_on_time_requires_decision_and_file_before_the_open():
+def test_is_on_time_requires_decision_and_seal_before_the_open():
     open_ = next_session_open(date(2026, 10, 16))  # Monday 2026-10-19 15:30 Berlin
     cest = timezone(timedelta(hours=2))
     saturday = datetime(2026, 10, 17, 9, 40, tzinfo=cest)  # the doc example
@@ -312,5 +323,31 @@ def test_is_on_time_requires_decision_and_file_before_the_open():
     assert is_on_time(saturday, saturday, open_)
     assert is_on_time(monday_early, monday_early, open_)  # one minute before the open
     assert not is_on_time(monday_late, monday_late, open_)
-    assert not is_on_time(saturday, monday_late, open_)  # file changed after the open
+    assert not is_on_time(saturday, monday_late, open_)  # sealed after the open
     assert not is_on_time(monday_late, saturday, open_)  # decision made after the open
+    # exactly at the open is not before it
+    assert not is_on_time(saturday, open_, open_)
+    assert not is_on_time(open_, saturday, open_)
+    # a file that was never sealed is late, whatever decided_at says
+    assert not is_on_time(saturday, None, open_)
+    # the seal is compared in absolute time: 09:25 New York in UTC is in time
+    nine25_ny = datetime(2026, 10, 19, 13, 25, tzinfo=UTC)
+    assert is_on_time(saturday, nine25_ny, open_)
+
+
+# ── control characters (NUL etc.) ────────────────────────────────────
+
+
+def test_control_characters_are_stripped_from_text_fields():
+    r = parse_forecasts(
+        _file(_row(reason="a\x00b\x07c\td\ne", risks="x\x7fy\x9fz")), D
+    )
+    f = r.forecasts[0]
+    assert f.reason == "abc\td\ne"  # tab and line break stay
+    assert f.risks == "xyz"
+    assert clean_text("n\x00u\x1bl\ud800l") == "null"  # also lone surrogates
+
+
+def test_a_text_field_of_only_control_characters_becomes_empty():
+    r = parse_forecasts(_file(_row(reason="\x00\x01")), D)
+    assert r.forecasts[0].reason is None

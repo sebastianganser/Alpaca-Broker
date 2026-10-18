@@ -725,6 +725,115 @@ def test_a_new_forecaster_version_starts_a_new_sample():
     assert "abgebrochene Teilstichprobe" in text and "`skill-v1`" in text
 
 
+def _by_blocks(blocks, n_dates=None, seed=5):
+    """World whose sessions carry the versions of ``blocks`` = [(version, n)]."""
+    total = sum(n for _, n in blocks)
+    uni, fc, spy, pack = _world(n_dates=n_dates or total, skill=0.03, seed=seed)
+    days = list(pd.bdate_range("2023-01-02", periods=n_dates or total))
+    label = {}
+    i = 0
+    for version, n in blocks:
+        for d in days[i:i + n]:
+            label[d] = version
+        i += n
+    return uni, fc.assign(forecaster_version=fc["session_date"].map(label)), spy, days
+
+
+def test_version_rule_a_then_b_aborts_a_and_never_freezes_it():
+    # A runs 50 sessions, B takes over before A's sample (60) is full
+    uni, fc, spy, days = _by_blocks([("A", 50), ("B", 90)])
+    s = fe.freeze_sample(fc, min_dates=60, min_per_side=20)
+    assert s["forecaster_version"] == "B" and s["status"] == "frozen"
+    assert s["first_date"] == days[50].date() and s["n_dates"] == 60
+    (a,) = s["earlier_versions"]
+    assert a["forecaster_version"] == "A" and a["status"] == "aborted"
+    assert a["progress"]["dates"] == 50 and a["reused"] is False
+    # asked for A directly: aborted, no sample, no key - never evaluated
+    direct = fe.freeze_sample(fc, min_dates=60, min_per_side=20, forecaster_version="A")
+    assert direct["status"] == "aborted" and "sessions" not in direct
+    assert "key" not in direct and direct["progress"]["dates"] == 50
+    # the criterion of an aborted version is not computed
+    joined = fe.attach_outcomes(fc, uni, spy)
+    assert fe.verdict_from_frozen(direct, joined, 99)["status"] == "aborted"
+
+
+def test_version_rule_a_b_a_freezes_nothing_for_the_returning_version():
+    # A (50) -> B (40) -> A (50): 100 A sessions in total, but not contiguous
+    uni, fc, spy, days = _by_blocks([("A", 50), ("B", 40), ("A", 50)])
+    s = fe.freeze_sample(fc, min_dates=60, min_per_side=20)
+    assert s["forecaster_version"] == "A" and s["status"] == "version_reused"
+    assert s["progress"]["dates"] == 50  # only the first run is reported
+    assert "sessions" not in s and "key" not in s
+    assert s["runs"] == 2 and s["reused"] is True
+    (b,) = s["earlier_versions"]
+    assert b["forecaster_version"] == "B" and b["status"] == "aborted"
+    # also with a smaller size: the gappy 60-session sample must never exist
+    assert fe.freeze_sample(fc, min_dates=45, min_per_side=20)["status"] == "frozen"
+    again = fe.freeze_sample(fc, min_dates=60, min_per_side=20, forecaster_version="A")
+    assert again["status"] == "version_reused"
+    # B is not reused and not full: aborted, as asked for directly
+    assert fe.freeze_sample(fc, min_dates=60, min_per_side=20,
+                            forecaster_version="B")["status"] == "aborted"
+    v = fe.verdict_from_frozen(s, fe.attach_outcomes(fc, uni, spy), 99)
+    assert v["status"] == "version_reused" and v["forecaster_version"] == "A"
+
+
+def test_a_sample_that_is_already_full_survives_later_changes_and_reuse():
+    # A fills its 60 sessions inside its first run (70), then B, then A again
+    uni, fc, spy, days = _by_blocks([("A", 70), ("B", 30), ("A", 40)])
+    s = fe.freeze_sample(fc, min_dates=60, min_per_side=20)
+    assert s["forecaster_version"] == "A" and s["status"] == "frozen"
+    assert s["sessions"] == [d.date().isoformat() for d in days[:60]]
+    assert s["reused"] is True  # reported, but the sample is the first run's
+    assert all(d <= days[69].date().isoformat() for d in s["sessions"])
+    assert s["earlier_versions"][0]["status"] == "aborted"  # B, 30 < 60 sessions
+    # the active version here is A again; B alone asked for
+    b = fe.freeze_sample(fc, min_dates=60, min_per_side=20, forecaster_version="B")
+    assert b["status"] == "aborted"
+
+
+def test_a_session_with_two_versions_separates_the_runs():
+    uni, fc, spy, days = _by_blocks([("A", 40), ("A", 40)])
+    # on day 40 two forecasters wrote on time: it belongs to neither run
+    extra = fc[fc["session_date"] == days[40]].assign(forecaster_version="B")
+    mixed = pd.concat([fc, extra], ignore_index=True)
+    s = fe.freeze_sample(mixed, min_dates=60, min_per_side=20)
+    assert s["status"] == "version_reused"  # A: 40 sessions, interrupted, again 39
+    # without the intruder the 80 contiguous A sessions freeze
+    assert fe.freeze_sample(fc, min_dates=60, min_per_side=20)["status"] == "frozen"
+
+
+def test_late_and_neutral_only_sessions_do_not_interrupt_a_run():
+    uni, fc, spy, days = _by_blocks([("A", 80)])
+    fc = fc.assign(on_time=True)
+    other = fc[fc["session_date"].isin(days[30:35])].copy()
+    # B wrote late forecasts on some days and only neutral calls on others:
+    # neither is an on-time directional forecast, so A's run stays contiguous
+    late = other[other["session_date"].isin(days[30:32])].assign(
+        forecaster_version="B", on_time=False)
+    neutral = other[other["session_date"].isin(days[32:35])].assign(
+        forecaster_version="B", direction="neutral", confidence=np.nan,
+        conviction=np.nan)
+    mixed = pd.concat([fc, late, neutral], ignore_index=True)
+    s = fe.freeze_sample(mixed, min_dates=60, min_per_side=20)
+    assert s["forecaster_version"] == "A" and s["status"] == "frozen"
+    assert s["earlier_versions"] == []
+
+
+def test_the_report_names_aborted_and_reused_versions():
+    uni, fc, spy, days = _by_blocks([("A", 50), ("B", 40), ("A", 50)])
+    res = fe.evaluate_forecasts(fc, uni, spy, horizons=(20,))
+    text = fe.render_report(res, date(2026, 10, 18))
+    assert "Versionsname erneut verwendet" in text
+    assert "neuen** `forecaster_version`-Namen" in text
+    assert "andere Version `B`" in text and "abgebrochene Teilstichprobe" in text
+    uni2, fc2, spy2, _ = _by_blocks([("A", 50), ("B", 40)])
+    text2 = fe.render_report(
+        fe.evaluate_forecasts(fc2, uni2, spy2, horizons=(20,)), date(2026, 10, 18))
+    assert "Noch kein Urteil" in text2 and "andere Version `A`" in text2
+    assert "abgebrochene Teilstichprobe" in text2
+
+
 def test_missing_versions_are_one_unversioned_stream():
     uni, fc, spy, _ = _world(n_dates=140, skill=0.03, seed=5)
     s = fe.freeze_sample(fc, min_dates=120, min_per_side=100)

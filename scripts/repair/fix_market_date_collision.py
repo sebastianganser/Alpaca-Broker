@@ -188,7 +188,7 @@ def rerun_collectors() -> None:
 
 def regenerate_context_packs(dates: list[date]) -> None:
     from trading_signals.db.session import get_session
-    from trading_signals.derived.context_pack_generator import ContextPackGenerator
+    from trading_signals.derived.context_pack import ContextPackGenerator
 
     for d in dates:
         with get_session() as session:

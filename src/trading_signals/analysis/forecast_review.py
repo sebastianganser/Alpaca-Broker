@@ -23,12 +23,18 @@ Persistence rules (``docs/FORECASTS.md`` section 6):
   stored values reproduces it exactly.
 * Only the registered 20-session horizon is persisted (:data:`PERSISTED_HORIZONS`);
   the 60-session rule needs its own registration.
+* The sample of a forecaster version is its first contiguous run of sessions
+  (:func:`forecast_eval.freeze_sample`): an interrupted version is never frozen
+  (``aborted``), a version string that comes back after an interruption is
+  ``version_reused`` and never frozen either.
+* **Blinding:** the report shows no running performance figure of a version
+  before its verdict is stored (:func:`revealed_versions`) - only counts.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -390,6 +396,17 @@ def update_criterion(
         directional = eff[
             (eff["horizon_days"] == h) & (eff["sigma"] != 0) & eff["on_time"]
         ]
+        if not directional.empty:
+            live = fe.freeze_sample(eff, h, None, min_dates, min_per_side)
+            if live["status"] == "version_reused" and (
+                h,
+                live["forecaster_version"],
+            ) not in persisted:
+                update.problems.append(
+                    f"forecaster_version {live['forecaster_version']} was used "
+                    f"again after another version ({h}d): no sample can be "
+                    "frozen for it - choose a new version name"
+                )
         for version in sorted(set(directional["forecaster_version"])):
             if (h, version) in persisted:
                 continue
@@ -476,6 +493,20 @@ def criterion_state(
     return frozen_map, verdict_map
 
 
+def revealed_versions(samples: Sequence[SampleRecord]) -> set[str]:
+    """Forecaster versions whose performance figures may be shown (blinding).
+
+    A version is revealed only when its decisive 20-day sample is frozen AND
+    its verdict is stored - nothing before, and never an aborted or re-used
+    version (those have no sample at all).
+    """
+    return {
+        s.forecaster_version
+        for s in samples
+        if s.horizon in PERSISTED_HORIZONS and s.has_verdict
+    }
+
+
 # ── Report ───────────────────────────────────────────────────────────
 
 
@@ -489,13 +520,23 @@ def render_ingest_section(
     """German section on the files read (this run and the latest reviews)."""
     lines = ["## Eingelesene Dateien", ""]
     if ingest is not None:
+        pending = getattr(ingest, "pending", 0)
+        waiting = f", noch vor der Frist {pending}" if pending else ""
         lines += [
             f"Dieser Lauf: Dateien gefunden {ingest.files}, neu eingelesen "
-            f"{ingest.ingested}, unverändert {ingest.unchanged} · Prognosen "
-            f"{ingest.forecasts} (davon verspätet {ingest.late}) · abgelehnt: "
-            f"Dateien {ingest.rejected_files}, Zeilen {ingest.rejected_rows}.",
+            f"{ingest.ingested}, unverändert {ingest.unchanged}{waiting} · "
+            f"Prognosen {ingest.forecasts} (davon verspätet {ingest.late}) · "
+            f"abgelehnt: Dateien {ingest.rejected_files}, "
+            f"Zeilen {ingest.rejected_rows}.",
             "",
         ]
+        late_notes = getattr(ingest, "late_notes", None) or []
+        if late_notes:
+            lines += [
+                "Verspätet eingelesen (zählt nicht für das Kriterium): "
+                + "; ".join(late_notes[:5]),
+                "",
+            ]
     if not reviews:
         return lines if ingest is not None else []
     lines += [
@@ -797,6 +838,54 @@ class ReviewResult:
     n_forecasts: int = 0
 
 
+def build_review(
+    rows: pd.DataFrame,
+    reviews: Sequence[Mapping[str, Any]],
+    universe: pd.DataFrame,
+    spy: pd.DataFrame | None,
+    pack: pd.DataFrame | None,
+    long_run: Mapping[int, tuple[float, float]] | None,
+    latest: date | None,
+    store: CriterionStore,
+    ingest: Any | None,
+    today: date,
+    now: datetime,
+    commit: Callable[[], None],
+) -> ReviewResult:
+    """Freeze / verdict (each written once) and the blinded report.
+
+    Everything the nightly step computes from loaded data; the database
+    session only supplies ``rows`` ... ``latest``, the ``store`` and
+    ``commit`` (so the logic is unit tested on an in-memory store).
+    """
+    if rows.empty:  # nothing ingested yet: only the file overview
+        report = build_report(
+            {"n_forecasts": 0}, store.samples(), reviews, ingest, today
+        )
+        return ReviewResult(report, CriterionUpdate(), 0)
+
+    eff = effective_forecasts(rows)
+    update = update_criterion(eff, rows, universe, spy, pack, store, latest, now)
+    # the freeze / verdict are committed before anything else can fail: they
+    # are written once and must not be rolled back and recomputed later
+    commit()
+    samples = store.samples()
+    frozen_map, verdict_map = criterion_state(eff, samples)
+    result = fe.evaluate_forecasts(
+        eff,
+        universe,
+        spy,
+        pack,
+        frozen=frozen_map,
+        verdicts=verdict_map,
+        long_run=long_run,
+        # blinding: performance figures only for versions with a stored verdict
+        reveal_versions=revealed_versions(samples),
+    )
+    report = build_report(result, samples, reviews, ingest, today)
+    return ReviewResult(report, update, int(len(eff)))
+
+
 def evaluate_and_persist(
     ingest: Any | None, today: date, now: datetime
 ) -> ReviewResult:
@@ -813,13 +902,11 @@ def evaluate_and_persist(
         rows = load_forecast_rows(session)
         reviews = load_review_overview(session)
         store = SqlCriterionStore(session)
-        if rows.empty:  # nothing ingested yet: only the file overview
-            report = build_report(
-                {"n_forecasts": 0}, store.samples(), reviews, ingest, today
+        if rows.empty:
+            return build_review(
+                rows, reviews, rows, None, None, None, None, store, ingest, today,
+                now, session.commit,
             )
-            return ReviewResult(report, CriterionUpdate(), 0)
-
-        eff = effective_forecasts(rows)
         sessions = sorted(rows["session_date"].unique())
         universe = load_universe_returns(session, sessions)
         spy = load_benchmark_returns(session, pd.Timestamp(sessions[0]).date())
@@ -828,24 +915,10 @@ def evaluate_and_persist(
         pack = pack if len(pack) else None
         long_run = load_long_run_shares(session, ml_start_date(), MIN_DOLLAR_VOLUME_20D)
         latest = load_latest_session(session)
-
-        update = update_criterion(eff, rows, universe, spy, pack, store, latest, now)
-        # the freeze / verdict are committed before anything else can fail: they
-        # are written once and must not be rolled back and recomputed later
-        session.commit()
-        samples = store.samples()
-        frozen_map, verdict_map = criterion_state(eff, samples)
-        result = fe.evaluate_forecasts(
-            eff,
-            universe,
-            spy,
-            pack,
-            frozen=frozen_map,
-            verdicts=verdict_map,
-            long_run=long_run,
+        return build_review(
+            rows, reviews, universe, spy, pack, long_run, latest, store, ingest,
+            today, now, session.commit,
         )
-        report = build_report(result, samples, reviews, ingest, today)
-        return ReviewResult(report, update, int(len(eff)))
 
 
 __all__ = [
@@ -857,6 +930,7 @@ __all__ = [
     "SampleRecord",
     "SqlCriterionStore",
     "build_report",
+    "build_review",
     "criterion_state",
     "effective_forecasts",
     "evaluate_and_persist",
@@ -865,6 +939,7 @@ __all__ = [
     "ingest_new_files",
     "record_from_frozen",
     "recompute_verdict",
+    "revealed_versions",
     "revive_verdict",
     "to_jsonable",
     "update_criterion",
