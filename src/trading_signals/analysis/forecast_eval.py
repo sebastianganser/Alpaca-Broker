@@ -41,12 +41,13 @@ Inputs (all plain DataFrames, no DB):
   Claude with the shortlist, the random controls and the universe, and for
   the ``claude_value_add`` criterion.
 
-Decisive criterion (PROPOSAL, awaiting Sebastian's confirmation - see
-``docs/FORECASTS.md`` section 6): :func:`freeze_sample` fixes the sample from
-the forecasts alone (independent of any return), :func:`verdict_from_frozen`
-computes the one-look verdict once the windows are realised, and
-:func:`verdict_from_values` recomputes it from persisted values. Step 4
-persists the frozen sample and the verdict once.
+Decisive criterion (pre-registered 2026-10-18 by Sebastian, like H14 - see
+``docs/FORECASTS.md`` section 6; the constants below must not change
+afterwards): :func:`freeze_sample` fixes the sample from the forecasts alone
+(independent of any return), :func:`verdict_from_frozen` computes the one-look
+verdict once the windows are realised, and :func:`verdict_from_values`
+recomputes it from persisted values. Step 4 persists the frozen sample and the
+verdict once.
 """
 
 from __future__ import annotations
@@ -93,8 +94,21 @@ BRIER_REFERENCE_P = 0.5
 MIN_IC_OBS = 5
 MIN_EXPECTED_PCT_OBS = 30
 
-# ── Pre-registered decisive criterion (PROPOSAL, see docs/FORECASTS.md) ──
+# ── Pre-registered decisive criterion (docs/FORECASTS.md section 6) ──
+#
+# Pre-registered by Sebastian on 2026-10-18 (like H14): horizon 20, mode
+# ``system``, at least CRITERION_MIN_SESSIONS sessions with at least
+# CRITERION_MIN_PER_SIDE on-time ``up`` AND ``down`` calls of ONE forecaster
+# version, batch-jackknife batches of 2h sessions, grace of
+# CRITERION_GRACE_SESSIONS sessions. These constants must NOT be changed after
+# the first forecast; a change means a new registration in FORECASTS.md
+# (tripwire: ``test_registered_criterion_constants``).
 
+#: Sessions of the frozen sample of the registered 20-day criterion (about 14
+#: months; 7 batch-jackknife batches of 40 sessions, t with 6 df). Chosen by
+#: Sebastian over the proposed 200 (simulated power at 300 sessions: +1.7 %
+#: relative edge 38 %, +2.9 % 85 %; false-pass rate 1.2 %).
+CRITERION_MIN_SESSIONS = 300
 #: Minimum on-time up AND down forecasts in the frozen sample.
 CRITERION_MIN_PER_SIDE = 100
 #: After the last frozen window has closed, wait at most this many sessions for
@@ -112,8 +126,24 @@ VALUE_COLUMNS = (
 
 
 def reliable_dates(horizon: int) -> int:
-    """Sessions needed for 10 independent ``horizon``-day periods."""
+    """Sessions needed for 10 independent ``horizon``-day periods.
+
+    Threshold of the descriptive reliability labels and significance markers
+    (200 at 20 days). NOT the size of the decisive sample - see
+    :func:`criterion_min_sessions`.
+    """
     return min_dates_for_horizon(int(horizon))
+
+
+def criterion_min_sessions(horizon: int) -> int:
+    """Sessions of the frozen sample of the decisive criterion at ``horizon``.
+
+    The registered :data:`CRITERION_MIN_SESSIONS` (300) for the primary 20-day
+    horizon; any other horizon (labelled *not registered*) keeps the 10 x h
+    rule of :func:`reliable_dates`.
+    """
+    h = int(horizon)
+    return CRITERION_MIN_SESSIONS if h == PRIMARY_HORIZON else reliable_dates(h)
 
 
 # ── Preparation ──────────────────────────────────────────────────────
@@ -767,8 +797,10 @@ def freeze_sample(
     The sample is the first ``m`` sessions with at least one on-time
     directional ``horizon``-day forecast of ONE forecaster version, where
     ``m`` is the smallest number >= ``min_dates`` (default
-    :func:`reliable_dates`, 200 at 20 days) for which the sample holds at
-    least ``min_per_side`` up AND down forecasts. Everything it uses is known
+    :func:`criterion_min_sessions`: the registered
+    :data:`CRITERION_MIN_SESSIONS` = 300 at 20 days, 10 x h for the
+    not-registered horizons) for which the sample holds at least
+    ``min_per_side`` up AND down forecasts. Everything it uses is known
     at forecast time, so whether and when a sample freezes cannot depend on
     returns that happen to be (un)available. Late and neutral forecasts do
     not count.
@@ -784,7 +816,7 @@ def freeze_sample(
     (:func:`sample_key`). Step 4 persists a frozen sample once.
     """
     h = int(horizon)
-    need = int(min_dates or reliable_dates(h))
+    need = int(min_dates or criterion_min_sessions(h))
     f = prepare_forecasts(forecasts)
     base = f[(f["horizon_days"] == h) & (f["sigma"] != 0) & f["on_time"]]
     if base.empty:
@@ -973,7 +1005,9 @@ def primary_criterion(
     """:func:`freeze_sample` + :func:`verdict_from_frozen` on live data.
 
     A convenience for reports and tests; the nightly step of plan step 4 calls
-    the two parts separately and persists their results.
+    the two parts separately and persists their results. ``min_dates=None``
+    uses the registered sample size (:func:`criterion_min_sessions`); only
+    tests and simulations pass a smaller one.
     """
     frozen = freeze_sample(forecasts, horizon, forecaster_version, min_dates,
                            min_per_side)
@@ -1124,7 +1158,7 @@ def _mode_table(mode: str, info: dict[str, Any], h: int) -> list[str]:
 
 def _criterion_lines(h: int, c: dict[str, Any]) -> list[str]:
     p = c["progress"]
-    tag = ("vorab registriert, Vorschlag" if c.get("registered")
+    tag = ("vorab registriert" if c.get("registered")
            else "nicht registriert – nur zur Orientierung")
     head = f"## Entscheidungskriterium {h} Tage ({tag})"
     lines = [head, "", f"Prognose-Version: `{c['forecaster_version']}`"]
@@ -1326,6 +1360,7 @@ __all__ = [
     "BRIER_REFERENCE_P",
     "CRITERION_GRACE_SESSIONS",
     "CRITERION_MIN_PER_SIDE",
+    "CRITERION_MIN_SESSIONS",
     "CRITERION_MODES",
     "DEFAULT_CRITERION_MODE",
     "DIRECTIONS",
@@ -1337,6 +1372,7 @@ __all__ = [
     "by_driver",
     "calibration",
     "compare_groups",
+    "criterion_min_sessions",
     "evaluate_direction",
     "evaluate_forecasts",
     "freeze_sample",

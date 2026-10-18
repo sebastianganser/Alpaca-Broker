@@ -13,6 +13,7 @@ from scipy.stats import spearmanr
 
 from tests.unit.forecast_data import D1, D2, D3, SPY, forecasts, universe
 from trading_signals.analysis import forecast_eval as fe
+from trading_signals.analysis import stats
 
 # ── hand-checkable case: 3 sessions, 4 tickers (tests/unit/forecast_data.py) ──
 
@@ -433,15 +434,72 @@ def _crit(fc, uni, spy, **kw):
 
 def test_freeze_waits_for_enough_sessions_and_both_sides():
     uni, fc, spy, _ = _world(n_dates=140, skill=0.03, seed=4)
-    early = fe.freeze_sample(fc)  # 200 sessions needed, 140 exist
+    early = fe.freeze_sample(fc)  # 300 sessions needed (registered), 140 exist
     assert early["status"] == "insufficient_data"
     assert early["progress"]["dates"] == 140
-    assert early["progress"]["dates_needed"] == 200
+    assert early["progress"]["dates_needed"] == 300 == early["min_dates"]
     few = fe.freeze_sample(fc, min_dates=100, min_per_side=10_000)
     assert few["status"] == "insufficient_data"
     verdict = fe.primary_criterion(fc, uni, spy)
     assert verdict["status"] == "insufficient_data"
     assert verdict["registered"] is True and verdict["decisive_mode"] == "system"
+
+
+def test_the_registered_sample_size_is_300_sessions_not_the_reliability_threshold():
+    uni, fc, spy, _ = _world(n_dates=310, skill=0.03, seed=4)
+    days = pd.bdate_range("2023-01-02", periods=310)
+    # 299 sessions: far past the 200 of the descriptive reliability labels ...
+    short = fe.freeze_sample(fc[fc["session_date"] <= days[298]])
+    assert short["status"] == "insufficient_data"
+    assert short["progress"]["dates"] == 299
+    assert short["progress"]["dates_needed"] == 300
+    assert short["progress"]["up"] >= 100 and short["progress"]["down"] >= 100
+    # ... the 300th session freezes it (both sides were full long before)
+    frozen = fe.freeze_sample(fc)
+    assert frozen["status"] == "frozen" and frozen["n_dates"] == 300
+    assert frozen["last_date"] == days[299].date()
+    assert frozen["min_dates"] == 300
+    # primary_criterion without an override uses the same default
+    waiting = fe.primary_criterion(fc[fc["session_date"] <= days[298]], uni, spy)
+    assert waiting["status"] == "insufficient_data"
+    assert waiting["progress"]["dates_needed"] == 300
+    # the not-registered 60-day horizon keeps the 10 x h rule (600 sessions)
+    sixty = fe.freeze_sample(fc.assign(horizon_days=60), 60)
+    assert sixty["progress"]["dates_needed"] == 600 == fe.reliable_dates(60)
+    # the reliability labels of the descriptive report are unchanged
+    assert fe.reliable_dates(20) == 200 < fe.criterion_min_sessions(20) == 300
+
+
+def test_registered_criterion_constants():
+    """Tripwire (like the H14 constants): pre-registered by Sebastian 2026-10-18.
+
+    Changing any of these after the first forecast invalidates the
+    pre-registration - re-register in docs/FORECASTS.md section 6 first.
+    """
+    assert fe.CRITERION_MIN_SESSIONS == 300
+    assert fe.CRITERION_MIN_PER_SIDE == 100
+    assert fe.PRIMARY_HORIZON == 20
+    assert fe.CRITERION_GRACE_SESSIONS == 10
+    assert fe.DEFAULT_CRITERION_MODE == "system"
+    assert fe.CRITERION_MODES == ("system", "claude_value_add")
+    # batches of 2h = 40 sessions: 7 batches at 300 sessions (t with 6 df)
+    assert stats.JACKKNIFE_BATCH_FACTOR == 2
+    assert stats.jackknife_batches(fe.CRITERION_MIN_SESSIONS, fe.PRIMARY_HORIZON) == 7
+    assert 2 * fe.PRIMARY_HORIZON == 40
+    # the defaults of the entry points are the registered constants
+    freeze = inspect.signature(fe.freeze_sample).parameters
+    assert freeze["horizon"].default == 20
+    assert freeze["min_per_side"].default == fe.CRITERION_MIN_PER_SIDE
+    assert freeze["min_dates"].default is None  # -> criterion_min_sessions(20) == 300
+    assert fe.criterion_min_sessions(fe.PRIMARY_HORIZON) == fe.CRITERION_MIN_SESSIONS
+    crit = inspect.signature(fe.primary_criterion).parameters
+    assert crit["horizon"].default == 20 and crit["min_dates"].default is None
+    assert crit["min_per_side"].default == fe.CRITERION_MIN_PER_SIDE
+    assert crit["decisive_mode"].default == "system"
+    assert crit["grace_sessions"].default == fe.CRITERION_GRACE_SESSIONS
+    verdict = inspect.signature(fe.verdict_from_frozen).parameters
+    assert verdict["decisive_mode"].default == "system"
+    assert verdict["grace_sessions"].default == fe.CRITERION_GRACE_SESSIONS
 
 
 def test_freeze_uses_only_the_forecasts_never_a_return():
@@ -684,5 +742,6 @@ def test_the_sixty_day_criterion_is_labelled_not_registered():
     assert res["criterion"][20]["registered"] is True
     assert res["criterion"][60]["registered"] is False
     text = fe.render_report(res, date(2026, 10, 17))
-    assert "Entscheidungskriterium 20 Tage (vorab registriert, Vorschlag)" in text
+    assert "Entscheidungskriterium 20 Tage (vorab registriert)" in text
+    assert "Vorschlag" not in text
     assert "Entscheidungskriterium 60 Tage (nicht registriert" in text

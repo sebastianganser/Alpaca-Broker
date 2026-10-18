@@ -73,7 +73,7 @@ forecasts:
 
 Felder wie Limit, Kursziel, Stop oder Positionsgröße lehnt der Parser ab – das ist Sache des Bots.
 
-**Bewertung** (`analysis/forecast_eval.py`): realisierte 20-/60-Tage-Rendite – absolut, gegenüber dem Universums-Mittel und gegenüber SPY; Up-minus-Down-Differenz mit Batch-Jackknife-Intervall (der Datumsblock-Bootstrap war in der Simulation zu eng, siehe FORECASTS.md §6), Auswahl-Trefferquote gegen die Basisrate, Rang-IC (Konviktion × Richtung), Kalibrierung, Aufschlüsselung nach Treibern, Claude vs. Shortlist vs. Zufalls-Kontrolle. Das Urteil wird vorab registriert (wie H14). Realistisch belastbar: ~200 Handelstage für 20 Tage (≈ 10 Monate), ~600 für 60 Tage (≈ 2,4 Jahre); davor nur beschreibend. Der Screen selbst ist sofort rückwirkend prüfbar.
+**Bewertung** (`analysis/forecast_eval.py`): realisierte 20-/60-Tage-Rendite – absolut, gegenüber dem Universums-Mittel und gegenüber SPY; Up-minus-Down-Differenz mit Batch-Jackknife-Intervall (der Datumsblock-Bootstrap war in der Simulation zu eng, siehe FORECASTS.md §6), Auswahl-Trefferquote gegen die Basisrate, Rang-IC (Konviktion × Richtung), Kalibrierung, Aufschlüsselung nach Treibern, Claude vs. Shortlist vs. Zufalls-Kontrolle. Das Urteil wird vorab registriert (wie H14; am 18.10. mit **300 Sitzungen** für das entscheidende 20-Tage-Kriterium, siehe Abschnitt 6). Beschreibend belastbar: ~200 Handelstage für 20 Tage (≈ 10 Monate), ~600 für 60 Tage (≈ 2,4 Jahre); davor nur beschreibend. Der Screen selbst ist sofort rückwirkend prüfbar.
 
 ## 3. Barrier-Label und Stage-2-Tabellen
 
@@ -119,6 +119,13 @@ Gesamt ca. 10–12 Agenten-Tage.
 - **Auswahl:** Variante **D** (Hybrid: `screen.csv` für alle Gate-Ticker, Volldateien für 10 bullische + 10 bärische (anfangs per Config aus) + 5 Zufalls-Kontrollen + Wunsch-Ticker).
 - **Barrier-Label:** wird **gelöscht** (Migration 040), ebenso die leeren Stage-2-Tabellen.
 - **H14-Sekundärziel:** keine Antwort → H14 bleibt unverändert; nach dem Löschen der Barrier-Spalte entfällt die Info-Zeile (vom Code abgefangen), die Vorab-Registrierung bleibt unberührt.
+- **Entscheidender Test (17.10.):** das **System** (Claudes Prognosen gegen das Gate-Universum, `decisive_mode = system`); der Mehrwert gegenüber der Shortlist wird zusätzlich berichtet; die rohe absolute Trefferquote wird nur berichtet; jede Änderung von `forecaster_version` startet eine neue eingefrorene Stichprobe.
+
+**Entschieden am 18.10.2026 (Sebastian):**
+
+- **Entscheidungskriterium vorab registriert mit 300 Sitzungen** (statt der vorgeschlagenen 200): Horizont 20, Modus `system`, ≥ 300 Sitzungen mit ≥ 100 rechtzeitigen `up`- UND ≥ 100 `down`-Prognosen **einer** `forecaster_version`, Einfrieren allein aus den Prognosen, beide Untergrenzen (relativ R und Auswahl-Trefferquote S) > 0, Batch-Jackknife mit Batches von 2h = 40 Sitzungen und t(g−1) (7 Batches, 6 Freiheitsgrade, 2,447), Karenz 10 Sitzungen, absolute Trefferquote nur beschreibend, Versionswechsel startet die Stichprobe neu. Simulierte Fehlbestehensrate bei 300 Sitzungen 1,2 %, Power 38 % (+1,7 % relativer Vorsprung) bzw. 85 % (+2,9 %). Die Konstanten sind wie bei H14 fix und dürfen nicht mehr geändert werden ([FORECASTS.md §6](FORECASTS.md), Tripwire-Test `test_registered_criterion_constants`); die schwächere Schwelle der beschreibenden Belastbarkeits-Kennzeichnungen (10 × Horizont = 200 Sitzungen bei 20 Tagen) bleibt unverändert und ist nicht die Stichprobengröße des Kriteriums.
+- **Screen-Gate Liquidität:** bleibt bei **20-Tage-Mittel des Handelsvolumens ≥ 5 Mio. USD** (bestätigt, [SCREEN.md §3](SCREEN.md)).
+- **Kürzere Bull-Liste:** an Tagen mit weniger qualifizierten bullischen Tickern bleibt die Liste kürzer – **kein Auffüllen auf 10** (`MIN_BREADTH_BULL` = 1 / `MAX_BREADTH_BEAR` = −1, bestätigt; [SCREEN.md §6](SCREEN.md)). Beide Konstanten sind durch den Tripwire-Test `test_confirmed_gate_liquidity_and_breadth_constants` festgehalten, eine Änderung braucht eine neue `SCREEN_VERSION`. Noch offen: die übrigen Gate-Schwellen (≥ 60 Kurstage, ≥ 50 % der Gruppen mit Daten).
 
 Ursprüngliche Liste der offenen Freigaben:
 

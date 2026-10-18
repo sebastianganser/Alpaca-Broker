@@ -19,12 +19,14 @@ The screen is a **filter, not a forecast**: whether a bullish candidate is expec
 
 All inputs are the point-in-time `feature_snapshots` of the date itself (see the information cut-offs in [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md)); the screen adds no lookahead.
 
-## 3. Quality gate (thresholds PROPOSED – awaiting Sebastian's confirmation)
+## 3. Quality gate (liquidity threshold confirmed 2026-10-18; the other thresholds are still PROPOSED)
+
+> **Confirmed by Sebastian (2026-10-18):** (1) the liquidity gate stays at **20-day mean dollar volume ≥ USD 5 m**; (2) on days with fewer qualifying bullish tickers the bullish list **stays shorter** – no top-up to `K_BULL` = 10 (`MIN_BREADTH_BULL` = 1 / `MAX_BREADTH_BEAR` = −1, §6). No behaviour change. Both are pinned by the tripwire test `test_confirmed_gate_liquidity_and_breadth_constants`; a change needs a new `SCREEN_VERSION`. **Still awaiting confirmation:** `MIN_PRICE_SESSIONS` = 60 and `MIN_GROUP_FRACTION` = 50 % (rows below).
 
 | Check | Reason code | Rule |
 |---|---|---|
 | Universe | `not_in_universe` | the row is an active, tradable member of the point-in-time universe (input flag `in_universe`; absent = all `feature_snapshots` rows, which already are the point-in-time universe) |
-| Liquidity | `low_liquidity` | `dollar_volume_20d` (20-session mean of close × volume) ≥ **USD 5 m**; NULL fails. Rationale: a downstream bot needs positions it can enter and leave; USD 5 m only removes micro caps and the thinnest ARK names, the S&P 500 / Nasdaq 100 core is far above |
+| Liquidity (**confirmed 2026-10-18**) | `low_liquidity` | `dollar_volume_20d` (20-session mean of close × volume) ≥ **USD 5 m**; NULL fails. Rationale: a downstream bot needs positions it can enter and leave; USD 5 m only removes micro caps and the thinnest ARK names, the S&P 500 / Nasdaq 100 core is far above |
 | Price history | `short_history` | ≥ **60** real (non-extrapolated) price sessions. `feature_snapshots` does not store the count: the optional input column `price_history_sessions` (the context pack can supply it) is used when present, otherwise the proxy "`price_vs_sma50` is not NULL" (SMA(50) needs 50 real sessions, so the proxy is slightly weaker than 60) |
 | Data coverage | `few_groups` | at least **50 %** of the 12 evidence groups (6) have data for the ticker (a group has data when ≥ ⅔ of its features, rounded up, are present, §2) |
 
@@ -84,8 +86,8 @@ Sign `+`: a high value is bullish evidence; `-`: a high value is bearish. `inver
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `K_BULL` | 10 | top bullish candidates: highest breadth, then composite (ties: ticker A→Z); needs breadth ≥ `MIN_BREADTH_BULL` = 1 |
-| `K_BEAR` / `BEARISH_ENABLED` | 10 / **False** | bearish candidates (mirror image, breadth ≤ `MAX_BREADTH_BEAR` = −1); **initially switched off** (decision 2026-10-17), the bearish evidence is still computed and shown |
+| `K_BULL` | 10 | top bullish candidates: highest breadth, then composite (ties: ticker A→Z); needs breadth ≥ `MIN_BREADTH_BULL` = 1 (**confirmed 2026-10-18**: fewer qualifying names = a shorter list, no top-up) |
+| `K_BEAR` / `BEARISH_ENABLED` | 10 / **False** | bearish candidates (mirror image, breadth ≤ `MAX_BREADTH_BEAR` = −1, confirmed 2026-10-18 together with `MIN_BREADTH_BULL`); **initially switched off** (decision 2026-10-17), the bearish evidence is still computed and shown |
 | `K_RANDOM` | 5 | random controls from the gated tickers outside the two buckets; deterministic per date: `numpy.default_rng([RANDOM_SEED, date.toordinal()])` over the alphabetically sorted pool (`RANDOM_SEED` = 20261017), so a rerun reproduces the same names |
 | requested tickers | – | always get a full file (`bucket = requested`, or flagged `is_requested` if already in a bucket) |
 | `BULL_PERCENTILE` / `BEAR_PERCENTILE` | 0.80 / 0.20 | group is bullish / bearish |
@@ -94,7 +96,7 @@ Sign `+`: a high value is bullish evidence; `-`: a high value is bearish. `inver
 | `MIN_FEATURE_FRACTION` | ⅔ | share of a group's features (rounded up) that must be present for the group to have data and a score |
 | `MISSING_FEATURE_RANK` | 0.5 | rank of a missing feature inside a group that has data (no evidence) |
 
-Fewer than `K_BULL` bullish names on a day is a valid outcome (breadth must be positive); the plan's rule "files alphabetical, group only in the DB" (no ranking anchor for Claude) is implemented by the context pack, not by the screen.
+Fewer than `K_BULL` bullish names on a day is a valid outcome (breadth must be positive) and **confirmed as such by Sebastian on 2026-10-18**: the list is not topped up with names of breadth 0 to reach 10 (`test_bull_and_bear_buckets_and_minimum_breadth`, `test_confirmed_gate_liquidity_and_breadth_constants`); the plan's rule "files alphabetical, group only in the DB" (no ranking anchor for Claude) is implemented by the context pack, not by the screen.
 
 ## 7. Validation before go-live
 

@@ -58,7 +58,12 @@ STATS = ("relative", "selection")
 
 @dataclass(frozen=True)
 class Scenario:
-    """One simulated world (defaults: the 200-session minimum of the criterion)."""
+    """One simulated world.
+
+    The defaults are the 200-session base case of the size table; the
+    registered criterion uses 300 sessions (``forecast_eval.CRITERION_MIN_SESSIONS``,
+    scenario ``"300 sessions"``).
+    """
 
     n_sessions: int = 200
     n_tickers: int = 300

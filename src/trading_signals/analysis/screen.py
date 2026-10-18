@@ -67,11 +67,13 @@ K_RANDOM = 5
 #: Base of the per-date seed of the random controls.
 RANDOM_SEED = 20261017
 
-# ── Quality gate (PROPOSED thresholds, awaiting Sebastian's confirmation) ──
+# ── Quality gate (liquidity confirmed by Sebastian 2026-10-18; the price-history
+# and coverage thresholds are still PROPOSED) ──
 
-#: Minimum 20-session mean daily dollar volume (USD). A forecast list for a
-#: downstream bot should be tradable; USD 5 m only removes micro caps / the
-#: thinnest ARK names, the S&P 500 / Nasdaq 100 core is far above.
+#: Minimum 20-session mean daily dollar volume (USD) - CONFIRMED 2026-10-18. A
+#: forecast list for a downstream bot should be tradable; USD 5 m only removes
+#: micro caps / the thinnest ARK names, the S&P 500 / Nasdaq 100 core is far
+#: above. Pinned by ``test_confirmed_gate_liquidity_and_breadth_constants``.
 MIN_DOLLAR_VOLUME_20D = 5_000_000.0
 #: Minimum real (non-extrapolated) price sessions.
 MIN_PRICE_SESSIONS = 60
@@ -84,7 +86,9 @@ BULL_PERCENTILE = 0.80
 BEAR_PERCENTILE = 0.20
 #: Minimum number of groups with a score for an evidence breadth.
 MIN_GROUPS_FOR_BREADTH = 3
-#: A bullish / bearish candidate needs net positive / negative evidence.
+#: A bullish / bearish candidate needs net positive / negative evidence. On days
+#: with fewer qualifying names the list stays shorter (no top-up to ``K_BULL``);
+#: confirmed by Sebastian 2026-10-18, pinned by the same tripwire test.
 MIN_BREADTH_BULL = 1
 MAX_BREADTH_BEAR = -1
 #: Cross-section size below which a feature has no rank on a date.

@@ -117,6 +117,37 @@ def test_screen_signs_are_frozen_literature_priors():
     assert cfg.min_groups_for_breadth == 3
 
 
+def test_confirmed_gate_liquidity_and_breadth_constants():
+    """Tripwire: confirmed by Sebastian on 2026-10-18 (``screen/v1``, docs/SCREEN.md).
+
+    (1) liquidity gate = 20-day mean dollar volume >= USD 5 m; (2) a day with
+    fewer qualifying bullish tickers gets a SHORTER list - no top-up to
+    ``K_BULL`` with names of breadth 0 (``MIN_BREADTH_BULL`` = 1,
+    ``MAX_BREADTH_BEAR`` = -1). A change needs a new ``SCREEN_VERSION``.
+    """
+    assert sc.SCREEN_VERSION == "screen/v1"
+    assert sc.MIN_DOLLAR_VOLUME_20D == 5_000_000.0
+    assert (sc.MIN_BREADTH_BULL, sc.MAX_BREADTH_BEAR) == (1, -1)
+    cfg = sc.DEFAULT_CONFIG
+    assert cfg.min_dollar_volume == 5_000_000.0
+    assert (cfg.min_breadth_bull, cfg.max_breadth_bear) == (1, -1)
+    # the threshold is inclusive: exactly USD 5 m passes, a dollar less fails
+    df = tiny_frame()
+    df.loc[3, "dollar_volume_20d"] = 5_000_000.0
+    df.loc[4, "dollar_volume_20d"] = 4_999_999.0
+    gate = _gate(df)
+    assert gate.loc["T3", "gate_ok"] and not gate.loc["T4", "gate_ok"]
+    assert "low_liquidity" in gate.loc["T4", "gate_reasons"]
+    # no top-up: with K larger than the number of qualifying names the bucket
+    # holds exactly those, every gated name with breadth >= 1 and nobody else
+    res = sc.screen_cross_section(tiny_frame(), config=replace(TINY, k_bull=6))
+    res = res.set_index("ticker")
+    qualifying = res["gate_ok"] & (res["evidence_breadth"] >= 1)
+    bulls = res["bucket"] == "bull"
+    assert 0 < bulls.sum() < 6
+    assert (bulls == qualifying).all()
+
+
 def test_definition_rows_flat_table():
     rows = sc.definition_rows()
     assert len(rows) == len(sc.scored_features())
