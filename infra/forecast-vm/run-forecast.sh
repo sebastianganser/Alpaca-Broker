@@ -79,6 +79,19 @@ check_forecasts() { # returns the number of problems
     v=$(key_value "$f" forecaster_version)
     [ "$v" = "$FORECASTER_VERSION" ] || { log ERROR "check: forecaster_version '$v' != expected '$FORECASTER_VERSION' (a mismatch restarts the pre-registered sample!)"; problems=$((problems + 1)); }
     decided=$(key_value "$f" decided_at)
+    # A decided_at after the file was written is a guess, not a measurement
+    # (seen in the first test run): replace it by the file's write time.
+    if printf '%s' "$decided" | grep -qE '(Z|[+-][0-9]{2}:[0-9]{2})$'; then
+        local d_epoch m_epoch fixed
+        d_epoch=$(date -d "$decided" +%s 2>/dev/null || echo 0)
+        m_epoch=$(stat -c %Y "$f")
+        if [ "$d_epoch" -gt $((m_epoch + 120)) ]; then
+            fixed=$(date -d "@$m_epoch" --iso-8601=seconds)
+            sed -i -E "s|^decided_at:.*$|decided_at: $fixed|" "$f"
+            log WARN "check: decided_at $decided lies after the file was written - corrected to $fixed"
+            decided="$fixed"
+        fi
+    fi
     if printf '%s' "$decided" | grep -qE '(Z|[+-][0-9]{2}:[0-9]{2})$'; then
         if [ -n "${OPEN_EPOCH:-}" ] && [ "$IGNORE_DEADLINE" -eq 0 ]; then
             if [ "$(date -d "$decided" +%s 2>/dev/null || echo 9999999999)" -ge "$OPEN_EPOCH" ]; then

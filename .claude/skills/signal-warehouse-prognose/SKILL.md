@@ -202,7 +202,7 @@ Reihenfolge der Dateien im Pack-Ordner (neben `00_uebersicht.md`, UTF-8):
 Vor dem Schreiben von `forecasts.yaml` selbst prüfen:
 
 - [ ] gültiges YAML; `schema`, `session` (= Ordnername), `decided_at` **mit Zeitzone**, `forecaster_version`, `forecasts` vorhanden
-- [ ] `decided_at` = Zeit unmittelbar vor dem Schreiben (mit `date --iso-8601=seconds` holen, falls Bash/`date` verfügbar; sonst die Zeit aus dem System), vor der Eröffnung
+- [ ] `decided_at` = Zeit unmittelbar vor dem Schreiben: **immer** per Bash `date --iso-8601=seconds` abfragen (der Befehl ist freigegeben) und genau diesen Wert eintragen – **nie schätzen oder runden**; vor der Eröffnung. Auch Zeitstempel in `research_sources.md`, `trade_ideas.yaml` und `prognosen.md` per `date` holen
 - [ ] keine doppelten (Ticker, Horizont); Horizonte nur 20/60
 - [ ] up/down: `confidence` 0.50–0.95 und `conviction` 1–5 gesetzt; neutral: beides weggelassen
 - [ ] `expected_pct` passt zum Vorzeichen; `drivers` nur aus der Liste
