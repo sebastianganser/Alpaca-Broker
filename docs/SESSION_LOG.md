@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ROADMAP.md](ROADMAP.md)
 
-**Last updated:** 18 October 2026, evening (Session 35: strategy-neutral rework steps 3–5 deployed, SEC data with migration 040 and backfills, forecast VM, vacation until 2026-10-30)
+**Last updated:** 30 October 2026 (Session 36: Rückkehr aus dem Urlaub, Log-Check 19.–30.10., Korrekturen an Prognose-VM und XBRL-Quartalen, Deploy `fced8d8`)
 
 ---
 
@@ -520,4 +520,16 @@ Offen ist kein Reparatur-Skript. **Nicht über die API prüfbar:** ob nach dem 1
 - **Review (Opus) vor dem Deploy:** keine Blocker; umgesetzt: systematisch fehlschlagende Header-Abfragen machen den Lauf `partial` (≥ 5 oder > 20 %), Cast im `--tickers`-Filter des Reparaturskripts, Abdeckungszählung in Abschnitt 15 nach der EDGAR-Regel (keine nach Börsenschluss angenommene Meldung); Pack vor dem Deploy zweimal lesend gegen Produktion erzeugt (identisch)
 - **Deploy** `2881fd9` (mit `7226ab7`) via `alpaca-ops deploy` 20:43: Health ok, Alembic `040`, 29 Jobs; Skill per Git-Bundle auf die VM gebracht (VM-Repo `2881fd9`)
 - **Tests:** 2177 passed (ohne DB)
-- **Offen:** `politician_trades_collector` 403; Plan-Schritte 6 (Migration 041) und 7; VM-Passwort ändern; Windows-Aufgabe `signal-warehouse-prognose` abschalten, falls noch aktiv
+- **Offen:** `politician_trades_collector` 403; Plan-Schritte 6 (Migration 041) und 7; Windows-Aufgabe `signal-warehouse-prognose` abschalten, falls noch aktiv
+
+### Session 36 – 30. Oktober 2026 – Rückkehr aus dem Urlaub: Log-Check, Prognose-VM gehärtet, XBRL-Quartale
+- **Bilanz der 12 unbeaufsichtigten Tage:** kein Prognosetag ausgefallen. 9 Packs (19.–29.10.) mit `forecasts.yaml`, alle versiegelt; 270 Prognosen eingelesen (Stand bis 28.10.), alle rechtzeitig, 0 abgelehnt. Rechnerisch rund 3,85 USD je VM-Lauf. Kriterium: 8/300 Sitzungen, 50/100 hoch, 30/100 runter; Kennzahlen bleiben verborgen. Zeitumstellung am 25.10. korrekt
+- **Beinahe-Ausfall 1, virtiofs-Cache:** Die VM hält Verzeichnislisten rund 24 h im Cache; der 07:30-Lauf sah außer dienstags das neue Pack nicht, erst der 09:30-Lauf. Nachgestellt mit einem Testordner (auf dem Share wieder gelöscht): `ls` zeigt ihn nicht, der Zugriff über den Namen schon. Fix: `latest_complete_pack` sucht die letzten 10 Tage über den Namen
+- **Beinahe-Ausfall 2, OAuth:** 3 von 12 Claude-Starts brachen nach Sekunden ab (`Failed to refresh OAuth token`), kostenlos, aber je ein Versuch verbraucht; am 21.10. rettete erst der letzte Timer des Tages. Fix: warten und im selben Versuch neu starten (3 ×, 90 s). Beide Fixes `535e3cd`, per Git-Bundle auf der VM, mit Fake-Claude im Temp-Ordner auf der VM getestet. Das Skill ist unverändert, die Stichprobe läuft weiter
+- **Fehlende Quartale:** Bei 66 von 641 Tickern fehlte das neueste eingereichte Quartal. Stichprobe von 40: 20 stehen gar nicht im `companyfacts`-Feed der SEC (ABT selbst nachgeprüft), 17 lagen beim Lauf vom 25.10. noch nicht vor und sind inzwischen da, 1 Parser-Fehler (16-Wochen-Quartale von COST, AZO, KR; behoben), EIX teils, ACM kein Fehler. Da sich die Lücken nicht beheben lassen, warnt Abschnitt 4 jetzt mit „Tabelle nicht aktuell“, wenn Abschnitt 15 einen neueren 10-Q/10-K zeigt oder das neueste Quartal über 140 Tage alt ist (`fced8d8`, additiv, `pack_format` bleibt 2). Lesend gegen Produktion geprüft: Das Pack vom 29.10. zeigt den Hinweis bei den geprüften Tickern C, COST, CB, NEE und ABT, nicht bei AAPL
+- **News:** `news_alpaca` an 6 Nächten `partial` (Obergrenze 5.000 Artikel). Keine Lücke: Das Fenster umfasst 36 h, abgeschnitten wird nur die Überlappung (1.709 schon vorhandene Artikel am 30.10.). Obergrenze auf 10.000 angehoben
+- **Politiker-Daten:** `politician_trades_collector` am 18.10. und 25.10. HTTP 403. Akamai sperrt dieses Netz, auch einen echten Browser. Wird nicht umgangen; Daten stehen seit 01.10., nicht im Screen. Prüfen am 01.11. und 08.11., dann ggf. andere Quelle
+- **VM-Passwort:** bleibt laut Sebastian unverändert, Risiko bewusst akzeptiert
+- **Deploy** `fced8d8` via `alpaca-ops deploy` 15:31: Health ok, Alembic `040`, 29 Jobs. Zwischen 13:55 und 14:35 gesperrt (Siegel-Fenster dieser Woche); die Unraid-Anmeldung war abgelaufen, Sebastian hat sich neu angemeldet
+- **Tests:** 2200 passed (ohne DB)
+- **Offen:** Nachweis des VM-Laufs am 31.10. 07:30; Sonntagsläufe am 01.11. (`sec_financials`, `index_sync`, `feature_analysis`, Politiker); Plan-Schritte 6 (Migration 041) und 7

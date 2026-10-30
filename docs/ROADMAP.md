@@ -312,18 +312,18 @@
 7. Sprint 10 frühestens ab Mitte Dezember 2026 – Inhalt hängt davon ab, ob bis dahin ein Ranking den Walk-forward besteht (K3 erneut frühestens Januar 2027)
 8. **Urlaub (Sebastian, 18.10. abends bis 30.10.2026):** Dev-PC aus, nur Unraid läuft. Das System läuft unbeaufsichtigt: Collectors, Nightly Chain (erster Pack-v2-Lauf Di 20.10. 04:30), Prognose-VM Di–Sa 07:30 (Wiederholungen 09:30/11:30), `forecast_seal` Mo–Fr 09:00/09:15/09:25 New York, `forecast_review` in der Chain. Zeitumstellung: Europa stellt am 25.10. um, die USA erst am 01.11. – vom 26. bis 30.10. beträgt der Abstand Berlin–New York nur 5 h (Frist 09:30 New York = 14:30 Berlin, Siegel 14:00/14:15/14:25 Berlin, kein Deploy 13:55–14:35)
 
-#### Nach dem Urlaub prüfen (ab 30.10.2026)
-- [ ] `/log-check` über den ganzen Zeitraum 19.–30.10.: alle Jobs, `failed`/`partial`-Läufe, Notizen der Nightly Chains Di–Sa (Chain-Status, Nachhol-Meldungen `catch-up: …`), Zeitumstellung am 25.10. (laufen die Jobs und die VM-Timer weiter zur richtigen Zeit?)
-- [ ] Je Pack (Sessions 19.–29.10.): `forecasts.yaml` vorhanden, **versiegelt** (`forecast_file_seals`), **rechtzeitig** (`on_time`), von `forecast_review` eingelesen (`context_packs/forecast_auswertung.md`, kein `rejected`/`partial`); `forecaster_version` in allen Läufen gleich (eine Änderung startet eine neue eingefrorene Stichprobe, eine Lücke macht die Version `aborted`)
-- [ ] Prognose-VM: Logs in `~/alpaca/logs`, `systemctl --user list-timers` (Timer aktiv, Lauf vorhanden), Claude-Login gültig (Exit-Code 10 = nicht eingeloggt), Neustart-Festigkeit (Laufzeit der VM, virtiofs gemountet)
-- [ ] 13G-/144-Zuordnung: Reparatur am 18.10. 23:03 angewandt – in den Packs Abschnitt 15 von BLK/STT/JPM stichprobenartig prüfen (keine fremden 13G-Zeilen) und ob `sec_filings_collector` je Lauf `success` meldet (≥ 5 bzw. > 20 % fehlgeschlagene Header-Abfragen → `partial`)
-- [ ] Neue Yahoo-Spalten (zwölf Felder in `fundamentals_snapshot`) gefüllt? Abschnitte 4, 5 und 8 der Ticker-Dateien zeigen die neuen Zeilen; Abschnitt 15 „SEC-Meldungen“ gefüllt
-- [ ] `politician_trades_collector`: HTTP 403 am 18.10.; am 25.10. 11:00 erneut gelaufen? Falls wieder 403: Ursache klären und beheben
-- [ ] 01.11.: `index_sync` (S&P 500 darf sich nicht ändern) und `feature_analysis` (Konsens-Ranking, `days_to_cover`, große t-Werte junger Quellen, Fortschritt H14 – laut Plan 0/250 im ersten Lauf)
+#### Nach dem Urlaub prüfen (geprüft am 30.10.2026, Details: [SESSION_LOG](SESSION_LOG.md), Session 36)
+- [x] `/log-check` 19.–30.10.: Kernkette sauber, Zeitumstellung am 25.10. korrekt. `failed`: `politician_trades_collector` (25.10.), `fred_collector` (22.10., einmalig, Chain deshalb `partial`). `news_alpaca` an 6 Nächten `partial` (Seiten-Obergrenze, keine Lücke; Obergrenze auf 10.000 angehoben, `fced8d8`)
+- [x] Je Pack (Sessions 19.–29.10.): alle 9 mit `forecasts.yaml` und Siegel; die 8 bis zum 28.10. eingelesen: 270 Prognosen, alle rechtzeitig, 0 abgelehnt, eine Version `swp-v2+claude-opus-5-5+pack2`. Der Stand 29.10. wird in der Nacht zum 31.10. eingelesen
+- [x] Prognose-VM: keine Ausfälle, aber zwei Beinahe-Ausfälle behoben (`535e3cd`): virtiofs-Verzeichniscache (07:30 sah das neue Pack nicht) und OAuth-Refresh-Fehler (3 von 12 Starts). **Nachweis offen:** Lauf 31.10. 07:30 muss das Pack vom 30.10. sofort finden
+- [x] 13G-/144-Zuordnung: BLK 0, STT 1, MS 1 Zeile (je als Zielunternehmen), `sec_filings_collector` 12 × `success`; rund 300 Header-Abfragen je Lauf seit 28.10. (Filer-Kopien im 14-Tage-Fenster), Job in 3 min fertig
+- [x] Yahoo-Spalten seit 25.10. gefüllt (761 Zeilen: Float 744, Short 730, Institutionen 745, FCF 659, Empfehlung 695); Abschnitte 4, 5, 8 und 15 im Pack geprüft
+- [ ] `politician_trades_collector`: am 25.10. wieder HTTP 403. Akamai sperrt dieses Netz, auch einen echten Browser (geprüft 30.10.). **Nicht umgehen.** Prüfen am 01.11. und 08.11., bei anhaltender Sperre andere Quelle vorschlagen; nicht kritisch, die Daten gehen nicht in den Screen ein
+- [ ] 01.11.: `index_sync` (S&P 500 darf sich nicht ändern), `feature_analysis` (Konsens-Ranking, `days_to_cover`, große t-Werte junger Quellen, Fortschritt H14 – laut Plan 0/250 im ersten Lauf), `sec_financials` (neu: COST/AZO/KR, dazu 17 verspätete Ticker; danach Zahl der Hinweise „Tabelle nicht aktuell“ ansehen)
 - [ ] H14: Out-of-sample-Start 2026-10-19 (nur Handelstage ab diesem Datum zählen)
 - [x] VM-Passwort: bleibt laut Sebastian (30.10.) unverändert, Risiko bewusst akzeptiert – nicht mehr erinnern. Windows-Aufgabe `signal-warehouse-prognose` ist deaktiviert (geprüft 18.10.)
 - [ ] Plan-Schritte 6 (Rückbau Barrier, Migration 041) und 7 (Deploy 2 + Doku-Durchgang) weiter offen
-- [ ] Backlog: `options_iv`-Zeilen vom 2026-10-05 weiterhin nicht repariert; mögliche Sektor-Obergrenze für Screen/v2; Delisting-Renditen
+- [ ] Backlog: `options_iv`-Zeilen vom 2026-10-05 weiterhin nicht repariert; mögliche Sektor-Obergrenze für Screen/v2; Delisting-Renditen; XBRL-Quartale öfter als wöchentlich holen (in der Berichtssaison zeigt rund die Hälfte der Ticker „Tabelle nicht aktuell“); auf der VM hängt seit dem 18.10. ein Kernel-Thread im Zustand D (Load immer 1,0, bisher ohne Wirkung; beim nächsten VM-Neustart ansehen)
 
 ### Sprint 10 – Signal Scoring
 - Weighted scoring model, optional LASSO/gradient boosting
