@@ -136,8 +136,7 @@ Alpaca-Broker/
 │   │                                #   survivorship repair, dry run by default, …)
 │   ├── analysis/                    # Research: screen_backtest (neutral screen validation),
 │   │                                #   simulate_criterion_size (size/power of the forecast criterion),
-│   │                                #   event_study (horizon + barrier mode), collect_buyback_events,
-│   │                                #   backtest_barrier, walkforward_hit_model (barrier, removed in plan step 6)
+│   │                                #   event_study (20/60-session raw and excess returns), collect_buyback_events
 │   ├── archive/                     # Obsolete one-time scripts (kept for reference)
 │   ├── sprint10_readiness.py        # Data-maturity check for the scoring model
 │   └── *.py                         # Universe init/sync/validate, recompute helpers, backfills
@@ -201,7 +200,7 @@ trading_signals/
 │   ├── short_term_features.py    # 9 st_* price features (1–14 session horizon)
 │   ├── short_interest_features.py # 2 FINRA short-interest features (9-session lag; pure + vectorised, kept identical by a test)
 │   ├── feature_pipeline.py       # ~97 features / 17 groups (incl. st_*, short_interest_*) per PIT-universe ticker and session
-│   ├── target_backfill.py        # Forward returns 1/5/20/60d + barrier label (return_barrier_14d, …)
+│   ├── target_backfill.py        # Forward returns 1/5/20/60d (entry open(d+1)); "only missing" = any of the four still NULL
 │   ├── recompute.py              # Recompute TA, targets, st_* after a price-history refresh
 │   ├── context_pack/             # Context pack v2 ([CONTEXT_PACK.md](CONTEXT_PACK.md)): generator.py (entry point `ContextPackGenerator`), loader.py (batch SQL, the only DB access),
 │   │                             #   pit.py (point-in-time rules), model.py (gate-universe percentiles), sections/ (15 ticker-file sections; filings.py = section 15 "SEC-Meldungen"), ticker_file.py, overview.py,
@@ -218,9 +217,7 @@ trading_signals/
 │   ├── criterion_sim.py    # Simulated size / power of that criterion (scripts/analysis/simulate_criterion_size.py)
 │   ├── benchmark.py        # SPY forward returns on the target definition (read-only loader)
 │   ├── report_format.py    # Markdown cell formatters shared by the analysis reports
-│   ├── event_study.py      # Event studies: horizon mode (20/60-session raw and excess returns) + barrier mode (barrier mode removed in step 6)
-│   ├── barrier.py          # Barrier trade simulation (MAIN_BARRIER: +1 % / −2 % / 14 sessions) – removed in plan step 6
-│   ├── hit_model.py        # Walk-forward hit-probability model for the barrier label – removed in step 6
+│   ├── event_study.py      # Event studies on 20/60-session raw and excess returns (scripts/analysis/event_study.py)
 │   └── forecast_review.py  # Nightly step glue: loaders, freeze / verdict persisted ONCE (forecast_criterion_samples), report forecast_auswertung.md
 ├── scheduler/
 │   ├── setup.py            # JOB_DEFINITIONS (cron, Europe/Berlin) + create_scheduler()
@@ -264,7 +261,7 @@ flowchart TD
     RAW --> CHAIN
     DER --> CHAIN["Nightly chain 04:30"]
     CHAIN --> FS["feature_snapshots (features incl. st_*)"]
-    FS --> TGT["Targets: return_1d/5d/20d/60d + barrier label"]
+    FS --> TGT["Targets: return_1d/5d/20d/60d"]
     TGT --> S2["forecast_review: forecasts.yaml → forecast_reviews / forecasts, frozen sample + verdict (once), forecast_auswertung.md"]
     FS --> CP["Context Pack v2 (quality gate + neutral screen, screen.csv, ticker files, pack_candidates) → Unraid share"]
     CP -. "Claude broker skill writes forecasts.yaml" .-> S2
@@ -287,7 +284,7 @@ flowchart TD
     C -- no --> D["wait_for_upstream: poll every 5 min, max 2 h, while stale upstream collectors are still running"]
     D --> E["1. technical_indicators catch-up"]
     E --> F["2. feature_pipeline(target)"]
-    F --> G["3. target_backfill (returns + barrier label)"]
+    F --> G["3. target_backfill (forward returns)"]
     G --> H["4. forecast_review"]
     H --> I{"feature_pipeline SUCCESS or PARTIAL?"}
     I -- yes --> J["5. context_pack_generator(target): pack v2"]

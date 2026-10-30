@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 
 from trading_signals.db.models.features import (
     FEATURE_COLUMNS,
-    LABEL_COLUMNS,
     TARGET_COLUMNS,
     FeatureSnapshot,
 )
@@ -69,5 +68,4 @@ def test_orm_no_longer_has_the_trailing_columns():
     for col in TRAIL_COLUMNS:
         assert col not in table_cols
         assert col not in TARGET_COLUMNS
-        assert col not in LABEL_COLUMNS
         assert col not in FEATURE_COLUMNS

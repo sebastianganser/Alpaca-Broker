@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** 18 October 2026 (migrations 001–040; production at 040 since the deploy of 2026-10-18 15:57)
+**Last updated:** 30 October 2026 (migrations 001–041; production at 040 since the deploy of 2026-10-18 15:57, 041 not yet deployed)
 
 ---
 
@@ -698,7 +698,7 @@ CREATE INDEX idx_technical_indicators_date ON signals.technical_indicators(trade
 ## Layer 3: Analysis (Feature Store + Backtests)
 
 ### `signals.feature_snapshots` ⭐
-**The heart of the project.** Daily feature vector per ticker, aggregated from all raw and derived data layers. This table serves as training data for ML models. Wide table design avoids JOINs during training: **108 columns** = 2 key + 97 features + 5 return targets + 2 trade labels + 2 metadata columns (`FEATURE_COLUMNS` / `TARGET_COLUMNS` / `LABEL_COLUMNS` / `META_COLUMNS` in `db/models/features.py`).
+**The heart of the project.** Daily feature vector per ticker, aggregated from all raw and derived data layers. This table serves as training data for ML models. Wide table design avoids JOINs during training: **105 columns** = 2 key + 97 features + 4 return targets + 2 metadata columns (`FEATURE_COLUMNS` / `TARGET_COLUMNS` / `META_COLUMNS` in `db/models/features.py`). Production still has the three barrier-label columns (108 columns) until migration 041 is deployed; see the note below the DDL.
 
 > **Design:** All feature columns are nullable. Features self-activate when sufficient data exists. No imputation at the feature store level — the ML stage decides how to handle NULLs.
 
@@ -856,10 +856,6 @@ CREATE TABLE signals.feature_snapshots (
   return_5d NUMERIC(10,6),               -- 5-session forward return
   return_20d NUMERIC(10,6),              -- 20-session forward return
   return_60d NUMERIC(10,6),              -- 60-session forward return
-  -- Barrier trade label (migration 033): entry open d+1, TP +1 % / SL -2 % / max 14 sessions, net of 0.05 % costs
-  return_barrier_14d NUMERIC(10,6),      -- net trade return (older trade concept; to be made strategy-neutral, see DECISIONS_FEATURES 2026-10-17)
-  barrier_outcome SMALLINT,              -- 1 = take profit, -1 = stop, 0 = time stop
-  barrier_ambiguous BOOLEAN,             -- TP and SL touched on the same day (resolved via OHLC rule)
   
   -- ═══ Metadata ═══
   computed_at TIMESTAMP DEFAULT NOW(),
@@ -871,6 +867,10 @@ CREATE TABLE signals.feature_snapshots (
 CREATE INDEX idx_features_date ON signals.feature_snapshots(snapshot_date);
 CREATE INDEX idx_features_ticker ON signals.feature_snapshots(ticker);
 ```
+
+> **Target rule of the nightly chain:** `target_backfill` processes a row while at least one of the four `return_*` columns is NULL (recent sessions keep filling until all horizons have realised); the targets are strategy-neutral forward returns, no trade label is stored.
+>
+> **Removed (migration 041, not yet deployed):** the barrier trade label of migration 033 (`return_barrier_14d NUMERIC(10,6)`, `barrier_outcome SMALLINT`, `barrier_ambiguous BOOLEAN`: entry open d+1, take profit +1 %, stop −2 %, 14 sessions) is deleted together with its tools; the ORM already lacks the columns. Until 041 is deployed they exist in production but nothing reads or writes them (the nightly step no longer touches them). History: DECISIONS_FEATURES 2026-10-17 ("Strategy-Neutral Rework Approved").
 
 ### `signals.analysis_reports` (Migration 021)
 Monthly feature-analysis results (Spearman correlations, Random-Forest and LASSO importance, hypothesis tests, consensus ranking) plus the HTML report served by the API.
@@ -1083,7 +1083,7 @@ Decision 2026-10-05: the system keeps exactly the last **20 calendar quarters** 
 
 ## Migrations
 
-Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–040 (linear chain, head = 040; production at 040 since the deploy of 2026-10-18 15:57, `990c286`).
+Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–041 (linear chain, head = 041; production at 040 since the deploy of 2026-10-18 15:57, `990c286`; **041 is not yet deployed**).
 
 | Migration | Description |
 |---|---|
@@ -1127,6 +1127,7 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 | 038 | Drops the 037 trailing-stop label columns again (`DROP COLUMN IF EXISTS` `return_trail_60d`, `trail_exit_day`, `trail_stopped`) – scope decision 2026-10-17: Alpaca-Broker forecasts, a separate bot trades; the downgrade re-adds the columns exactly as 037 defined them. 037 itself is unchanged. The model target of the monthly analysis is the strategy-neutral `return_60d` |
 | 039 | Forecast pipeline: tables `forecast_reviews`, `forecasts`, `pack_candidates`, `forecast_criterion_samples`, `forecast_file_seals` (see "Forecast tables"); drops the empty stage-2 tables of 035 (`DROP TABLE IF EXISTS stage2_decisions`, `stage2_reviews`; the downgrade drops the new tables and recreates the stage-2 tables exactly as 035). Applied with the deploy after 2026-10-18 (039 was extended with `forecast_file_seals` before its first deploy). Tested on a fresh `postgres:18`: `upgrade head`, `alembic check` (clean), `downgrade 038` (stage-2 DDL identical to 035), `upgrade head` again |
 | 040 | SEC feeds (docs/DATA_SOURCES.md §13/§14): tables `sec_filings` (unique `uq_sec_filings_accession_number`, 3 indexes), `sec_filing_texts` (FK → `sec_filings(accession_number)` `ON DELETE CASCADE`, PK `(accession_number, exhibit)`), `financials_quarterly` (PK `(ticker, period_end)`, `raw_tags` JSONB) and 12 nullable `fundamentals_snapshot` columns (`shares_outstanding`, `float_shares`, `held_percent_institutions`, `held_percent_insiders`, `short_percent_of_float`, `free_cashflow`, `total_cash`, `total_debt`, `gross_margins`, `recommendation_mean`, `recommendation_key`, `number_of_analyst_opinions`) from the same yfinance `info` call; the downgrade drops them again. **Pending deploy.** Tested on a fresh `postgres:18`: `upgrade head`, `alembic check` (clean), `downgrade 039`, `upgrade head` again, plus an end-to-end run of both collectors, the retention job and the dashboard statistics against that throwaway database |
+| 041 | Drops the 033 barrier-label columns again (`DROP COLUMN IF EXISTS` `return_barrier_14d`, `barrier_outcome`, `barrier_ambiguous` on `feature_snapshots`) – plan 2026-10-17 step 6, scope decision "Alpaca-Broker forecasts, a separate bot trades". The values are derived data (computed from `prices_daily`), no data backup is taken; the downgrade re-adds the three nullable columns exactly as 033 defined them (`NUMERIC(10,6)`, `SMALLINT`, `BOOLEAN`), values stay NULL (recompute with the code of the git tag `pre-neutral`). 033 itself is unchanged. **Not yet deployed** (to be tested on a fresh `postgres:18` with `upgrade head`, `alembic check`, `downgrade 040`, `upgrade head` before the deploy) |
 
 > [!NOTE]
 > Migration 024 was extended after production had applied it (commit `81446a4` added `sector_relative_return_20d` / `sector_relative_momentum`), so 025 (`32168a0`) created the two columns in production. On an empty database both added them and `alembic upgrade head` failed at 025. **Fixed 2026-10-16:** 025 uses `ADD COLUMN IF NOT EXISTS` and its downgrade is a no-op (024's downgrade drops the columns). Verified on a throwaway `postgres:18`: fresh `upgrade head` → 035, round trip `025 → 023 → head`, and the production history (old 024 without the columns → 025 creates them). No effect on databases already at 025 or later.

@@ -1,32 +1,22 @@
 """Event studies: do tickers earn more after a dated event than the universe?
 
 Pure building blocks (unit-tested); DB loading and the report live in
-``scripts/analysis/event_study.py``. Two evaluation modes:
-
-**Horizon mode (strategy-neutral, plan 2026-10-17 step 2)** - the forward
-returns ``return_20d`` / ``return_60d`` (``close(d+h) / open(d+1) - 1``) after
-the event, raw and as excess over the same-day universe mean and over SPY,
-date-weighted with a 95 % batch-jackknife interval (batches of 2 x horizon event
-dates, t critical value; a date-block bootstrap is too narrow at this sample
-size, see ``analysis.criterion_sim``). The "dates" are the dates that carry an
-event - they are sparse, so a batch spans more calendar time than 2h sessions,
-which only makes the interval more cautious:
+``scripts/analysis/event_study.py``. Strategy-neutral (plan 2026-10-17 step 2):
+the forward returns ``return_20d`` / ``return_60d`` (``close(d+h) / open(d+1) -
+1``) after the event, raw and as excess over the same-day universe mean and over
+SPY, date-weighted with a 95 % batch-jackknife interval (batches of 2 x horizon
+event dates, t critical value; a date-block bootstrap is too narrow at this
+sample size, see ``analysis.criterion_sim``). The "dates" are the dates that
+carry an event - they are sparse, so a batch spans more calendar time than 2h
+sessions, which only makes the interval more cautious.
 
 * :func:`horizon_meta` - labelled rows with ``ret_<h>``, ``ex_<h>`` (and SPY).
 * :func:`evaluate_events_horizon` - events vs the universe on the same dates.
 * :func:`passes_criterion_horizon` - decision rule (same shape as D1).
-
-**Barrier mode (older trade concept, deprecated)** - kept until the barrier
-label is deleted (plan step 6, together with ``hit_model``);
-everything below the marked section can be removed with it:
-:func:`label_meta`, :func:`evaluate_events`, :func:`passes_criterion`.
-
-Shared by both modes:
-
 * :func:`dedupe_events` - one event per ticker within ``min_gap_days``.
 * :func:`align_events` - signal date = first session >= event date, plus an
   optional delay in sessions (the position then starts at ``open(d+1)``).
-* :func:`event_selection` - event rows joined to the label rows of
+* :func:`event_selection` - event rows joined to the return rows of
   (ticker, d).
 """
 
@@ -35,7 +25,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from trading_signals.analysis.stats import (
@@ -45,35 +34,24 @@ from trading_signals.analysis.stats import (
     to_float,
 )
 
-# Barrier mode only - delete with the barrier label in step 6:
-from trading_signals.analysis.hit_model import (  # isort: skip
-    BREAK_EVEN_HIT_RATE,
-    STOP_NET,
-    evaluate_selection,
-)
-
 __all__ = [
-    "BREAK_EVEN_HIT_RATE",
     "HORIZONS",
     "MIN_EVENTS",
     "align_events",
     "dedupe_events",
-    "evaluate_events",
     "evaluate_events_horizon",
     "event_selection",
     "horizon_meta",
-    "label_meta",
-    "passes_criterion",
     "passes_criterion_horizon",
 ]
 
-#: Horizons of the strategy-neutral mode (sessions).
+#: Evaluation horizons (sessions).
 HORIZONS = (20, 60)
 #: Minimum number of events for a verdict (as in D1).
 MIN_EVENTS = 150
 
 
-# ── Shared building blocks ───────────────────────────────────────────
+# ── Event alignment ──────────────────────────────────────────────────
 
 
 def dedupe_events(events: pd.DataFrame, min_gap_days: int = 5) -> pd.DataFrame:
@@ -113,7 +91,7 @@ def align_events(
 
 
 def event_selection(aligned: pd.DataFrame, meta: pd.DataFrame) -> pd.DataFrame:
-    """Join aligned events to their trade label; one row per (ticker, date)."""
+    """Join aligned events to their return rows; one row per (ticker, date)."""
     extra = [c for c in aligned.columns if c not in (DATE_COL, "ticker")]
     sel = aligned[[DATE_COL, "ticker", *extra]].merge(
         meta, on=[DATE_COL, "ticker"], how="inner"
@@ -121,7 +99,7 @@ def event_selection(aligned: pd.DataFrame, meta: pd.DataFrame) -> pd.DataFrame:
     return sel.drop_duplicates([DATE_COL, "ticker"]).reset_index(drop=True)
 
 
-# ── Horizon mode (strategy-neutral) ──────────────────────────────────
+# ── Evaluation ────────────────────────────────────────────────────────
 
 
 def horizon_meta(
@@ -222,7 +200,7 @@ def evaluate_events_horizon(
 def passes_criterion_horizon(
     stats: dict[str, Any], min_events: int = MIN_EVENTS
 ) -> bool:
-    """Decision rule of the horizon mode (same shape as the D1 criterion).
+    """Decision rule of the event study (same shape as the D1 criterion).
 
     At least ``min_events`` events, positive date-weighted mean return AND the
     95 % jackknife CI of (events - universe) above zero. Evaluated on the
@@ -232,54 +210,5 @@ def passes_criterion_horizon(
     return bool(
         stats.get("n_events", 0) >= min_events
         and stats.get("mean_ret", float("nan")) > 0
-        and stats.get("diff_lo", float("nan")) > 0
-    )
-
-
-# ── Barrier mode (DEPRECATED - removed with the barrier label, step 6) ──
-
-
-def label_meta(df: pd.DataFrame) -> pd.DataFrame:
-    """Labelled snapshot rows → ``snapshot_date, ticker, y, net, net_cons``.
-
-    ``net_cons`` counts take-profit trades on ambiguous days (target and
-    stop touched on the same day) as stopped – the conservative rule.
-    """
-    sub = df[df["barrier_outcome"].notna() & df["return_barrier_14d"].notna()]
-    outcome = pd.to_numeric(sub["barrier_outcome"], errors="coerce")
-    net = pd.to_numeric(sub["return_barrier_14d"], errors="coerce").astype(float)
-    amb = sub["barrier_ambiguous"].fillna(False).astype(bool)
-    return pd.DataFrame({
-        DATE_COL: pd.to_datetime(sub[DATE_COL]),
-        "ticker": sub["ticker"].astype(str),
-        "y": (outcome == 1).astype(int),
-        "net": net,
-        "net_cons": np.where(amb & (outcome == 1), STOP_NET, net),
-    }).reset_index(drop=True)
-
-
-def evaluate_events(
-    selected: pd.DataFrame, meta: pd.DataFrame, block: int = 20, bootstrap: bool = True
-) -> dict[str, Any]:
-    """Statistics of event trades vs. the universe on the same dates.
-
-    Date-weighted figures (``net``, ``diff`` …) come from
-    :func:`hit_model.evaluate_selection`; ``n_events``, ``trade_net`` and
-    ``trade_hit_rate`` are trade-weighted.
-    """
-    out = evaluate_selection(selected, meta, block=block, bootstrap=bootstrap)
-    out["n_events"] = int(len(selected))
-    if not selected.empty:
-        out["trade_net"] = float(selected["net"].mean())
-        out["trade_net_cons"] = float(selected["net_cons"].mean())
-        out["trade_hit_rate"] = float(selected["y"].mean())
-    return out
-
-
-def passes_criterion(stats: dict[str, Any], min_events: int = 150) -> bool:
-    """Pre-registered success criterion (concept §7.4, D1)."""
-    return bool(
-        stats.get("n_events", 0) >= min_events
-        and stats.get("net", float("nan")) > 0
         and stats.get("diff_lo", float("nan")) > 0
     )

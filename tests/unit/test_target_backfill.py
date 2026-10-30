@@ -1,4 +1,9 @@
-"""Tests for the next-open target definition (review finding C4/H3/H7)."""
+"""Tests for the next-open target definition (review finding C4/H3/H7).
+
+Also pins the "only missing" row selection of the nightly chain step: a row is
+processed while one of the four ``return_*`` columns is NULL, nothing else
+(plan 2026-10-17 step 6 removed the barrier label that used to be part of it).
+"""
 
 import math
 from datetime import date
@@ -6,10 +11,15 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+from sqlalchemy.dialects import postgresql
 
+from trading_signals.db.models.features import TARGET_COLUMNS, FeatureSnapshot
 from trading_signals.derived.target_backfill import (
+    HORIZONS,
+    NULL_CHECK_COLS,
     TargetBackfillComputer,
     compute_forward_returns,
+    missing_target_clause,
 )
 
 # Mon 2026-06-29 .. Tue 2026-07-07 (Fri 2026-07-03 = Independence Day observed)
@@ -141,3 +151,90 @@ class TestBulkUpdate:
         session = MagicMock()
         assert TargetBackfillComputer(session).recompute_tickers([]) == 0
         session.commit.assert_not_called()
+
+
+# ── row selection of the nightly chain step ──────────────────────────
+
+RETURNS = ["return_1d", "return_5d", "return_20d", "return_60d"]
+
+
+def _sql(stmt) -> str:
+    return " ".join(str(stmt.compile(dialect=postgresql.dialect())).split())
+
+
+def _is_null(col: str) -> str:
+    return f"signals.feature_snapshots.{col} IS NULL"
+
+
+class TestRowSelection:
+    def test_rule_is_exactly_the_four_forward_returns(self):
+        assert [name for name, _ in HORIZONS] == RETURNS
+        assert list(NULL_CHECK_COLS) == RETURNS == list(TARGET_COLUMNS)
+        # a name the ORM does not know would crash the chain step at run time
+        assert all(hasattr(FeatureSnapshot, c) for c in NULL_CHECK_COLS)
+        assert _sql(missing_target_clause()).split(" OR ") == [
+            _is_null(c) for c in RETURNS
+        ]
+
+    def test_backfill_all_picks_tickers_by_that_rule(self):
+        session = MagicMock()
+        session.execute.return_value.all.return_value = []
+        assert TargetBackfillComputer(session).backfill_all() == 0
+        sql = _sql(session.execute.call_args_list[0].args[0])
+        assert "SELECT DISTINCT signals.feature_snapshots.ticker" in sql
+        for col in RETURNS:
+            assert _is_null(col) in sql
+
+    @pytest.mark.parametrize("only_missing", [True, False])
+    def test_chunk_filters_rows_only_in_only_missing_mode(self, only_missing):
+        session = MagicMock()
+        session.execute.return_value.all.return_value = []
+        TargetBackfillComputer(session)._process_chunk(["AAA"], only_missing)
+        sql = _sql(session.execute.call_args_list[0].args[0])
+        for col in RETURNS:  # recompute_* overwrite everything, incl. filled rows
+            assert (_is_null(col) in sql) is only_missing
+
+    def test_recent_rows_fill_step_by_step_and_open_horizons_stay_null(self):
+        """Run on 2026-07-08: the 2026-06-29 row has 1d + 5d, the 07-07 row only 1d.
+
+        Both keep NULLs for the open horizons, so ``missing_target_clause`` selects
+        them again on the next run (and fills the next horizon as soon as it has
+        realised); only a row with all four returns set drops out.
+        """
+        snaps = [("AAA", date(2026, 6, 29)), ("AAA", date(2026, 7, 7))]
+        bars = {  # Fri 2026-07-03 is a holiday
+            date(2026, 6, 30): (100.0, 101.0), date(2026, 7, 1): (101.0, 102.0),
+            date(2026, 7, 2): (102.0, 103.0), date(2026, 7, 6): (103.0, 104.0),
+            date(2026, 7, 7): (104.0, 105.0), date(2026, 7, 8): (110.0, 121.0),
+        }
+        price_rows = [("AAA", d, o, c, False) for d, (o, c) in bars.items()]
+        results = []
+        for rows in (snaps, price_rows):
+            r = MagicMock()
+            r.all.return_value = rows
+            results.append(r)
+        session = MagicMock()
+        session.execute.side_effect = [*results, MagicMock()]
+
+        filled = TargetBackfillComputer(session)._process_chunk(["AAA"], True)
+
+        assert filled == 3
+        prices_sql = _sql(session.execute.call_args_list[1].args[0])
+        assert "prices_daily.open" in prices_sql and "prices_daily.close" in prices_sql
+        assert "prices_daily.high" not in prices_sql  # only open/close are needed
+        params = session.execute.call_args_list[2].args[1]
+        assert params == [
+            {   # entry open(06-30) = 100; d+1 close 101, d+5 = 07-07 close 105
+                "snapshot_date": date(2026, 6, 29), "ticker": "AAA",
+                "return_1d": pytest.approx(101 / 100 - 1, abs=1e-6),
+                "return_5d": pytest.approx(105 / 100 - 1, abs=1e-6),
+                "return_20d": None, "return_60d": None,
+            },
+            {   # entry open(07-08) = 110, d+1 close 121; nothing else realised
+                "snapshot_date": date(2026, 7, 7), "ticker": "AAA",
+                "return_1d": pytest.approx(121 / 110 - 1, abs=1e-6),
+                "return_5d": None, "return_20d": None, "return_60d": None,
+            },
+        ]
+        # nothing but the key and the four returns is ever written
+        assert all(set(p) == {"snapshot_date", "ticker", *RETURNS} for p in params)

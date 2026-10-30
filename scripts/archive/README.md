@@ -13,3 +13,5 @@ Replacements:
 | `backfill_prices.py`, `backfill_spy.py`, `backfill_delisted_prices.py` | `scripts/repair/collectors_refetch_prices.py` or Settings → Operations → Price backfill (`PriceCollectorAlpaca.refresh_full_history`, window = `data_start_date()`) |
 | `backfill_form4.py` | regular `form4_collector` job (`Form4Collector.store()` with the current dedup constraint) |
 | `sprint8_readiness.py`, `sprint9_readiness.py` | `scripts/sprint10_readiness.py` |
+
+The barrier-trade tooling (`analysis/barrier.py`, `analysis/hit_model.py`, `scripts/analysis/backtest_barrier.py`, `scripts/analysis/walkforward_hit_model.py`) is **not archived here**: it cannot run without the deleted barrier label and was removed in plan step 6 (migration 041). It stays reachable in git at the tag `pre-neutral`.

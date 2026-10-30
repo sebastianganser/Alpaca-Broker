@@ -149,8 +149,6 @@ H14_FEATURE_VERSION = '2026.10-3'
 #: Decision target (excess return_20d; rank IC is unaffected by the demeaning).
 H14_TARGET = 'return_20d'
 H14_HORIZON = 20
-#: Secondary target: reported for information only, never decision-relevant.
-H14_SECONDARY_TARGET = 'return_barrier_14d'
 #: First NYSE session after the in-sample look of 2026-10-17.
 H14_OOS_START = date(2026, 10, 19)
 #: Fixed sample size: the first N out-of-sample dates with a valid daily IC.
@@ -651,24 +649,6 @@ class FeatureAnalysisEngine:
                 f"are ignored by the verdict): mean IC {later['mean']:.4f}, "
                 f"t_NW {later['t_nw']:.2f}"
             )
-        if H14_SECONDARY_TARGET in df.columns:
-            ic_b = daily_rank_ic(
-                oos, H14_FEATURE, H14_SECONDARY_TARGET, min_obs=MIN_OBS_PER_DATE
-            )
-            ic_b = ic_b.loc[ic_b.index.intersection(ic.index)]  # same dates
-            if len(ic_b) >= MIN_TEST_DATES:
-                sec = mean_test(ic_b, nw_lag_for_horizon(horizon_from_target(
-                    H14_SECONDARY_TARGET)))
-                extras.append(
-                    f"secondary {H14_SECONDARY_TARGET} (information only): "
-                    f"mean IC {sec['mean']:.4f}, t_NW {sec['t_nw']:.2f}, "
-                    f"{len(ic_b)} dates"
-                )
-            else:
-                extras.append(
-                    f"secondary {H14_SECONDARY_TARGET} (information only): "
-                    f"n/a ({len(ic_b)} dates)"
-                )
         detail = "; ".join([f"{head}: {body}", *extras])
         return {
             'verdict': verdict,

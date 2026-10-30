@@ -578,8 +578,9 @@ def block_bootstrap_diff(
     both series are used; consecutive blocks of ``block`` dates are resampled
     to respect overlapping holding periods.
 
-    (Moved here from ``analysis/barrier.py``, plan 2026-10-17 step 2; the
-    resampling sequence is unchanged, so results are identical.)
+    Generic helper. Too narrow at the sample sizes of the forecast, screen and
+    event evaluations (see the batch-jackknife section below): intervals that
+    carry a verdict use :func:`batch_jackknife_diff` instead.
     """
     d = (a - b).dropna().sort_index().to_numpy()
     if len(d) == 0:
@@ -609,8 +610,8 @@ def block_bootstrap_diff(
 # docs/FORECASTS.md section 6). The grouped (delete-a-batch) jackknife with
 # batches of 2h sessions and a t critical value with g - 1 degrees of freedom
 # kept the false-pass rate of the decisive two-sided criterion below 2.5 % in
-# every simulated scenario, so every NEW interval uses it. (The older
-# ``block_bootstrap_diff`` stays for the barrier tools that are being removed.)
+# every simulated scenario, so every NEW interval uses it. (``block_bootstrap_diff``
+# stays as a generic descriptive helper; no verdict is based on it.)
 
 #: Batch length of the grouped jackknife in multiples of the horizon.
 JACKKNIFE_BATCH_FACTOR = 2

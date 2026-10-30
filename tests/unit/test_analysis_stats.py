@@ -290,7 +290,6 @@ def test_date_block_bootstrap_dataframe_mode():
 
 
 def test_block_bootstrap_diff_detects_shift():
-    # moved from analysis/barrier.py (plan 2026-10-17, step 2)
     idx = pd.date_range("2026-01-01", periods=200)
     rng = np.random.default_rng(1)
     a = pd.Series(rng.normal(0.01, 0.001, 200), index=idx)

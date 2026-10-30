@@ -32,7 +32,6 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
-    SmallInteger,
     String,
     func,
 )
@@ -230,17 +229,6 @@ class FeatureSnapshot(Base):
     return_20d: Mapped[float | None] = mapped_column(Numeric(10, 6))
     return_60d: Mapped[float | None] = mapped_column(Numeric(10, 6))
 
-    # Barrier trade label (concept 2026-10-06, migration 033, see
-    # analysis/barrier.py MAIN_BARRIER): entry open(d+1), take profit +1 %,
-    # stop −2 %, time stop 14 sessions, ambiguous days via OHLC path,
-    # 0.05 % round-trip cost.
-    #   return_barrier_14d – net trade return
-    #   barrier_outcome    – 1 take profit, −1 stop, 0 time stop
-    #   barrier_ambiguous  – exit day touched TP and SL (order unknown)
-    return_barrier_14d: Mapped[float | None] = mapped_column(Numeric(10, 6))
-    barrier_outcome: Mapped[int | None] = mapped_column(SmallInteger)
-    barrier_ambiguous: Mapped[bool | None] = mapped_column(Boolean)
-
     # ── Metadata ─────────────────────────────────────────────────────
     computed_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=True, server_default=func.now()
@@ -262,15 +250,13 @@ class FeatureSnapshot(Base):
 KEY_COLUMNS: tuple[str, ...] = ("snapshot_date", "ticker")
 #: Forward-return target columns (never use as model inputs).
 TARGET_COLUMNS: tuple[str, ...] = (
-    "return_1d", "return_5d", "return_20d", "return_60d", "return_barrier_14d",
+    "return_1d", "return_5d", "return_20d", "return_60d",
 )
-#: Non-return trade labels (never use as model inputs, not excess-adjusted).
-LABEL_COLUMNS: tuple[str, ...] = ("barrier_outcome", "barrier_ambiguous")
 #: Bookkeeping columns that are neither features nor targets.
 META_COLUMNS: tuple[str, ...] = ("computed_at", "feature_version")
 #: All feature columns, derived from the model (single source of truth).
 FEATURE_COLUMNS: tuple[str, ...] = tuple(
     c.name
     for c in FeatureSnapshot.__table__.columns
-    if c.name not in KEY_COLUMNS + TARGET_COLUMNS + LABEL_COLUMNS + META_COLUMNS
+    if c.name not in KEY_COLUMNS + TARGET_COLUMNS + META_COLUMNS
 )

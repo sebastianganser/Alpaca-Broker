@@ -1,7 +1,8 @@
-"""Event study, horizon mode (strategy-neutral, plan 2026-10-17 step 2).
+"""Event study, strategy-neutral 20/60-session returns (plan 2026-10-17 step 2).
 
 Synthetic frames only; the CLI script is exercised with mocked loaders (no DB).
-The barrier mode keeps its tests in ``test_event_study.py``.
+The shared building blocks (alignment, de-duplication) are tested in
+``test_event_study.py``.
 """
 
 from __future__ import annotations
@@ -216,7 +217,7 @@ def _run(script, ret, dates, events, argv):
             p.stop()
 
 
-def test_script_horizon_mode_buyback_source(script, tmp_path):
+def test_script_buyback_source(script, tmp_path):
     ret, ev, dates = _universe(effect=0.03, seed=2)
     ev["event_date"] = ev["event_date"].dt.date.astype(str)
     argv = ["--source", "buyback", "--events-csv", "unused.csv", "--min-gap-days", "0",
@@ -234,10 +235,10 @@ def test_script_horizon_mode_buyback_source(script, tmp_path):
     assert list(tmp_path.glob("event_study_buyback_horizon_trades_*.csv"))
 
 
-def test_script_horizon_mode_index_add_source(script, tmp_path):
+def test_script_index_add_source(script, tmp_path):
     ret, ev, dates = _universe(effect=0.0, seed=3)
     ev["event_date"] = ev["event_date"].dt.date.astype(str)
-    argv = ["--source", "index_add", "--start", "2023-01-01", "--block", "10",
+    argv = ["--source", "index_add", "--start", "2023-01-01",
             "--out", str(tmp_path)]
     assert _run(script, ret, dates, ev, argv) == 0
     text = next(tmp_path.glob("event_study_index_add_horizon_2*.md")).read_text(
@@ -301,32 +302,7 @@ def test_script_reads_the_buyback_csv_of_the_collector(script, tmp_path):
     assert sorted(sel["grp"]) == ["mit Quartalszahlen", "ohne Quartalszahlen"]
 
 
-def test_script_barrier_mode_still_works(script, tmp_path):
-    rows = []
-    for d in DATES:
-        for t, net, out in [("AAA", 0.0095, 1), ("BBB", -0.0205, -1)]:
-            rows.append({"snapshot_date": d, "ticker": t, "return_barrier_14d": net,
-                         "barrier_outcome": out, "barrier_ambiguous": False})
-    labels = pd.DataFrame(rows)
-    events = pd.DataFrame({"ticker": ["AAA"], "event_date": ["2024-01-03"],
-                           "grp": ["sp500"]})
-    ps = [
-        patch("trading_signals.db.session.get_session", _no_db),
-        patch.object(script, "load_labels", return_value=labels),
-        patch.object(script, "load_sessions", return_value=list(DATES)),
-        patch.object(script, "load_events", return_value=events),
-    ]
-    for p in ps:
-        p.start()
-    try:
-        rc = script.main(["--source", "index_add", "--mode", "barrier",
-                          "--start", "2024-01-01", "--block", "1",
-                          "--out", str(tmp_path)])
-    finally:
-        for p in reversed(ps):
-            p.stop()
-    assert rc == 0
-    text = next(tmp_path.glob("event_study_index_add_2*.md")).read_text(
-        encoding="utf-8")
-    assert "Trade +1 % / −2 % / 14 Handelstage" in text
-    assert "Verspäteter Einstieg (Gültigkeit des Signals)" in text
+def test_script_has_no_barrier_mode_any_more(script):
+    for argv in (["--mode", "barrier"], ["--block", "10"]):
+        with pytest.raises(SystemExit):
+            script.parse_args(["--source", "index_add", *argv])

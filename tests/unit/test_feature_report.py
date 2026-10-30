@@ -255,8 +255,8 @@ def test_h10_uses_zero_beats_not_negative(engine):
 
 # ── model target: strategy-neutral forward return ────────────────────
 # Decision 2026-10-17 "Scope: Alpaca-Broker forecasts, a separate bot trades":
-# return_60d (primary, months), fallback return_20d. No trade label
-# (barrier / trailing stop) is a model target.
+# return_60d (primary, months), fallback return_20d. No trade label is a model
+# target (the barrier and trailing-stop labels are gone, migrations 038 / 041).
 
 
 def _target_frame(n60, n20=None):
@@ -292,9 +292,9 @@ def test_falls_back_to_return_20d_when_60d_coverage_is_low():
     assert fr.resolve_model_target(pd.DataFrame({"x": [1]})) == ("return_20d", 20)
 
 
-def test_trade_labels_are_never_the_model_target():
+def test_only_the_chain_horizons_are_model_targets():
     df = _target_frame([float("nan")] * 4)
-    df["return_barrier_14d"] = [0.1, 0.2, 0.3, 0.4]  # fully covered label
+    df["return_5d"] = [0.1, 0.2, 0.3, 0.4]  # fully covered, but not in the chain
     assert fr.resolve_model_target(df) == ("return_20d", 20)
 
 
@@ -340,14 +340,11 @@ def test_engine_correlations_include_the_60d_target(engine):
 H14_FEAT = "short_interest_days_to_cover"
 
 
-def _h14_frame(n_dates, beta, *, start="2026-10-19", n_tickers=40, seed=0,
-               barrier_beta=None):
+def _h14_frame(n_dates, beta, *, start="2026-10-19", n_tickers=40, seed=0):
     """Panel with ``return_20d = beta * days_to_cover + noise`` per date.
 
     ``beta < 0`` plants the hypothesised negative IC, ``beta == 0`` is noise.
-    The barrier target uses ``barrier_beta`` (default: same as ``beta``).
     """
-    barrier_beta = beta if barrier_beta is None else barrier_beta
     rng = np.random.default_rng(seed)
     frames = []
     for d in pd.bdate_range(start, periods=n_dates):
@@ -357,7 +354,6 @@ def _h14_frame(n_dates, beta, *, start="2026-10-19", n_tickers=40, seed=0,
             "ticker": [f"T{i:02d}" for i in range(n_tickers)],
             H14_FEAT: dtc,
             "return_20d": beta * dtc + rng.normal(size=n_tickers),
-            "return_barrier_14d": barrier_beta * dtc + rng.normal(size=n_tickers),
         }))
     return pd.concat(frames, ignore_index=True)
 
@@ -373,7 +369,6 @@ def test_h14_constants_are_the_pre_registered_design():
 
     assert fr.H14_FEATURE == H14_FEAT and H14_FEAT in FEATURE_COLUMNS
     assert fr.H14_TARGET == "return_20d" and fr.H14_TARGET in TARGET_COLUMNS
-    assert fr.H14_SECONDARY_TARGET == "return_barrier_14d"
     assert fr.H14_HORIZON == 20 and nw_lag_for_horizon(fr.H14_HORIZON) == 19
     assert fr.H14_OOS_START == date(2026, 10, 19)
     assert fr.H14_N_DATES == 250
@@ -405,7 +400,7 @@ def test_h14_negative_ic_is_confirmed(engine):
     assert res["effect_size"] < -0.2  # negative = hypothesised direction
     assert res["pvalue"] < 0.05  # one-sided p = Phi(t_NW)
     assert "250/250" in res["detail"] and "2026-10-19" in res["detail"]
-    assert "secondary return_barrier_14d" in res["detail"]
+    assert "secondary" not in res["detail"]  # no information-only second target
 
 
 def test_h14_positive_ic_is_rejected(engine):
@@ -471,7 +466,7 @@ def test_h14_uses_exactly_the_first_250_dates(engine):
 
 def test_h14_ignores_the_model_target(engine):
     """return_60d is the model target of H1-H13; H14 must use return_20d."""
-    df = _h14_frame(250, beta=-0.5, barrier_beta=0.5, seed=3)
+    df = _h14_frame(250, beta=-0.5, seed=3)
     # the model target carries the opposite (positive) sign: H14 must not see it
     noise = np.random.default_rng(4).normal(size=len(df))
     df["return_60d"] = 0.5 * df[H14_FEAT] + noise
@@ -479,16 +474,6 @@ def test_h14_ignores_the_model_target(engine):
     assert fr.resolve_model_target(prepared) == ("return_60d", 60)
     res = engine._test_hypotheses(prepared)["H14"]
     assert res["verdict"] == "confirmed" and res["effect_size"] < -0.2
-    # secondary (information only) shows the opposite, positive barrier IC
-    sec = res["detail"].split("secondary return_barrier_14d")[1]
-    assert "mean IC 0." in sec and "mean IC -" not in sec
-
-
-def test_h14_without_barrier_column_has_no_secondary(engine):
-    df = _h14_frame(250, beta=-0.5).drop(columns=["return_barrier_14d"])
-    res = _h14(engine, df)
-    assert res["verdict"] == "confirmed"
-    assert "secondary" not in res["detail"]
 
 
 def test_h14_missing_feature_column_is_insufficient_data_not_silent(engine, prepared):
