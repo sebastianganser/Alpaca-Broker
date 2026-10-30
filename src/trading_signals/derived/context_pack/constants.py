@@ -75,6 +75,9 @@ SEC_EXCERPT_CHARS = (500, 300)
 SEC_TEXT_FETCH_CHARS = 800
 #: Quarters shown in the quarterly table of section 4.
 QUARTER_ROWS = 8
+#: A quarter end older than this should have a successor: the next quarter ends after
+#: about 92 days and its 10-Q is due at most 45 days later.
+QUARTER_STALE_DAYS = 140
 #: Calendar days of quarterly financials loaded: 8 shown quarters plus the
 #: quarters a year before each of them (year-on-year growth) and a margin.
 FINANCIALS_LOOKBACK_DAYS = 1200

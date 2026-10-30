@@ -15,12 +15,16 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from trading_signals.derived.context_pack.constants import (
+    QUARTER_STALE_DAYS,
     SHARES_FLAT_BAND,
     YEAR_DAYS,
     YEAR_TOLERANCE_DAYS,
 )
 from trading_signals.derived.context_pack.fmt import to_float
-from trading_signals.derived.context_pack.rows import QuarterRow
+from trading_signals.derived.context_pack.rows import QuarterRow, SecFilingRow
+
+#: The reports that carry the figures of a quarter.
+PERIODIC_FORMS = frozenset({"10-Q", "10-K"})
 
 
 def newest_first(quarters: Sequence[QuarterRow]) -> list[QuarterRow]:
@@ -31,6 +35,38 @@ def newest_first(quarters: Sequence[QuarterRow]) -> list[QuarterRow]:
         if cur is None or q.filed > cur.filed:
             best[q.period_end] = q
     return [best[end] for end in sorted(best, reverse=True)]
+
+
+def filings_after_table(
+    quarters: Sequence[QuarterRow], filings: Sequence[SecFilingRow]
+) -> list[SecFilingRow]:
+    """Visible 10-Qs / 10-Ks newer than the newest quarter of the table, newest first.
+
+    The table can lag behind section 15: the collector runs weekly, the SEC
+    publishes the XBRL facts of a filing with a delay, and some filings never reach
+    its ``companyfacts`` feed (2026-10-30: 20 of 40 sampled tickers).
+    """
+    if not quarters:
+        return []
+    newest_filed = max(q.filed for q in quarters)
+    newer = [
+        f
+        for f in filings
+        if f.form in PERIODIC_FORMS and f.filing_date > newest_filed
+    ]
+    return sorted(newer, key=lambda f: f.filing_date, reverse=True)
+
+
+def stale_table_days(quarters: Sequence[QuarterRow], session: date) -> int | None:
+    """Age of the newest quarter end if a newer report should exist by now, else None.
+
+    Catches the lag that :func:`filings_after_table` cannot see: a missing report
+    filed before the 90-day window of section 15.
+    """
+    if not quarters:
+        return None
+    age = (session - max(q.period_end for q in quarters)).days
+    return age if age > QUARTER_STALE_DAYS else None
 
 
 def free_cash_flow(q: QuarterRow) -> float | None:
@@ -143,11 +179,14 @@ def _positive(x: float | None) -> bool:
 
 
 __all__ = [
+    "PERIODIC_FORMS",
     "SharesChange",
+    "filings_after_table",
     "free_cash_flow",
     "margin",
     "newest_first",
     "prior_year_quarter",
     "revenue_growth_yoy",
     "shares_change",
+    "stale_table_days",
 ]

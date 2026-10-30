@@ -36,12 +36,14 @@ from trading_signals.derived.context_pack.constants import (
     SEC_WINDOW_DAYS,
 )
 from trading_signals.derived.context_pack.financials import (
+    filings_after_table,
     free_cash_flow,
     margin,
     newest_first,
     prior_year_quarter,
     revenue_growth_yoy,
     shares_change,
+    stale_table_days,
 )
 from trading_signals.derived.context_pack.loader import SqlPackLoader
 from trading_signals.derived.context_pack.rows import (
@@ -123,6 +125,91 @@ def quarter(end, **kw) -> QuarterRow:
     base = dict(period_end=end, filed=end + timedelta(days=35))
     base.update(kw)
     return QuarterRow(**base)
+
+
+class TestTableLagsBehindSection15:
+    """The quarterly table warns when a newer 10-Q / 10-K is already public."""
+
+    FILED = SESSION - timedelta(days=200)
+    NEWER = SESSION - timedelta(days=60)
+    NEWEST = SESSION - timedelta(days=10)
+
+    def quarters(self):
+        return (quarter(self.FILED - timedelta(days=30), filed=self.FILED),)
+
+    def test_a_newer_report_is_found_newest_first(self):
+        q2 = filing(form="10-Q", filing_date=self.NEWER)
+        q3 = filing(form="10-Q", filing_date=self.NEWEST)
+        assert filings_after_table(self.quarters(), [q2, q3]) == [q3, q2]
+
+    def test_other_forms_and_older_reports_do_not_count(self):
+        rows = [
+            filing(form="8-K", filing_date=self.NEWER),
+            filing(form="10-Q/A", filing_date=self.NEWER),
+            filing(form="10-Q", filing_date=self.FILED),
+        ]
+        assert filings_after_table(self.quarters(), rows) == []
+
+    def test_no_table_means_no_warning(self):
+        rows = [filing(form="10-Q", filing_date=self.NEWER)]
+        assert filings_after_table([], rows) == []
+
+    def test_the_warning_reaches_the_ticker_file(self, tmp_path):
+        def lagging(t):
+            t.quarters = self.quarters()
+            t.sec_filings = (
+                filing(form="10-Q", filing_date=self.NEWER),
+                filing(form="10-K", filing_date=self.NEWEST),
+            )
+
+        text = section(render(tmp_path, raw=lagging), 4)
+        assert (
+            "**Tabelle nicht aktuell:** 2 neuere Berichte, zuletzt 10-K vom "
+            f"{self.NEWEST.isoformat()}" in text
+        )
+
+    def test_one_newer_report_is_named_without_a_count(self, tmp_path):
+        def lagging(t):
+            t.quarters = self.quarters()
+            t.sec_filings = (filing(form="10-Q", filing_date=self.NEWER),)
+
+        text = section(render(tmp_path, raw=lagging), 4)
+        assert f"**Tabelle nicht aktuell:** 10-Q vom {self.NEWER.isoformat()}" in text
+
+    def test_an_up_to_date_table_stays_silent(self, tmp_path):
+        def current(t):
+            t.quarters = (quarter(SESSION - timedelta(days=30), filed=self.FILED),)
+            t.sec_filings = (filing(form="10-Q", filing_date=self.FILED),)
+
+        assert "Tabelle nicht aktuell" not in section(render(tmp_path, raw=current), 4)
+
+    def test_an_old_quarter_end_warns_without_a_listed_report(self, tmp_path):
+        # the missing 10-Q was filed before the 90-day window of section 15
+        def old(t):
+            t.quarters = (quarter(SESSION - timedelta(days=200)),)
+            t.sec_filings = ()
+
+        text = section(render(tmp_path, raw=old), 4)
+        assert "das neueste Quartal endete vor 200 Tagen" in text
+
+    def test_the_age_limit_allows_for_the_filing_deadline(self):
+        def age(days):
+            quarters = (quarter(SESSION - timedelta(days=days)),)
+            return stale_table_days(quarters, SESSION)
+
+        assert age(140) is None
+        assert age(141) == 141
+        assert stale_table_days([], SESSION) is None
+
+    def test_a_report_filed_after_the_session_does_not_warn(self, tmp_path):
+        # point in time: apply_pit hides it, so neither table nor warning may know it
+        def future(t):
+            t.quarters = (quarter(SESSION - timedelta(days=30), filed=self.FILED),)
+            t.sec_filings = (
+                filing(form="10-Q", filing_date=SESSION + timedelta(days=1)),
+            )
+
+        assert "Tabelle nicht aktuell" not in section(render(tmp_path, raw=future), 4)
 
 
 # ── point in time: filings ─────────────────────────────────────────────

@@ -245,6 +245,119 @@ class TestQuarters:
         assert xbrl.build_quarterly_rows(company({"Revenues": usd()}), WINDOW) == []
 
 
+class TestSixteenWeekQuarters:
+    """52/53-week retailers whose quarters are 12 to 17 weeks long (regression).
+
+    Before 2026-10-30 a quarter had to span 80-105 days and a nine-month period
+    255-290 days. So Costco/AutoZone (Q4 = 16 weeks, nine-month stub = 36 weeks
+    = 251 days) never got a Q4 row nor a Q3 cash flow, and Kroger (Q1 = 16 weeks
+    = 111 days) never got a Q1 row nor a Q2 cash flow.
+    """
+
+    @staticmethod
+    def _p(start, end, fp, form, filed, accn):
+        return (start, end, fp, form, filed, accn)
+
+    def _costco(self):
+        """Costco fiscal 2026 (52 weeks, 12-12-12-16): revenue in millions."""
+        q1 = self._p("2025-09-01", "2025-11-23", "Q1", "10-Q", "2025-12-17", "C-25-1")
+        h1 = self._p("2025-09-01", "2026-02-15", "Q2", "10-Q", "2026-03-11", "C-26-2")
+        q2 = self._p("2025-11-24", "2026-02-15", "Q2", "10-Q", "2026-03-11", "C-26-2")
+        m9 = self._p("2025-09-01", "2026-05-10", "Q3", "10-Q", "2026-06-03", "C-26-3")
+        q3 = self._p("2026-02-16", "2026-05-10", "Q3", "10-Q", "2026-06-03", "C-26-3")
+        fy = self._p("2025-09-01", "2026-08-30", "FY", "10-K", "2026-10-07", "C-26-4")
+        return q1, h1, q2, m9, q3, fy
+
+    def test_a_sixteen_week_fourth_quarter_is_the_fiscal_year_minus_36_weeks(self):
+        q1, h1, q2, m9, q3, fy = self._costco()
+        doc = company(
+            {
+                "Revenues": usd(
+                    fact(q1, 67307, 2026),
+                    fact(q2, 69597, 2026),
+                    fact(h1, 136904, 2026),
+                    fact(q3, 70527, 2026),
+                    fact(m9, 207431, 2026),
+                    fact(fy, 303154, 2026),
+                ),
+                "NetCashProvidedByUsedInOperatingActivities": usd(
+                    fact(q1, 2000, 2026),
+                    fact(h1, 3000, 2026),
+                    fact(m9, 4500, 2026),
+                    fact(fy, 9000, 2026),
+                ),
+            }
+        )
+        rows = rows_by_end(doc)
+        assert list(rows) == [
+            date(2025, 11, 23),
+            date(2026, 2, 15),
+            date(2026, 5, 10),
+            date(2026, 8, 30),
+        ]
+        q4 = rows[date(2026, 8, 30)]
+        assert q4["revenue"] == 95723  # 303,154 - 207,431: 16 weeks
+        assert (q4["fiscal_year"], q4["fiscal_period"], q4["form"]) == (
+            2026,
+            "Q4",
+            "10-K",
+        )
+        assert q4["filed"] == date(2026, 10, 7)
+        assert "revenue" in q4["raw_tags"]["derived"]
+        # the cash flow quarters come from the 36-week stub (251 days)
+        assert [r["operating_cash_flow"] for r in rows.values()] == [
+            2000,
+            1000,
+            1500,
+            4500,
+        ]
+        assert rows[date(2026, 5, 10)]["filed"] == date(2026, 6, 3)
+
+    def test_the_36_week_stub_is_a_nine_month_period_and_16_week_quarters_are_quarters(
+        self,
+    ):
+        assert xbrl._length_class(date(2025, 9, 1), date(2026, 5, 10)) == "M9"  # 251 d
+        assert xbrl._length_class(date(2025, 2, 2), date(2025, 5, 24)) == "Q"  # 111 d
+        assert xbrl._length_class(date(2025, 5, 11), date(2025, 8, 30)) == "Q"  # 111 d
+        # the classes stay disjoint: 17 weeks is a quarter, 24 weeks is a half year
+        assert xbrl._length_class(date(2025, 1, 1), date(2025, 4, 29)) == "Q"  # 118 d
+        assert xbrl._length_class(date(2025, 1, 1), date(2025, 5, 1)) is None  # 120 d
+        assert xbrl._length_class(date(2025, 9, 1), date(2026, 2, 15)) == "H1"  # 167 d
+
+    def test_a_sixteen_week_first_quarter_is_used_directly(self):
+        # Kroger fiscal 2025: Q1 = 16 weeks, Q2 = 12 weeks; cash flow is year to date
+        q1 = self._p("2025-02-02", "2025-05-24", "Q1", "10-Q", "2025-06-27", "K-25-1")
+        q2 = self._p("2025-05-25", "2025-08-16", "Q2", "10-Q", "2025-09-19", "K-25-2")
+        h1 = self._p("2025-02-02", "2025-08-16", "Q2", "10-Q", "2025-09-19", "K-25-2")
+        doc = company(
+            {
+                "Revenues": usd(fact(q1, 45118), fact(q2, 33940)),
+                "NetCashProvidedByUsedInOperatingActivities": usd(
+                    fact(q1, 2149), fact(h1, 3460)
+                ),
+            }
+        )
+        rows = rows_by_end(doc)
+        q1_row = rows[date(2025, 5, 24)]
+        assert (q1_row["revenue"], q1_row["fiscal_period"]) == (45118, "Q1")
+        assert q1_row["operating_cash_flow"] == 2149
+        assert q1_row["raw_tags"]["derived"] == []  # a direct fact, nothing derived
+        # Q2 cash flow = 28-week YTD - 16-week Q1 (84 days apart)
+        assert rows[date(2025, 8, 16)]["operating_cash_flow"] == 1311
+
+    def test_a_difference_of_up_to_17_weeks_is_accepted_but_not_more(self):
+        def with_fy_end(fy_end):
+            nine = ("2025-01-01", "2025-09-13", "Q3", "10-Q", "2025-10-30", "A-25-3")
+            fy = ("2025-01-01", fy_end, "FY", "10-K", "2026-02-27", "A-26-4")
+            doc = company({"Revenues": usd(fact(nine, 300), fact(fy, 410))})
+            return rows_by_end(doc)
+
+        # 109 days after the 255-day nine-month period (the old limit was 105)
+        assert with_fy_end("2025-12-31")[date(2025, 12, 31)]["revenue"] == 110
+        # 120 days (more than 17 weeks) is two quarters, not one
+        assert with_fy_end("2026-01-11") == {}
+
+
 class TestFiguresAndPointInTime:
     def _income(self):
         return {

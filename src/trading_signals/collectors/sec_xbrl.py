@@ -21,7 +21,10 @@ How a quarter is built
   quarters: a direct 3-month fact is used as is; otherwise the quarter is the
   difference between a cumulative fact and the next shorter cumulative fact of
   the same fiscal year (Q2 = 6M - 3M, Q3 = 9M - 6M, **Q4 = FY - 9M**). A
-  difference is only accepted if it spans 80-105 days. EPS is derived the same
+  difference is only accepted if it spans 80-119 days (12 to 17 weeks: the
+  16-week quarter of Costco/AutoZone (Q4) and Kroger (Q1) and the 17-week
+  quarter of a 53-week year are quarters, too; the nine-month stub of a
+  12-12-12-16 week calendar is only 251 days long). EPS is derived the same
   way (an approximation: share counts change within a year); weighted-average
   shares are never derived.
 * **Balance-sheet items** (cash, debt, shares) are instant facts taken at the
@@ -58,14 +61,18 @@ PERIOD_FORMS = frozenset(
     {"10-Q", "10-K", "10-Q/A", "10-K/A", "10-KT", "10-KT/A", "10-QT"}
 )
 
-#: Duration classes in days (52/53-week years and 4-4-5 calendars included).
-_LENGTHS = (("Q", 80, 105), ("H1", 165, 200), ("M9", 255, 290), ("FY", 340, 380))
+#: Duration classes in days. They cover 52/53-week years and 4-4-5 calendars
+#: including the retailers with a 16-week quarter (Costco/AutoZone Q4 = 16 or
+#: 17 weeks, Kroger Q1 = 16 weeks): a quarter spans 12-17 weeks (83-119 days)
+#: and a 12-12-12 week nine-month stub is only 251 days. The classes must not
+#: overlap (17 weeks = 119 days < H1 >= 24 weeks = 167 days).
+_LENGTHS = (("Q", 80, 119), ("H1", 165, 200), ("M9", 245, 290), ("FY", 340, 380))
 #: Cumulative class -> the next shorter class it is differenced against.
 _PREVIOUS = {"H1": "Q", "M9": "H1", "FY": "M9"}
 #: Tolerance (days) for "same fiscal year start".
 _START_TOLERANCE = 10
-#: A derived quarter must span this many days.
-_QUARTER_DAYS = (80, 105)
+#: A derived quarter must span this many days (12 to 17 weeks).
+_QUARTER_DAYS = (80, 119)
 
 #: Abs. values above this are corrupt data (the columns are NUMERIC(24,2)).
 _MAX_ABS = 1e21

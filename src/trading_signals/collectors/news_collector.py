@@ -50,8 +50,11 @@ PAGE_LIMIT = 50
 # Default lookback: 1 day for daily collection
 DEFAULT_LOOKBACK_HOURS = 36  # 36h buffer for timezone edge cases
 
-#: Max pages per symbol batch / global request (100 × 50 = 5000 articles).
-MAX_PAGES = 100
+#: Max pages per symbol batch / global request (200 × 50 = 10000 articles). The
+#: global window spans at least 36 h: about 6000 articles in earnings season (up to
+#: 4200 per day), so the former cap of 5000 cut the overlap and marked the run
+#: `partial` although nothing was lost, with too little margin on a busy day.
+MAX_PAGES = 200
 
 #: Overlap subtracted from the newest stored article (re-fetches are deduped).
 WATERMARK_OVERLAP = timedelta(hours=1)

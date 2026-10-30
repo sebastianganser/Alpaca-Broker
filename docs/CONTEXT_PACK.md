@@ -342,3 +342,7 @@ Everything below comes from tables that migration 040 filled (daily `sec_filings
 | Section 15 | new, last: SEC filings of 90 days, excerpts of press releases and 8-K texts (external data) |
 
 **Compatibility:** `pack_format` stays 2. Sections 1-14 keep their numbers and headings, existing lines keep their wording, the only change to an existing line group is that the new lines follow the old ones inside sections 4, 5 and 8, and `data_freshness` only gained keys. The screen (`screen.csv`, buckets, percentile groups) is untouched: none of the new data is a screen input.
+
+## 16. Table lag warning of 2026-10-30 (additive change of pack format 2)
+
+Section 4 prints `**Tabelle nicht aktuell:** …` below the quarterly table when section 15 already lists a 10-Q or 10-K filed after the newest quarter of the table (`financials.filings_after_table`; amendments do not count, only filings public by the pack day), or when its newest quarter ended more than `QUARTER_STALE_DAYS` (140) days before the pack day (`stale_table_days`: covers a missing report filed before the 90-day window of section 15). The table can lag for three reasons: the collector runs weekly, the SEC publishes XBRL facts with a delay, and some filings never reach its `companyfacts` feed (LEARNINGS 2026-10-30). Headings and frontmatter are unchanged, so `pack_format` stays 2.

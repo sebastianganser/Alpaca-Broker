@@ -6,11 +6,13 @@ from datetime import date
 
 from trading_signals.derived.context_pack.constants import QUARTER_ROWS
 from trading_signals.derived.context_pack.financials import (
+    filings_after_table,
     free_cash_flow,
     margin,
     newest_first,
     revenue_growth_yoy,
     shares_change,
+    stale_table_days,
 )
 from trading_signals.derived.context_pack.fmt import (
     DASH,
@@ -209,9 +211,29 @@ def quarterly_lines(ctx: TickerContext) -> list[str]:
             rows,
         ),
         "",
+        *_table_lag_lines(ctx),
         _shares_line(ctx),
     ]
     return lines
+
+
+def _table_lag_lines(ctx: TickerContext) -> list[str]:
+    """A warning if section 15 already lists a newer quarterly or annual report."""
+    newer = filings_after_table(ctx.raw.quarters, ctx.raw.sec_filings)
+    if not newer:
+        age = stale_table_days(ctx.raw.quarters, ctx.session)
+        if age is None:
+            return []
+        return [
+            f"- **Tabelle nicht aktuell:** das neueste Quartal endete vor {age} Tagen; "
+            "ein neuerer Bericht fehlt vermutlich in den XBRL-Daten.",
+        ]
+    first = newer[0]
+    count = f"{len(newer)} neuere Berichte, zuletzt " if len(newer) > 1 else ""
+    return [
+        f"- **Tabelle nicht aktuell:** {count}{first.form} vom "
+        f"{day(first.filing_date)} (Abschnitt 15) fehlt noch in den XBRL-Daten.",
+    ]
 
 
 def _shares_line(ctx: TickerContext) -> str:

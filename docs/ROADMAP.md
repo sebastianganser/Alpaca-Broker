@@ -321,7 +321,7 @@
 - [ ] `politician_trades_collector`: HTTP 403 am 18.10.; am 25.10. 11:00 erneut gelaufen? Falls wieder 403: Ursache klären und beheben
 - [ ] 01.11.: `index_sync` (S&P 500 darf sich nicht ändern) und `feature_analysis` (Konsens-Ranking, `days_to_cover`, große t-Werte junger Quellen, Fortschritt H14 – laut Plan 0/250 im ersten Lauf)
 - [ ] H14: Out-of-sample-Start 2026-10-19 (nur Handelstage ab diesem Datum zählen)
-- [ ] Erinnerung an Sebastian: **VM-Passwort ändern**; Windows-Aufgabe `signal-warehouse-prognose` abgeschaltet? (sonst zwei Versionen)
+- [x] VM-Passwort: bleibt laut Sebastian (30.10.) unverändert, Risiko bewusst akzeptiert – nicht mehr erinnern. Windows-Aufgabe `signal-warehouse-prognose` ist deaktiviert (geprüft 18.10.)
 - [ ] Plan-Schritte 6 (Rückbau Barrier, Migration 041) und 7 (Deploy 2 + Doku-Durchgang) weiter offen
 - [ ] Backlog: `options_iv`-Zeilen vom 2026-10-05 weiterhin nicht repariert; mögliche Sektor-Obergrenze für Screen/v2; Delisting-Renditen
 
