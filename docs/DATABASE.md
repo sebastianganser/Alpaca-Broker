@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**Last updated:** 30 October 2026 (migrations 001–041; production at 040 since the deploy of 2026-10-18 15:57, 041 not yet deployed)
+**Last updated:** 30 October 2026 (migrations 001–041; production at 041 since the deploy of 2026-10-30 16:39, `0da513c`)
 
 ---
 
@@ -870,7 +870,7 @@ CREATE INDEX idx_features_ticker ON signals.feature_snapshots(ticker);
 
 > **Target rule of the nightly chain:** `target_backfill` processes a row while at least one of the four `return_*` columns is NULL (recent sessions keep filling until all horizons have realised); the targets are strategy-neutral forward returns, no trade label is stored.
 >
-> **Removed (migration 041, not yet deployed):** the barrier trade label of migration 033 (`return_barrier_14d NUMERIC(10,6)`, `barrier_outcome SMALLINT`, `barrier_ambiguous BOOLEAN`: entry open d+1, take profit +1 %, stop −2 %, 14 sessions) is deleted together with its tools; the ORM already lacks the columns. Until 041 is deployed they exist in production but nothing reads or writes them (the nightly step no longer touches them). History: DECISIONS_FEATURES 2026-10-17 ("Strategy-Neutral Rework Approved").
+> **Removed (migration 041, deployed 2026-10-30):** the barrier trade label of migration 033 (`return_barrier_14d NUMERIC(10,6)`, `barrier_outcome SMALLINT`, `barrier_ambiguous BOOLEAN`: entry open d+1, take profit +1 %, stop −2 %, 14 sessions) is deleted together with its tools; the ORM already lacks the columns. Until 041 is deployed they exist in production but nothing reads or writes them (the nightly step no longer touches them). History: DECISIONS_FEATURES 2026-10-17 ("Strategy-Neutral Rework Approved").
 
 ### `signals.analysis_reports` (Migration 021)
 Monthly feature-analysis results (Spearman correlations, Random-Forest and LASSO importance, hypothesis tests, consensus ranking) plus the HTML report served by the API.
@@ -1083,7 +1083,7 @@ Decision 2026-10-05: the system keeps exactly the last **20 calendar quarters** 
 
 ## Migrations
 
-Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–041 (linear chain, head = 041; production at 040 since the deploy of 2026-10-18 15:57, `990c286`; **041 is not yet deployed**).
+Alembic migrations are stored in `src/alembic/versions/`. Current state: migrations 001–041 (linear chain, head = 041; production at 041 since the deploy of 2026-10-30 16:39, `0da513c`).
 
 | Migration | Description |
 |---|---|

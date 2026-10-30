@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ROADMAP.md](ROADMAP.md)
 
-**Last updated:** 30 October 2026 (Session 36: Rückkehr aus dem Urlaub, Log-Check 19.–30.10., Korrekturen an Prognose-VM und XBRL-Quartalen, Deploy `fced8d8`)
+**Last updated:** 30 October 2026 (Session 36: Rückkehr aus dem Urlaub, Log-Check 19.–30.10., Korrekturen an Prognose-VM und XBRL-Quartalen, Rückbau Barrier-Label, Deploy `0da513c`, Migration 041)
 
 ---
 
@@ -531,5 +531,7 @@ Offen ist kein Reparatur-Skript. **Nicht über die API prüfbar:** ob nach dem 1
 - **Politiker-Daten:** `politician_trades_collector` am 18.10. und 25.10. HTTP 403. Akamai sperrt dieses Netz, auch einen echten Browser. Wird nicht umgangen; Daten stehen seit 01.10., nicht im Screen. Prüfen am 01.11. und 08.11., dann ggf. andere Quelle
 - **VM-Passwort:** bleibt laut Sebastian unverändert, Risiko bewusst akzeptiert
 - **Deploy** `fced8d8` via `alpaca-ops deploy` 15:31: Health ok, Alembic `040`, 29 Jobs. Zwischen 13:55 und 14:35 gesperrt (Siegel-Fenster dieser Woche); die Unraid-Anmeldung war abgelaufen, Sebastian hat sich neu angemeldet
-- **Tests:** 2200 passed (ohne DB)
-- **Offen:** Nachweis des VM-Laufs am 31.10. 07:30; Sonntagsläufe am 01.11. (`sec_financials`, `index_sync`, `feature_analysis`, Politiker); Plan-Schritte 6 (Migration 041) und 7
+- **Plan-Schritt 6 (Rückbau Barrier-Label), `0da513c`:** `analysis/barrier.py`, `hit_model.py`, `backtest_barrier.py`, `walkforward_hit_model.py`, Barrier-Modus der Event-Studie, `H14_SECONDARY_TARGET` und die drei Spalten entfernt; Git-Tag `pre-neutral` hält den alten Code. Die Falle war `target_backfill`: Dessen Auswahl „nur fehlende“ enthielt `return_barrier_14d`, die Spalte allein zu löschen hätte die Chain abstürzen lassen; die Auswahl sind jetzt wieder die vier Renditen. H14-Konstanten, `FEATURE_VERSION`, Screen, Kriterium, `pack_format` und Skill unverändert (Nachtrag in LEARNINGS_HYPOTHESES). Geprüft: Migration auf frischer DB hoch/runter/hoch mit `alembic check`; in Produktion keine abhängige View und kein Index; Opus-Review ohne Blocker
+- **Deploy** `0da513c` via `alpaca-ops deploy` 16:39, mit Sebastians ausdrücklichem OK für das Löschen der Spalten: Health ok, Alembic `041`, 29 Jobs, 0 Barrier-Spalten. Neuberechnung von 11.839 Produktionszeilen (12 Ticker) mit dem neuen Code, nur lesend, vor und nach der Migration: Abweichung 0
+- **Tests:** 2177 passed (ohne DB; 2200 vor dem Rückbau, 32 Barrier-Tests entfallen, 9 neu)
+- **Offen:** Nachweis des VM-Laufs am 31.10. 07:30 und der ersten Chain mit dem neuen `target_backfill` um 04:30; Sonntagsläufe am 01.11. (`sec_financials`, `index_sync`, `feature_analysis`, Politiker); Plan-Schritt 7
