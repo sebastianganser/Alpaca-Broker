@@ -227,6 +227,8 @@ Danach zeigt `context_packs/forecast_auswertung.md` (Nachtlauf 04:30), was einge
 - **Lauf endet ohne Datei, im JSON `permission_denied`/„not allowed“** → die Berechtigungsregel passt nicht zum tatsächlichen Pfad (Symlink im Mount? `readlink -f $PACK_ROOT`). `--dry-run` zeigt die Regeln.
 - **`this workspace has not been trusted` im stderr** → harmlos: Projektregeln gelten unter `-p` nicht; die Regeln stehen deshalb auf der Kommandozeile und in den Benutzereinstellungen (Abschnitt 6).
 - **Share-Dateien gehören in Unraid `1000:1000` o. ä.** → bei virtiofs läuft der Benutzer nicht mit UID 99/GID 100 (Abschnitt 1).
+- **`ls` in der VM zeigt einen neuen Pack-Ordner nicht** → normal bei virtiofs: der Gast hält Verzeichnislisten rund 24 h im Cache, ein direkter Zugriff über den Namen (`ls /mnt/alpaca/context_packs/2026-10-29`) sieht ihn sofort. `latest_complete_pack` sucht deshalb die letzten `PACK_PROBE_DAYS` Tage über den Namen.
+- **`Failed to refresh OAuth token` im Lauf-JSON** → vorübergehend; das Skript wartet `OAUTH_RETRY_WAIT_S` und startet bis zu `OAUTH_RETRIES`-mal neu, ohne dass das als Versuch zählt (`WARN` im `run.log`). Bleibt der Fehler auch danach: `claude` einmal interaktiv starten oder `OAUTH_TOKEN_FILE` nutzen.
 - **`flock`/Sperrdatei-Fehler** → `STATE_DIR` muss auf der lokalen Platte liegen, nicht auf dem Share (virtiofs/cifs sperren unzuverlässig).
 - **`forecaster_version … != expected`** (Exit 30) → der Agent hat die vorgegebene Version nicht übernommen; Datei vor 09:25 korrigieren und im Lauf-Log nachsehen, warum.
 

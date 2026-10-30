@@ -42,6 +42,9 @@ load_config() {
     : "${RUN_TIMEOUT_MIN:=150}"
     : "${MIN_MINUTES_BEFORE_SEAL:=45}"          # do not start with less time left
     : "${MAX_ATTEMPTS:=2}"                      # claude launches per pack
+    : "${OAUTH_RETRIES:=3}"                     # re-launches after a failed token refresh (same attempt)
+    : "${OAUTH_RETRY_WAIT_S:=90}"
+    : "${PACK_PROBE_DAYS:=10}"                  # calendar days probed by name (see latest_complete_pack)
     : "${EXPECT_SKILL_VERSION:=}"               # optional pin, e.g. swp-v2
     : "${EXPECT_SKILL_COMMIT:=}"                # optional pin: last commit touching the skill
     : "${OAUTH_TOKEN_FILE:=}"                   # optional: file with a `claude setup-token` token (chmod 600)
@@ -119,9 +122,23 @@ recent_session_dirs() {
 
 # Newest session folder under PACK_ROOT that contains 00_uebersicht.md (the
 # generator writes it last, so its presence means the pack is complete).
+#
+# A virtiofs guest caches directory LISTINGS for about 24 h: a glob misses the
+# folder the container created last night (seen 2026-10-21..30: the 07:30 run
+# found yesterday's pack, only the 09:30 run the new one - one more slip of the
+# cache window would have missed a session). A direct lookup of a name is not
+# cached when the name was absent, so the recent days are probed by name first;
+# the listing only serves packs older than that.
 latest_complete_pack() {
+    local i day
+    for ((i = 0; i <= ${PACK_PROBE_DAYS:-10}; i++)); do
+        day=$(date -d "-$i days" +%F)
+        if [ -f "$PACK_ROOT/$day/00_uebersicht.md" ]; then
+            printf '%s\n' "$PACK_ROOT/$day"
+            return 0
+        fi
+    done
     local -a dirs=("$PACK_ROOT"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])
-    local i
     for ((i = ${#dirs[@]} - 1; i >= 0; i--)); do
         if [ -f "${dirs[i]}/00_uebersicht.md" ]; then
             printf '%s\n' "${dirs[i]}"
@@ -129,6 +146,13 @@ latest_complete_pack() {
         fi
     done
     return 1
+}
+
+# Did claude die on a failed OAuth token refresh, before doing any work? Seen on
+# 3 of the first 9 production runs ("another Claude Code process is refreshing it
+# or exited mid-refresh"), always gone a few minutes later.
+oauth_refresh_failed() {
+    [ -s "$1" ] && grep -q 'Failed to refresh OAuth token' "$1"
 }
 
 # Epoch of "YYYY-MM-DD HH:MM" interpreted in New York time.

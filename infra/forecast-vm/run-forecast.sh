@@ -267,13 +267,24 @@ fi
 
 echo $((attempts + 1)) >"$attempts_file"
 log INFO "starting claude (attempt $((attempts + 1))/$MAX_ATTEMPTS), json -> $RUN_JSON"
-set +e
-(cd "$WORK_DIR" && "${CMD[@]}" >"$RUN_JSON" 2>"$RUN_ERR")
-claude_rc=$?
-set -e
+oauth_try=0
+while :; do
+    set +e
+    (cd "$WORK_DIR" && "${CMD[@]}" >"$RUN_JSON" 2>"$RUN_ERR")
+    claude_rc=$?
+    set -e
+    # A failed token refresh costs nothing and is gone within minutes: wait here
+    # instead of burning an attempt and hoping that a later timer still comes.
+    if [ "$claude_rc" -eq 0 ] || [ "$oauth_try" -ge "$OAUTH_RETRIES" ] || ! oauth_refresh_failed "$RUN_JSON"; then
+        break
+    fi
+    oauth_try=$((oauth_try + 1))
+    log WARN "claude could not refresh its OAuth token (usually transient) - retry $oauth_try/$OAUTH_RETRIES in ${OAUTH_RETRY_WAIT_S} s, same attempt"
+    sleep "$OAUTH_RETRY_WAIT_S"
+done
 
 if command -v jq >/dev/null 2>&1 && [ -s "$RUN_JSON" ]; then
-    log INFO "claude result: $(jq -r '"is_error=\(.is_error // "?") subtype=\(.subtype // "?") turns=\(.num_turns // "?") cost_usd=\(.total_cost_usd // "?") duration_s=\((.duration_ms // 0) / 1000 | floor)"' "$RUN_JSON" 2>/dev/null || echo 'result json not parseable')"
+    log INFO "claude result: $(jq -r '"is_error=\(if .is_error == null then "?" else .is_error end) subtype=\(.subtype // "?") turns=\(.num_turns // "?") cost_usd=\(.total_cost_usd // "?") duration_s=\((.duration_ms // 0) / 1000 | floor)"' "$RUN_JSON" 2>/dev/null || echo 'result json not parseable')"
 fi
 case "$claude_rc" in
     0) ;;
