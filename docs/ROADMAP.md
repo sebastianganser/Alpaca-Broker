@@ -323,7 +323,7 @@ Die früheren Sprints 11 (Backtest Framework) und 12 (Paper Trading Integration)
 - [ ] H14: Out-of-sample-Start 2026-10-19 (nur Handelstage ab diesem Datum zählen)
 - [x] VM-Passwort: bleibt laut Sebastian (30.10.) unverändert, Risiko bewusst akzeptiert – nicht mehr erinnern. Windows-Aufgabe `signal-warehouse-prognose` ist deaktiviert (geprüft 18.10.)
 - [x] Plan-Schritt 7 (Doku-Durchgang 30.10.: Mission, Referenz-Dokumente, Sprint 11/12 beim separaten Bot, `sprint10_readiness.py` → `forecast_readiness.py`) erledigt
-- [ ] Deploy der Skript-Umbenennung `scripts/forecast_readiness.py` (liegt im Arbeitsbaum; reine Umbenennung, Logik unverändert)
+- [x] Deploy der Skript-Umbenennung `scripts/forecast_readiness.py` (`572e30d`, 30.10. 17:00; im Container gelaufen: 29/31, GO, offen wie zuvor Ranking-Stabilität und Options-IV-Historie)
 - [ ] Nach Schritt 6 beobachten: erste Chain mit dem neuen `target_backfill` (31.10. 04:30) und erster Monatsbericht ohne Barrier-Ziel (01.11., die Bonferroni-Familie ist kleiner, einzelne `significant`-Flags können deshalb kippen)
 - [ ] Backlog: `options_iv`-Zeilen vom 2026-10-05 weiterhin nicht repariert; mögliche Sektor-Obergrenze für Screen/v2; Delisting-Renditen; XBRL-Quartale öfter als wöchentlich holen (in der Berichtssaison zeigt rund die Hälfte der Ticker „Tabelle nicht aktuell“); auf der VM hängt seit dem 18.10. ein Kernel-Thread im Zustand D (Load immer 1,0, bisher ohne Wirkung; beim nächsten VM-Neustart ansehen)
 
@@ -364,7 +364,7 @@ Die früheren Sprints 11 (Backtest Framework) und 12 (Paper Trading Integration)
 - 29 scheduler jobs (`scheduler/setup.py`, production reports 29 since the deploy of 2026-10-18 15:57): 14 daily (incl. `sec_filings_collector`, `nightly_chain`, `log_retention`), 1 weekday job in New York time (`forecast_seal`), 8 weekly (incl. `data_retention`, `short_interest_positions_collector`, `universe_validation`, `sec_financials_collector`), 2 monthly (`index_sync`, `feature_analysis`), 4 paused chain steps (`feature_pipeline`, `target_backfill`, `forecast_review`, `context_pack_generator`) – see [SCHEDULER.md](SCHEDULER.md)
 - Volume mount: `/mnt/user/Workfiles/AlpacaBroker` for Context Pack output (owned by `99:100`; pack folders are `2777` since 2026-10-18 so the forecast VM can write, [DECISIONS_ARCHITECTURE](DECISIONS_ARCHITECTURE.md))
 - Forecast VM `forecast-vm` (Ubuntu 26.04, 192.168.1.250) writes `forecasts.yaml` into the pack folders over virtiofs ([ARCHITECTURE.md](ARCHITECTURE.md) "Forecast VM and Reboot Resilience")
-- **Deployed as of 2026-10-30 16:39:** `0da513c`, Alembic revision `041` (barrier label columns dropped; verified via `/api/v1/dashboard/summary` on 2026-10-30: revision `041`, 29 jobs). Earlier: `990c286` / revision `040` on 2026-10-18 15:57 (SEC filings/texts, quarterly financials, extra fundamentals). Current deployed hash: [CLAUDE.md](../CLAUDE.md) "Deployment"
+- **Deployed as of 2026-10-30 17:00:** `572e30d`, Alembic revision `041` (barrier label columns dropped; verified via `/api/v1/dashboard/summary` on 2026-10-30: revision `041`, 29 jobs). Earlier: `990c286` / revision `040` on 2026-10-18 15:57 (SEC filings/texts, quarterly financials, extra fundamentals). Current deployed hash: [CLAUDE.md](../CLAUDE.md) "Deployment"
 
 **Update workflow:**
 1. Commit + `git push` from Windows (tests green)
