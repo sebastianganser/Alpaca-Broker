@@ -3,7 +3,7 @@
 > Central navigator for all project documentation.
 > Start here to find the right document for your question.
 
-**Last updated:** 18 October 2026 (no document added or renamed; last entry of the session log is Session 35)
+**Last updated:** 30 October 2026 (documentation pass of plan step 7: statuses of the strategy-neutral documents updated; no document added or renamed; last entry of the session log is Session 36)
 
 ---
 
@@ -12,21 +12,22 @@
 | I'm looking for... | Document |
 |---|---|
 | Project overview, mission, principles, current status | [CLAUDE.md](../CLAUDE.md) |
-| **Where did the last session stop? What is deployed? What is open?** | [SESSION_LOG.md](SESSION_LOG.md) – last entry (Session 35) · [ROADMAP.md](ROADMAP.md) – "Offene Punkte" |
+| **Where did the last session stop? What is deployed? What is open?** | [SESSION_LOG.md](SESSION_LOG.md) – last entry (Session 36) · [ROADMAP.md](ROADMAP.md) – "Offene Punkte" |
 | How is the system deployed and structured? | [ARCHITECTURE.md](ARCHITECTURE.md) |
-| What database tables exist? (DDL, migrations 001–038, retention) | [DATABASE.md](DATABASE.md) |
+| What database tables exist? (DDL, migrations 001–041, retention) | [DATABASE.md](DATABASE.md) |
 | When do jobs run? (schedule, nightly chain) | [SCHEDULER.md](SCHEDULER.md) |
 | How does data source X work? | [DATA_SOURCES.md](DATA_SOURCES.md) |
 | Why was decision Y made? | `DECISIONS_*.md` (see below) |
 | What's the current sprint status? | [ROADMAP.md](ROADMAP.md) |
 | What did we learn from the data / from bugs? | [LEARNINGS.md](LEARNINGS.md) |
 | What hypotheses do we want to test? | [LEARNINGS_HYPOTHESES.md](LEARNINGS_HYPOTHESES.md) |
-| Short-term candidate concept (barrier trades, K1–K5) | [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) |
-| Format of the old stage-2 feedback file `decisions.yaml` (historical; parser and tables removed in code, valid in the running container until migration 039 is deployed) | [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) |
-| Format of Claude's forecast file `forecasts.yaml` and the pre-registered evaluation of the forecasts | [FORECASTS.md](FORECASTS.md) |
+| Short-term candidate concept (barrier trades, K1–K5) – **historical**, superseded by the forecast pipeline | [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) |
+| Format of the old stage-2 feedback file `decisions.yaml` (**historical**; parser and tables removed, superseded by `forecasts.yaml`) | [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) |
+| Format of Claude's forecast file `forecasts.yaml` and the pre-registered evaluation of the forecasts (**current**) | [FORECASTS.md](FORECASTS.md) |
 | Trade ideas for the future trading bot (`trade_ideas.yaml`, not evaluated) and the research archive `research_sources.md` | [TRADE_IDEAS.md](TRADE_IDEAS.md) |
 | Unattended daily forecast run on a Linux VM (Claude Code CLI, timers, virtiofs / rsync access to the share) | [infra/forecast-vm/README.md](../infra/forecast-vm/README.md) |
-| Candidate screen: quality gate, evidence groups with literature signs, buckets, backtest | [SCREEN.md](SCREEN.md) |
+| Candidate screen: quality gate, evidence groups with literature signs, buckets, backtest (**current**) | [SCREEN.md](SCREEN.md) |
+| Format of the daily context pack v2 (files, sections, percentiles, point-in-time rules) (**current**) | [CONTEXT_PACK.md](CONTEXT_PACK.md) |
 | S&P 500 survivorship gap: root cause, removal list, **repair runbook** (dry runs, `--apply`, rollback) | [reports/2026-10-16_sp500_survivorship_inventory.md](reports/2026-10-16_sp500_survivorship_inventory.md) |
 | GitHub overview / external audience | [README.md](../README.md) |
 
@@ -40,7 +41,7 @@
 |---|---|---|
 | [CLAUDE.md](../CLAUDE.md) | Entry point for every AI session – project identity, principles, status, quick facts, session checklists | Status after every session |
 | [README.md](../README.md) | GitHub-facing project overview | After major milestones |
-| [.claude/](../.claude/) | Shared Claude Code setup: subagents (`log-checker` Haiku, `doc-keeper` Sonnet, `code-reviewer` Opus), skills (`/log-check`, `/deploy`, `/session-end`), permissions (`settings.json`) | When the workflow changes |
+| [.claude/](../.claude/) | Shared Claude Code setup: subagents (`log-checker` Haiku, `doc-keeper` Sonnet, `code-reviewer` Opus), skills (`/log-check`, `/deploy`, `/session-end`, and the forecast skill `signal-warehouse-prognose` run by the forecast VM), permissions (`settings.json`) | When the workflow changes |
 | [infra/forecast-vm/](../infra/forecast-vm/README.md) | Package for the Linux forecast VM: `run-forecast.sh` (headless `claude -p`, pinned model), `sync.sh`, systemd timers / cron, settings example (German README) | When the forecast run changes |
 | [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) | Host operations (status, logs, deploy, run, run-bg) behind the Unraid User Script `alpaca-ops` | When ops change |
 
@@ -49,7 +50,7 @@
 | Document | Purpose | Update Frequency |
 |---|---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Deployment topology (Unraid, container, volumes), project structure, data flow, nightly chain, context-pack output | On structural changes |
-| [DATABASE.md](DATABASE.md) | Database schema – all tables, migration history 001–038, retention per table | On schema changes / migrations |
+| [DATABASE.md](DATABASE.md) | Database schema – all tables, migration history 001–041, retention per table | On schema changes / migrations |
 | [SCHEDULER.md](SCHEDULER.md) | Execution schedule – all 29 jobs, nightly chain, forecast seal, manual operations | When jobs change |
 
 ### Data Sources
@@ -80,20 +81,27 @@
 | [LEARNINGS.md](LEARNINGS.md) | Observed findings, debugging stories, data quality discoveries, research results | Continuously |
 | [LEARNINGS_HYPOTHESES.md](LEARNINGS_HYPOTHESES.md) | Hypotheses to test, planned investigations, failed approaches | As research evolves |
 
-### Concepts (dated)
+### Concepts and Plans (dated; the 2026-10-06 concept and STAGE2_DECISIONS are historical)
 
 | Document | Purpose | Status |
 |---|---|---|
 | [2026-08-18_Konzept_Datenerweiterung.md](2026-08-18_Konzept_Datenerweiterung.md) | Concept for data extension and candidate pipeline (basis of Sprint 9.5a–c); answers and decisions are in DECISIONS_*, ideas not yet implemented in the ROADMAP backlog | Status per item in ROADMAP (9.5a–c) |
-| [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) | Short-term candidates: barrier evaluation, pre-registered steps A–D, stage-1 risk pre-filter, stage-2 forward test (§7.7) | Historical – superseded by the strategy-neutral rework (valid until the forecast pipeline is deployed) |
-| [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md) | Plan to make Alpaca-Broker strategy-neutral after Sebastian's scope clarification: context pack v2 for Claude's Wall-Street-style forecasts, `forecasts.yaml`, neutral screen, removal of the barrier label and stage-2 tables | Approved 2026-10-17 – implementation running (steps 1–2 done, see ROADMAP) |
-| [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) | File format `decisions.yaml` written by the analysis skill, formerly read by `stage2_review` | Historical – removed from the code 2026-10-18 (replaced by `forecast_review`), valid in the running container until the deploy of migration 039 |
-| [FORECASTS.md](FORECASTS.md) | File format `forecasts.yaml` (`forecasts/v1`, absolute direction per ticker and horizon), pre-registered evaluation (absolute and relative), decisive criterion (pre-registered 2026-10-18, 300 sessions) | Design 2026-10-17; ingest, persistence and nightly step implemented 2026-10-18 (plan step 4, deploy pending) |
-| [SCREEN.md](SCREEN.md) | Neutral candidate screen: quality gate, 12 evidence groups with a-priori literature signs, event triggers, buckets (option D), historical validation | Implemented 2026-10-17 (`analysis/screen.py`); used by the context pack v2 (2026-10-18) |
-| [CONTEXT_PACK.md](CONTEXT_PACK.md) | Context pack v2 (`pack_format: 2`) for the person writing the analysis skill prompt: files (`00_uebersicht.md`, `screen.csv`, alphabetical `TICKER.md`), selection, ticker-file sections, percentiles, point-in-time rules, how to write `forecasts.yaml`, deadline | Implemented in code 2026-10-18 (`derived/context_pack/`), deploy pending with plan step 4 |
-| [TRADE_IDEAS.md](TRADE_IDEAS.md) | File format `trade_ideas.yaml` (`trade_ideas/v1`: direction, horizon, entry zone, invalidation level, catalysts, validity window) written by the skill next to the neutral forecast for the later bot, plus the research archive `research_sources.md`; not sealed, not evaluated | Defined 2026-10-18 (skill `swp-v2`); no code reads it yet |
+| [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) | Short-term candidates: barrier evaluation, pre-registered steps A–D, stage-1 risk pre-filter, stage-2 forward test (§7.7) | **Historical** – superseded by the strategy-neutral rework; the barrier code was removed 2026-10-30 (migration 041, git tag `pre-neutral`) |
+| [2026-10-17_Plan_Strategieneutral.md](2026-10-17_Plan_Strategieneutral.md) | Plan to make Alpaca-Broker strategy-neutral after Sebastian's scope clarification: context pack v2 for Claude's Wall-Street-style forecasts, `forecasts.yaml`, neutral screen, removal of the barrier label and stage-2 tables | Approved 2026-10-17 – **implemented, all seven steps done on 2026-10-30** (status block at the top of the plan) |
+| [STAGE2_DECISIONS.md](STAGE2_DECISIONS.md) | File format `decisions.yaml` written by the analysis skill, formerly read by `stage2_review` | **Historical** – removed from the code and the database (replaced by `forecast_review`, migration 039 deployed 2026-10-18); `docs/FORECASTS.md` is authoritative |
+
+### Forecast Pipeline (current reference documents)
+
+| Document | Purpose | Status |
+|---|---|---|
+| [FORECASTS.md](FORECASTS.md) | File format `forecasts.yaml` (`forecasts/v1`, absolute direction per ticker and horizon), pre-registered evaluation (absolute and relative), decisive criterion (pre-registered 2026-10-18, 300 sessions) | **Current** – designed 2026-10-17; ingest, seal, persistence and nightly step deployed 2026-10-18 (plan step 4) |
+| [SCREEN.md](SCREEN.md) | Neutral candidate screen: quality gate, 12 evidence groups with a-priori literature signs, event triggers, buckets (option D), historical validation | **Current** – implemented 2026-10-17 (`analysis/screen.py`); used by the context pack v2 (deployed 2026-10-18) |
+| [CONTEXT_PACK.md](CONTEXT_PACK.md) | Context pack v2 (`pack_format: 2`) for the person writing the analysis skill prompt: files (`00_uebersicht.md`, `screen.csv`, alphabetical `TICKER.md`), selection, ticker-file sections, percentiles, point-in-time rules, how to write `forecasts.yaml`, deadline | **Current** – implemented and deployed 2026-10-18 (`derived/context_pack/`), enriched additively since |
+| [TRADE_IDEAS.md](TRADE_IDEAS.md) | File format `trade_ideas.yaml` (`trade_ideas/v1`: direction, horizon, entry zone, invalidation level, catalysts, validity window) written by the skill next to the neutral forecast for the later bot, plus the research archive `research_sources.md`; not sealed, not evaluated | **Current** – defined 2026-10-18 (skill `swp-v2`); no code reads it yet, it is for the later separate bot |
 
 ### Reports (`docs/reports/`, generated 2026-10-06, 2026-10-16 and 2026-10-17)
+
+The hit-model and barrier-backtest reports and the barrier-mode event-study reports (buyback, index additions) are history: the barrier tooling was removed on 2026-10-30 (the event study now runs on 20/60-session returns only); the git tag `pre-neutral` keeps the old code. The screen backtest and the S&P 500 survivorship documents are current.
 
 | Document | Content |
 |---|---|

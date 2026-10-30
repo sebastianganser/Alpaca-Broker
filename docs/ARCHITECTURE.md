@@ -7,7 +7,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** October 2026
+**Last updated:** 30 October 2026 (documentation pass of plan step 7: the scripts, analysis and derived parts of the project tree were re-checked against the code, readiness script renamed)
 
 ---
 
@@ -113,20 +113,22 @@ Alpaca-Broker/
 ├── .claude/                         # Claude Code project setup (shared via Git)
 │   ├── settings.json                # Shared permissions (settings.local.json is git-ignored)
 │   ├── agents/                      # Subagents: log-checker (Haiku), doc-keeper (Sonnet), code-reviewer (Opus)
-│   └── skills/                      # Workflows: log-check, deploy, session-end
+│   └── skills/                      # Workflows: log-check, deploy, session-end, signal-warehouse-prognose (forecast skill, run by the forecast VM)
 ├── docs/                            # Documentation (INDEX.md = navigator)
 │   ├── FORECASTS.md                 # forecasts.yaml format + pre-registered evaluation (STAGE2_DECISIONS.md = historical)
-│   ├── 2026-10-06_Konzept_Kurzfrist_Kandidaten.md  # short-term candidate concept
+│   ├── SCREEN.md / CONTEXT_PACK.md / TRADE_IDEAS.md  # neutral screen / pack v2 format / trade ideas for the later bot
+│   ├── 2026-10-06_Konzept_Kurzfrist_Kandidaten.md  # short-term barrier-trade concept (historical, superseded)
 │   └── reports/                     # Research reports (event studies, walk-forward, S&P 500 survivorship
 │                                    #   inventory incl. repair runbook, …)
 ├── infra/
 │   ├── docker-compose.yml           # Service alpaca-broker only (DB runs separately)
 │   ├── Dockerfile.collector         # 3-stage build (Node → uv/Python → slim runtime, user 99:100)
 │   ├── entrypoint.sh                # pg_isready → alembic upgrade head → CMD
+│   ├── forecast-vm/                 # Package for the Linux forecast VM: run-forecast.sh (headless Claude Code CLI), sync.sh, systemd timers, setup guide
 │   └── unraid/
 │       └── alpaca-ops.sh            # Host ops (status/logs/deploy/run/run-bg), run via User Script "alpaca-ops"
 ├── src/
-│   ├── alembic/versions/            # Migrations 001–038
+│   ├── alembic/versions/            # Migrations 001–041
 │   └── trading_signals/             # Python package (see below)
 ├── scripts/                         # Run manually (locally or via docker exec)
 │   ├── repair/                      # One-off repairs/backfills (features_rebuild, refetch prices,
@@ -138,7 +140,7 @@ Alpaca-Broker/
 │   │                                #   simulate_criterion_size (size/power of the forecast criterion),
 │   │                                #   event_study (20/60-session raw and excess returns), collect_buyback_events
 │   ├── archive/                     # Obsolete one-time scripts (kept for reference)
-│   ├── sprint10_readiness.py        # Data-maturity check for the scoring model
+│   ├── forecast_readiness.py        # Forecast Readiness: data-maturity check for the forecast work (renamed from sprint10_readiness.py, 2026-10-30)
 │   └── *.py                         # Universe init/sync/validate, recompute helpers, backfills
 ├── notebooks/                       # Exploratory analyses (01–03, plain .py)
 ├── frontend/                        # Vite + React SPA (built into the image)
@@ -262,9 +264,9 @@ flowchart TD
     DER --> CHAIN["Nightly chain 04:30"]
     CHAIN --> FS["feature_snapshots (features incl. st_*)"]
     FS --> TGT["Targets: return_1d/5d/20d/60d"]
-    TGT --> S2["forecast_review: forecasts.yaml → forecast_reviews / forecasts, frozen sample + verdict (once), forecast_auswertung.md"]
+    TGT --> FR["forecast_review: forecasts.yaml → forecast_reviews / forecasts, frozen sample + verdict (once), forecast_auswertung.md"]
     FS --> CP["Context Pack v2 (quality gate + neutral screen, screen.csv, ticker files, pack_candidates) → Unraid share"]
-    CP -. "Claude broker skill writes forecasts.yaml" .-> S2
+    CP -. "Claude broker skill writes forecasts.yaml" .-> FR
     TGT --> FA["feature_analysis (monthly, 1st 07:00) → analysis_reports"]
 ```
 
@@ -369,5 +371,5 @@ Paper trading only: `Settings.validate_alpaca_safety()` aborts startup if `ALPAC
 For detailed rationale behind all decisions, see:
 - [DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) – Infrastructure & deployment
 - [DECISIONS_DATA.md](DECISIONS_DATA.md) – Data sources & collectors
-- [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md) – Features & trading strategy
-- [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) – Short-term candidate concept (barrier trade, risk pre-filter, stage 2)
+- [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md) – Features, targets, forecast scope (trading belongs to a separate future bot)
+- [2026-10-06_Konzept_Kurzfrist_Kandidaten.md](2026-10-06_Konzept_Kurzfrist_Kandidaten.md) – Historical: short-term candidate concept (barrier trade, risk pre-filter, stage 2), superseded by the strategy-neutral rework ([plan](2026-10-17_Plan_Strategieneutral.md))

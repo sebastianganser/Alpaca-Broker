@@ -1,8 +1,9 @@
 """
-Sprint 10 Readiness Check
-=========================
-Evaluates whether the data is mature enough to build a
-reliable Signal Scoring model (Sprint 10).
+Forecast Readiness Check
+========================
+Evaluates whether the data is mature enough for the forecast work: a reliable
+scoring model (F1, Sprint 10) and a meaningful evaluation of the forecasts.
+Renamed from ``sprint10_readiness.py`` on 2026-10-30; the checks are unchanged.
 
 Checks:
   1. Data Volume (dates, snapshots, tickers)
@@ -19,9 +20,9 @@ Updated Sept 2026 for Sprint 9.5 extensions:
     13F, Options IV, Estimates
   - Total feature columns: ~86 (up from ~55 in Sprint 8c)
 
-Run locally:  DATABASE_URL=postgresql://... python scripts/sprint10_readiness.py
+Run locally:  DATABASE_URL=postgresql://... python scripts/forecast_readiness.py
 Run in container:
-  docker exec -it alpaca-broker uv run python scripts/sprint10_readiness.py
+  docker exec -it alpaca-broker uv run python scripts/forecast_readiness.py
 """
 
 # %% ── Setup ────────────────────────────────────────────────────────────
@@ -46,7 +47,7 @@ settings = get_settings()
 engine = create_engine(settings.database_url)
 
 # %% ── Thresholds ───────────────────────────────────────────────────────
-# These are the minimum requirements for Sprint 10
+# These are the minimum requirements for the forecast work
 
 THRESHOLDS = {
     "min_distinct_dates": 120,       # ~6 months of trading days
@@ -65,7 +66,7 @@ THRESHOLDS = {
 ML_START = ml_start_date()
 
 print("=" * 72)
-print("  SPRINT 10 READINESS CHECK")
+print("  FORECAST READINESS CHECK")
 print(f"  Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
 print(f"  ML window: snapshot_date >= {ML_START} (data start {data_start_date()})")
 print("=" * 72)
@@ -413,7 +414,7 @@ try:
         f"{data_start_date()}  (min: {SHORT_INTEREST_MIN_SETTLEMENTS})  "
         f"{_ok(si_ready)}"
     )
-    print("                     ↳ Informational only – not blocking Sprint 10")
+    print("                     ↳ Informational only – not blocking")
 except Exception as e:
     print(f"\n  Short Interest (FINRA): QUERY FAILED ({e})")
 
@@ -428,7 +429,7 @@ try:
         "✅" if iv_rank_ready else f"⏳ {252 - iv_days} days remaining"
     )
     print(f"\n  IV-Rank (252d):     {iv_days:>4} days  (need: 252)  {iv_status}")
-    print("                     ↳ Informational only – not blocking Sprint 10")
+    print("                     ↳ Informational only – not blocking")
 except Exception:
     pass
 
@@ -440,10 +441,10 @@ total = len(results)
 pct = 100.0 * passed / total
 
 if pct >= 90:
-    verdict = "🟢 GO — Sprint 10 kann starten!"
+    verdict = "🟢 GO — Daten reif für Scoring und Prognose-Auswertung!"
     color = "green"
 elif pct >= 60:
-    verdict = "🟡 BEDINGT — Sprint 10 möglich, aber einige Checks fehlen"
+    verdict = "🟡 BEDINGT — Scoring möglich, aber einige Checks fehlen"
     color = "yellow"
 else:
     verdict = "🔴 WARTEN — Datenstand noch nicht ausreichend"

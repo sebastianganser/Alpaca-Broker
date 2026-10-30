@@ -1,10 +1,10 @@
 # Alpaca-Broker – Signal Warehouse
 
-> A private, experimental **Signal Warehouse** that systematically collects "smart money" signals and market data to develop data-driven trading strategies.
+> A private, experimental **Signal Warehouse** that systematically collects "smart money" signals and market data and, from them, forecasts which tickers are expected to rise (later: fall) over days to months.
 
 ## Mission
 
-Build a data-driven research platform that aggregates signals from multiple sources (ARK Invest, SEC Form 4/13F, US politician trades, technical indicators, analyst ratings, news sentiment) into a unified feature store, enabling informed trading strategy development on Alpaca Paper Trading.
+Build a data-driven research platform that aggregates signals from multiple sources (ARK Invest, SEC filings and Form 4/13F, US politician trades, technical indicators, analyst ratings, estimates, short interest, news sentiment) into a unified feature store and a daily context pack. Claude reads the pack like a Wall-Street broker and writes pre-registered, evaluated forecasts (`forecasts.yaml`: direction per ticker and horizon). Strategies, exit rules and the actual trading are **not part of this project**: they belong to a separate future bot (Alpaca paper trading only), which will consume the forecasts.
 
 ## Key Features
 
@@ -13,7 +13,7 @@ Build a data-driven research platform that aggregates signals from multiple sour
 - **📈 760 Active Tickers** (17 Oct 2026, after the S&P 500 survivorship repair): S&P 500 + Nasdaq 100 + ARK holdings + benchmark/sector ETFs, point-in-time universe for features
 - **🗄️ PostgreSQL 18:** raw data layer + recomputable derived features + feature store, rolling 20-quarter retention
 - **🤖 Automated:** APScheduler with 29 jobs (14 daily incl. the nightly chain, 1 weekday seal job in New York time, 8 weekly, 2 monthly, 4 chain steps)
-- **🧠 Feature Pipeline:** Daily feature vectors (~97 features in 17 groups) with forward-return backfill, daily Context Pack for the analysis skill
+- **🧠 Feature Pipeline:** Daily feature vectors (~97 features in 17 groups) with forward-return backfill, daily Context Pack v2 (neutral screen, ticker files) for Claude's forecasts
 - **📰 News Sentiment:** Alpaca News API + ProsusAI/finbert for headline-based sentiment scoring
 - **🔒 Paper Only:** Hardcoded safety check – **never** live trading
 
@@ -32,9 +32,9 @@ Build a data-driven research platform that aggregates signals from multiple sour
 
 ## Current Status
 
-- **Sprint 9.5c** (Candidate Pipeline MVP), Phase 2 – short-term research K1–K4 done (no validated edge yet), forecast pipeline (`forecasts.yaml` ingest, pre-registered evaluation) implemented, deploy pending
+- **Sprint 9.5c** (Candidate Pipeline MVP), Phase 2 – the strategy-neutral rework is complete (plan steps 1–7, 2026-10-30): neutral screen, context pack v2, `forecasts.yaml` ingest with a sealed deadline and a pre-registered evaluation, SEC data, headless forecast VM; the barrier trade label and hit model were removed. Short-term research K1–K4 found no usable edge
 - **System running** on Unraid (192.168.1.93:8090)
-- **Next:** Sprint 10 (Signal Scoring) planned from mid-December 2026 – see [docs/ROADMAP.md](docs/ROADMAP.md)
+- **Next:** collect forecasts toward the pre-registered verdict (300 sessions); Sprint 10 (composite score feeding the forecasts) planned from mid-December 2026 – see [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## Documentation
 

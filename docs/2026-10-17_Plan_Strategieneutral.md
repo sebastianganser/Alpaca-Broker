@@ -1,7 +1,20 @@
 # Plan: Alpaca-Broker strategieneutral machen
 
-**Stand:** 17. Oktober 2026 · **Status:** freigegeben am 17.10.2026 (Entscheidungen siehe Abschnitt 6) – Umsetzung läuft
+**Stand:** 17. Oktober 2026 · **Status:** freigegeben am 17.10.2026 (Entscheidungen siehe Abschnitt 6) – **umgesetzt, alle sieben Schritte am 30.10.2026 erledigt** (Statusblock unten)
 **Anlass:** Klarstellung von Sebastian am 17.10.: Alpaca-Broker sammelt Daten und soll Ticker identifizieren, deren Kurse in den nächsten Tagen bis Monaten voraussichtlich **steigen** (später auch **fallen**). Die Daten bekommt Claude über den Context Pack und bewertet die Ticker wie ein Wall-Street-Broker. Strategie, Ein-/Ausstiegsregeln und das eigentliche Trading übernimmt später ein **eigener Bot**, nicht Alpaca-Broker.
+
+> **Statusblock (30.10.2026) – der Plan unten bleibt unverändert, so wie er freigegeben wurde.** Alle Schritte 0–7 sind erledigt und deployt:
+>
+> | Schritt | Stand | Deploy |
+> |---|---|---|
+> | 0 | Migration 038 (Trailing-Rückbau) | 17.10. 19:26, `d61bd31` |
+> | 1–2 | Doku (FORECASTS, SCREEN), `forecast_eval`, Screen, `screen_backtest`, Event-Studie im Horizont-Modus | Code 17.10.; in Produktion mit Deploy 1 |
+> | 3–4 | Context Pack v2, Prognose-Ingest, `forecast_seal`, Chain-Schritt `forecast_review`, Migration 039 | 18.10., `d477286` (Deploy 1 = Schritt 5 des Plans; Code Schritt 4: `6a5379a`) |
+> | 5 | Skill `signal-warehouse-prognose` (`0ab7471` swp-v1, `e904842` swp-v2) und Prognose-VM (18.10.); im selben Zug SEC-Daten und Pack-Anreicherung mit Migration 040 | 18.10. 15:57, `990c286`; Folgefixes `7226ab7` + `2881fd9` 18.10. 20:43 |
+> | 6 | Rückbau Barrier-Label, Hit-Modell, Barrier-Backtest, Migration 041 | 30.10. 16:39, `0da513c` |
+> | 7 | Doku-Durchgang (Mission, ROADMAP: Sprint 11/12 beim separaten Bot, `sprint10_readiness.py` → `forecast_readiness.py`) | 30.10. (Umbenennung des Skripts: Deploy folgt) |
+>
+> **Zwei Abweichungen vom Plan:** (1) `backtest_barrier.py`, `walkforward_hit_model.py`, `analysis/hit_model.py` und `analysis/barrier.py` wurden **gelöscht statt archiviert** (Abschnitt 4: „ins Archiv“) – sie laufen ohne das gelöschte Label nicht; der Git-Tag `pre-neutral` hält den alten Code, die Berichte in `docs/reports/` bleiben. (2) Die Info-Zeile `H14_SECONDARY_TARGET` wurde **ersatzlos entfernt, ohne H14 neu zu registrieren** (Abschnitt 4 hatte `return_60d` als Ersatz vorgesehen; Sebastian hat darauf nicht geantwortet, Abschnitt 6): Die H14-Konstanten und `FEATURE_VERSION` sind unverändert, die Vorab-Registrierung bleibt unberührt. Entscheidungen und Details: [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md) 2026-10-30, [ROADMAP.md](ROADMAP.md) „Prognose-Ziel neutral“.
 
 Voraussetzung: Migration 038 (Rückbau des Trailing-Labels) ist deployt. Neue Migrationen dieses Plans heißen daher 039 und 040.
 

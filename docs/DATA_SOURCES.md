@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** 18 October 2026
+**Last updated:** 30 October 2026 (operational scripts table; sources unchanged since 18 October 2026)
 
 ---
 
@@ -28,7 +28,7 @@
 | **yfinance – Options** | Implied Volatility | Free | Daily | ~20 min EOD | 9.5b | ✅ Active |
 | **Massive (ex Polygon)** | Short Volume (daily) + FINRA Short Interest (twice a month) | Free | Daily (volume) / weekly run (interest) | T+1 (volume) / ~7 business days after settlement date (interest) | 9.5c | ✅ Active |
 | **Wikipedia – index change tables** | Index membership history (S&P 500, Nasdaq 100) | Free | Monthly (`index_sync`) | Effective date of the change (editor lag not measured) | 9.5a | ✅ Active (source page changed, parser fixed 2026-10-16) |
-| **Alpaca Corporate Actions** | Renames, mergers (explains disappeared tickers) | Free | Weekly (`universe_validation`) + monthly (`index_sync`) | Process date of the action | 9.5c | 🟡 Code committed 2026-10-16, deploy pending |
+| **Alpaca Corporate Actions** | Renames, mergers (explains disappeared tickers) | Free | Weekly (`universe_validation`) + monthly (`index_sync`) | Process date of the action | 9.5c | ✅ Deployed 2026-10-17 (`771ab1d`; code committed 2026-10-16) |
 | **SEC EDGAR – Filings** (submissions API) | 8-K (+ item codes, press release / report excerpts), 10-Q/10-K, 144, 13D/13G, S-1/S-3, DEF 14A, NT 10-K/Q, 6-K | Free | Daily 04:00 CET | Minutes after acceptance (collected the same night, 22:00 ET cut-off) | 18.10.2026 | ✅ Deployed 2026-10-18 (`990c286`, migration 040); 120-day backfill the same evening: 9,633 filings + 2,372 texts from 740 companies |
 | **SEC EDGAR – XBRL financials** (companyfacts API) | Quarterly revenue, profit, EPS, cash flow, FCF, cash, debt, shares | Free | Weekly (Sunday 14:00) | With the 10-Q/10-K filing | 18.10.2026 | ✅ Deployed 2026-10-18 (`990c286`, migration 040); backfilled the same evening: 11,926 quarters for 642 tickers |
 
@@ -315,7 +315,7 @@ Outstanding short positions per settlement date, published twice a month. A **di
 - **Requests:** one reference request (AAPL) lists the settlement dates; then **one bulk request per settlement date** (all tickers in one page), filtered client-side to all universe tickers incl. inactive ones. Fetched: dates not stored yet + the 2 most recent stored dates (FINRA revisions) + stored dates with < 50 % of the median row count; never before `data_start_date()`. 12 s pause between requests, retries on 429/5xx, `next_url` to foreign hosts is refused. Upsert on `(ticker, settlement_date, source)`. A normal run needs ~3 requests.
 - **Initial history:** `scripts/repair/collect_short_interest.py` (~120 requests, ~25 min at 12 s; `--refetch-all` fetches every date again, e.g. for tickers that joined later). Feature history: `scripts/repair/backfill_short_interest_features.py` (dry run by default, `--apply`).
 - **Features** (migration 036, `FEATURE_VERSION` 2026.10-3, group "Short Interest"): `short_interest_days_to_cover`, `short_interest_change_1m` (rules: `derived/short_interest_features.py`). **Availability rule (no lookahead):** a settlement date is usable for day `d` only if it is <= the 9th NYSE session before `d` (`SI_PUBLICATION_LAG_SESSIONS = 9`: FINRA publishes ~7 business days after settlement + 2 sessions margin); newest usable settlement older than 40 days → NULL; `change_1m` = SI(newest) / SI(2 usable settlements earlier) − 1 within 45 days, earlier SI must be > 0. `days_to_cover = 999.99` / `avg_daily_volume = 0` are stored as NULL.
-- **Use:** to be evaluated in the monthly feature analysis before any score use – expected value mainly as risk filter / longer horizons, not as a +1 %/14-day edge ([DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-10-16).
+- **Use:** to be evaluated in the monthly feature analysis before any score use – expected value mainly as risk information / longer horizons (20/60 sessions), not as a short-term edge ([DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-10-16; the 14-day barrier trade it was weighed against was removed on 2026-10-30).
 - **Endpoint facts** (history since 2017-12-29, rows per date, fields, sentinel): see the "Short interest endpoint verified" bullet under Limitations.
 
 ### Limitations
@@ -351,7 +351,7 @@ The maintained file is `S&P 500 Historical Components & Changes (Updated).csv` (
 
 **Category:** Corporate events (renames, mergers) – read-only, explains why a ticker disappeared
 **API Endpoint:** `GET https://data.alpaca.markets/v1/corporate-actions` (same key headers as the other Alpaca clients; `universe/corporate_actions.py`)
-**Status:** 🟡 Code committed 2026-10-16, deploy pending
+**Status:** ✅ Deployed 2026-10-17 (`771ab1d`; code committed 2026-10-16)
 
 - **Requested types:** `name_change` (old → new symbol) and `cash_merger` / `stock_merger` / `stock_and_cash_merger` (acquiree → acquirer or cash). Symbols are sent in batches of 25 with pagination.
 - **Used by:** the weekly `universe_validation` job (renames/mergers of the last 365 days for deactivated tickers go into the run notes; a rename whose new symbol is missing from `universe` is a warning) and by `IndexSyncer` (rename detection: alias list first, then Alpaca `name_change` of the last 400 days → the open `index_membership` interval is re-keyed instead of closed).
@@ -471,13 +471,12 @@ All data in the system is bounded by `DATA_START_DATE = 2021-01-01` (defined in 
 
 | Script | Purpose | When to Run |
 |---|---|---|
-| `scripts/backfill_form4.py` | Historical insider trade backfill (~3 years) | One-time or after data loss |
+| `scripts/archive/backfill_form4.py` | Historical insider trade backfill (~3 years) | One-time or after data loss |
 | `scripts/backfill_insider_clusters.py` | Recompute insider clusters from trades | After insider backfill |
-| `scripts/cleanup_insider_outliers.py` | Remove trades outside `DATA_START_DATE..today` | After backfill |
-| `scripts/verify_insider_backfill.py` | Distribution + depth analysis of insider data | After backfill for QA |
-| `scripts/sprint8_readiness.py` | Data depth + coverage validation (all tables) | Before starting Sprint 8 |
-| `scripts/sprint9_readiness.py` | Feature snapshot + target fill readiness check | Periodic during wait phase |
-| `scripts/diag_insider.py` | Quick insider trade diagnostics | Ad-hoc debugging |
+| `scripts/archive/cleanup_insider_outliers.py` | Remove trades outside `DATA_START_DATE..today` | After backfill |
+| `scripts/archive/verify_insider_backfill.py` | Distribution + depth analysis of insider data | After backfill for QA |
+| `scripts/forecast_readiness.py` | Forecast Readiness: data depth, target fill, feature-group coverage, ranking stability (replaces the archived `sprint8_readiness.py` / `sprint9_readiness.py`; renamed from `sprint10_readiness.py` on 2026-10-30) | Periodic; next check early December 2026 |
+| `scripts/archive/diag_insider.py` | Quick insider trade diagnostics | Ad-hoc debugging |
 | `scripts/backfill_party_mapping.py` | Backfill party affiliation for politician_trades | One-time after C3 deploy |
 | `scripts/repair/backfill_sec_filings.py` | Dry run (default) / `--apply` of the SEC filings + press release backfill (120 days) | Once after the deploy of migration 040 (needs Sebastian's OK) |
 | `scripts/repair/backfill_sec_financials.py` | Dry run (default) / `--apply` of the SEC XBRL quarterly financials | Once after the deploy of migration 040 (needs Sebastian's OK) |

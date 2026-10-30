@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) · [DECISIONS_DATA.md](DECISIONS_DATA.md)
 
-**Last updated:** 17 October 2026
+**Last updated:** 30 October 2026 (dated status lines at superseded entries)
 
 ---
 
@@ -63,6 +63,8 @@
 **Rationale:** Kelly sizing or risk parity come only when reliable performance data exists. Simple, robust defaults at start.
 
 **Revisit trigger:** After 3 months of paper trading based on actual performance.
+
+**Status (2026-10-30):** Superseded by the scope decision of 2026-10-17 ("Scope: Alpaca-Broker Forecasts, a Separate Bot Trades"): portfolio construction, stops and targets are not part of this project but of the separate future bot. Kept as history.
 
 ---
 
@@ -281,6 +283,8 @@ Daily cross-sectional rank IC (mean, ICIR, Newey-West t with lag ≥ h−1), per
 **Context:** The stage-2 forward test (K5) is deployed since 2026-10-07 (`stage2_review` runs nightly), but no `decisions.yaml` has been written.
 **Decision (Sebastian):** Forward testing and the related tests wait until the sprints are through and the data supports them – first enough data for Sprint 10 (ML scoring), measured with `scripts/sprint10_readiness.py`. Until then no `decisions.yaml` is expected; "0 decisions read" in `stage2_auswertung.md` is the intended state, not an issue. The nightly `stage2_review` step stays deployed (harmless without input).
 
+**Status (2026-10-30):** Superseded: K5 and `stage2_review` were replaced by the forecast pipeline (`forecast_review`, `forecasts.yaml`, migration 039, deployed 2026-10-18); the readiness script `scripts/sprint10_readiness.py` is now `scripts/forecast_readiness.py` (renamed 2026-10-30, logic unchanged).
+
 ### [2026-10-17] Pre-registration of H14 (Days-to-Cover)
 **Context:** The first FINRA short-interest evaluation (monthly analysis of 2026-10-17, in-sample window 2022-07-28 … 2026-10-16) showed a consistently negative daily rank IC of `short_interest_days_to_cover` (`return_20d` rho −0.029, t_NW −3.20, 1,040 dates; `return_60d` t_NW −3.40; `return_barrier_14d` t_NW −1.85), but not Bonferroni-significant (~435 tests). All data up to 2026-10-16 has been looked at, so any further test on it is exploratory.
 **Decision (Sebastian):** Register **H14** ("higher days-to-cover predicts lower returns") as a confirmatory test on data that did not exist at the time of the look, tracked automatically by the monthly `feature_analysis` (`hypothesis_results['H14']`). Design: feature frozen at `FEATURE_VERSION` 2026.10-3; decision target `return_20d` (barrier label reported for information only); snapshot dates ≥ 2026-10-19; mean daily rank IC with Newey-West t (lag 19), **one-sided** p = Φ(t_NW); **fixed n = the first 250 valid out-of-sample dates, evaluated once** – before that `insufficient_data` (progress n/250), afterwards always the same 250 dates; `confirmed` at mean IC < 0 and p < 0.05, `rejected` at a significantly positive IC, otherwise `inconclusive`. Full design: [LEARNINGS_HYPOTHESES.md](LEARNINGS_HYPOTHESES.md) H14.
@@ -382,4 +386,4 @@ None of these is Bonferroni-significant (~435 tests) and all data up to 2026-10-
 - ML model selection (Sprint 10, after sufficient data)
 - Feature importance evaluation: which politician date variant has higher impact (Sprint 9)
 - FinBERT → Haiku upgrade: when sentiment data volume justifies API costs (Sprint 9+)
-- Live trading activation criteria (Sprint 12)
+- Live trading activation criteria – part of the separate future bot, not of this project (former Sprint 12, moved to the bot section of the ROADMAP on 2026-10-30)
