@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ROADMAP.md](ROADMAP.md)
 
-**Last updated:** 30 October 2026 (Session 36: Rückkehr aus dem Urlaub, Log-Check 19.–30.10., Korrekturen an Prognose-VM und XBRL-Quartalen, Rückbau Barrier-Label, Deploy `0da513c`, Migration 041, Doku-Durchgang Plan-Schritt 7)
+**Last updated:** 2 November 2026 (Session 37: Prüfung der ersten Chain nach Migration 041 und der Sonntagsläufe vom 01.11.)
 
 ---
 
@@ -537,3 +537,14 @@ Offen ist kein Reparatur-Skript. **Nicht über die API prüfbar:** ob nach dem 1
 - **Tests:** 2177 passed (ohne DB; 2200 vor dem Rückbau, 32 Barrier-Tests entfallen, 9 neu)
 - **Plan-Schritt 7, Doku-Durchgang:** Die strategieneutrale Ausrichtung steht jetzt in allen Referenz-Dokumenten. README (Mission: Prognose, Strategie und Handel beim separaten Bot), ARCHITECTURE (Projektbaum mit Migrationen 001–041, Prognose-VM, `forecast_readiness.py`), DATABASE/SCHEDULER (Migration 041 als deployt), DATA_SOURCES (Skripttabelle), FORECASTS/CONTEXT_PACK (Status „deployt“ statt „Deploy ausstehend“), INDEX (FORECASTS, SCREEN, CONTEXT_PACK, TRADE_IDEAS als aktuell, STAGE2_DECISIONS und Konzept 06.10. als historisch, in beiden Dokumenten die Hinweise auf den Stand gebracht), Agent `log-checker` (Übergangszustände zu den Migrationen 039/040 entfernt), datierte Statuszeilen in DECISIONS_FEATURES (Portfolio-Defaults 2026-04-12, Forward-Testing 2026-10-16), Statusblock im Plan (alle sieben Schritte erledigt; Abweichungen: Barrier-Skripte gelöscht statt archiviert, H14-Info-Zeile ohne Neu-Registrierung entfernt). ROADMAP: Sprint 11/12 im Abschnitt „Separater Bot (nicht Teil dieses Projekts)“ mit der Schnittstelle aus Plan §5, K5 als durch die Prognose-Pipeline ersetzt (K3b und „K3 erneut“ entfallen), Sprint 10 als Composite Score (F1) für die Prognosen ohne Order- und Ausstiegslogik, Schritt 7 abgehakt. Zusätzlich `scripts/sprint10_readiness.py` → `scripts/forecast_readiness.py` umbenannt (Forecast Readiness, Logik unverändert, `scripts/archive/README.md` verweist auf den neuen Namen; die Umbenennung liegt im Arbeitsbaum, Commit und Deploy stehen aus, nächste Prüfung Anfang Dezember). Der Doku-Durchgang selbst ändert weder Code noch Tests, Skills oder `infra/`
 - **Offen:** Nachweis des VM-Laufs am 31.10. 07:30 und der ersten Chain mit dem neuen `target_backfill` um 04:30; Sonntagsläufe am 01.11. (`sec_financials`, `index_sync`, `feature_analysis`, Politiker)
+
+### Session 37 – 2. November 2026 – Prüfung der ersten Chain nach Migration 041 und der Sonntagsläufe
+- **Log-Check seit 30.10. 17:00:** ein `failed` (`politician_trades_collector`, dritte 403 in Folge), kein `partial`. Health ok, Alembic `041`, 29 Jobs, kein Neustart seit dem Deploy
+- **Schritt 6 bestätigt:** Chain vom 31.10. `success`, `target_backfill` ohne Spaltenfehler (33 s), Ziele der letzten Sitzungen füllen sich wie erwartet; Monatsbericht vom 01.11. ohne Barrier-Ziel `success`
+- **VM-Korrekturen bestätigt:** Lauf 31.10. fand das Pack vom 30.10. um 07:30 sofort. Der OAuth-Fehler trat wieder auf und wurde mit einem Neuversuch im selben Versuch abgefangen (32 Prognosen, 4,41 USD). Kriterium: 9/300 Sitzungen, 302 Prognosen, alle rechtzeitig, 0 abgelehnt
+- **News:** kein `partial` mehr, obwohl ein Lauf 6.974 Artikel holte (über der alten Obergrenze)
+- **Sonntagsläufe:** `index_sync`: S&P 500 unverändert (503), Nasdaq 100: MRNA rein, WBD raus (wirksam 09.10.), 19 veraltete Kennzeichen geleert, LAZR deaktiviert (Yahoo `quoteType=ETF`, kein Indexmitglied). `sec_financials`: 12.239 Zeilen (+243); COST, AZO, KR und die verspäteten Ticker (CB, KO, F …) sind da, ABT, C, NEE u. a. fehlen weiter im SEC-Feed
+- **Monatsbericht 01.11.** (574.568 Snapshots, 753 Ticker): kein signifikantes Feature. `short_interest_days_to_cover` stabil negativ, nicht signifikant (`return_20d`: rho −0,028, t −3,1; `return_60d`: rho −0,044, t −3,3). Große t-Werte weiter nur bei jungen Quellen mit 78 Tagen (`pe_ratio` t −6,9), nicht belastbar. H14: 0/250, wie geplant
+- **Keine Befunde:** `form13f_collector` holt seit 11.10. 0 Einträge; normal zwischen den Abgabefristen, die Q3-Frist ist am 16.11.
+- **Noch nicht geprüft:** Siegel der Session 30.10. (Mo 15:00 Berlin, zum Zeitpunkt der Prüfung noch nicht fällig)
+- **Offen:** 08.11. Politiker-Collector; nach 22.11. `form13f_collector`; 02.12. Monatsbericht und Forecast Readiness; nächstes Entwicklungsthema entscheidet Sebastian
