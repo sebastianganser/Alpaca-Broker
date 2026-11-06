@@ -150,9 +150,37 @@ latest_complete_pack() {
 
 # Did claude die on a failed OAuth token refresh, before doing any work? Seen on
 # 3 of the first 9 production runs ("another Claude Code process is refreshing it
-# or exited mid-refresh"), always gone a few minutes later.
+# or exited mid-refresh"), always gone a few minutes later; those result JSONs
+# carry "total_cost_usd":0 and "num_turns":1. A run that already spent money is
+# never treated as such: relaunching it would repeat the whole run (~4 USD).
 oauth_refresh_failed() {
-    [ -s "$1" ] && grep -q 'Failed to refresh OAuth token' "$1"
+    [ -s "$1" ] && grep -q 'Failed to refresh OAuth token' "$1" &&
+        grep -qE '"total_cost_usd"[[:space:]]*:[[:space:]]*0(\.0+)?[[:space:]]*[,}]' "$1"
+}
+
+# Minutes until the last seal, 5 minutes before the open given as epoch ($1).
+minutes_until_seal() {
+    echo $((($1 - 300 - $(date +%s)) / 60))
+}
+
+# May a run that died on a failed token refresh be relaunched now (same attempt)?
+# Not once forecasts.yaml exists, and not when the seal is too close for a full
+# run (MIN_MINUTES_BEFORE_SEAL, the rule of the first launch). Prints the reason
+# when the answer is no. Usage: oauth_retry_ok PACK_DIR OPEN_EPOCH (empty = unknown)
+oauth_retry_ok() {
+    local left
+    if [ -e "$1/forecasts.yaml" ]; then
+        echo "forecasts.yaml exists"
+        return 1
+    fi
+    if [ -n "${2:-}" ]; then
+        left=$(minutes_until_seal "$2")
+        if [ "$left" -lt "${MIN_MINUTES_BEFORE_SEAL:-45}" ]; then
+            echo "only ${left} min until the last seal (< ${MIN_MINUTES_BEFORE_SEAL:-45})"
+            return 1
+        fi
+    fi
+    return 0
 }
 
 # Epoch of "YYYY-MM-DD HH:MM" interpreted in New York time.

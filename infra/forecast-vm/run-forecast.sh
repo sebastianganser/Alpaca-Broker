@@ -183,8 +183,7 @@ fi
 OPEN_EPOCH=""
 if OPEN_EPOCH=$(deadline_epoch_from_overview "$PACK_DIR/00_uebersicht.md"); then
     seal_epoch=$((OPEN_EPOCH - 300))
-    now_epoch=$(date +%s)
-    minutes_left=$(((seal_epoch - now_epoch) / 60))
+    minutes_left=$(minutes_until_seal "$OPEN_EPOCH")
     log INFO "last seal in ${minutes_left} min ($(TZ=America/New_York date -d "@$seal_epoch" '+%F %H:%M %Z'))"
     if [ "$IGNORE_DEADLINE" -eq 0 ] && [ "$minutes_left" -lt "$MIN_MINUTES_BEFORE_SEAL" ]; then
         die 40 "pack $PACK_DATE: only ${minutes_left} min until the last seal (< $MIN_MINUTES_BEFORE_SEAL) - not starting; the day is missed"
@@ -267,20 +266,32 @@ fi
 
 echo $((attempts + 1)) >"$attempts_file"
 log INFO "starting claude (attempt $((attempts + 1))/$MAX_ATTEMPTS), json -> $RUN_JSON"
+retry_open_epoch="$OPEN_EPOCH"
+if [ "$IGNORE_DEADLINE" -eq 1 ]; then
+    retry_open_epoch=""
+fi
 oauth_try=0
 while :; do
     set +e
     (cd "$WORK_DIR" && "${CMD[@]}" >"$RUN_JSON" 2>"$RUN_ERR")
     claude_rc=$?
     set -e
-    # A failed token refresh costs nothing and is gone within minutes: wait here
-    # instead of burning an attempt and hoping that a later timer still comes.
+    # A token refresh that fails before any work costs nothing and is gone within
+    # minutes: wait here instead of burning an attempt and hoping that a later
+    # timer still comes.
     if [ "$claude_rc" -eq 0 ] || [ "$oauth_try" -ge "$OAUTH_RETRIES" ] || ! oauth_refresh_failed "$RUN_JSON"; then
         break
     fi
     oauth_try=$((oauth_try + 1))
     log WARN "claude could not refresh its OAuth token (usually transient) - retry $oauth_try/$OAUTH_RETRIES in ${OAUTH_RETRY_WAIT_S} s, same attempt"
     sleep "$OAUTH_RETRY_WAIT_S"
+    if ! retry_block=$(oauth_retry_ok "$PACK_DIR" "$retry_open_epoch"); then
+        log WARN "no relaunch after the failed token refresh: $retry_block"
+        break
+    fi
+    # keep the failed run's output next to the relaunch's
+    mv -f "$RUN_JSON" "${RUN_JSON%.json}-oauth${oauth_try}.json"
+    mv -f "$RUN_ERR" "${RUN_ERR%.stderr}-oauth${oauth_try}.stderr" 2>/dev/null || true
 done
 
 if command -v jq >/dev/null 2>&1 && [ -s "$RUN_JSON" ]; then

@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import time
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -113,3 +114,44 @@ class TestOauthRefreshFailed:
     def test_an_empty_or_missing_result_file_is_not_retried(self, pack_root):
         assert self._check(pack_root, None) != 0
         assert self._check(pack_root, "") != 0
+
+    def test_a_refresh_error_after_paid_work_is_not_retried(self, pack_root):
+        # a relaunch would repeat the whole run (about 4 USD) - only a run that
+        # died before any work is retried
+        body = (
+            '{"is_error":true,"num_turns":31,"total_cost_usd":2.5,"result":"Failed '
+            'to refresh OAuth token: another Claude Code process is refreshing it"}'
+        )
+        assert self._check(pack_root, body) != 0
+
+
+class TestOauthRetryOk:
+    """May a run that died on a failed token refresh be relaunched now?"""
+
+    def _ok(self, pack_root, open_epoch: str) -> subprocess.CompletedProcess:
+        return _bash(
+            f'oauth_retry_ok "{pack_root.as_posix()}" "{open_epoch}"',
+            MIN_MINUTES_BEFORE_SEAL="45",
+        )
+
+    @staticmethod
+    def _open_in(minutes_to_seal: int) -> str:
+        # the last seal is 5 minutes before the open
+        return str(int(time.time()) + 300 + minutes_to_seal * 60)
+
+    def test_far_from_the_seal_the_run_is_relaunched(self, pack_root):
+        assert self._ok(pack_root, self._open_in(180)).returncode == 0
+
+    def test_an_unknown_deadline_does_not_block_the_relaunch(self, pack_root):
+        assert self._ok(pack_root, "").returncode == 0
+
+    def test_too_close_to_the_seal_there_is_no_relaunch(self, pack_root):
+        result = self._ok(pack_root, self._open_in(30))
+        assert result.returncode != 0
+        assert "until the last seal" in result.stdout
+
+    def test_an_existing_forecast_file_is_never_overwritten(self, pack_root):
+        (pack_root / "forecasts.yaml").write_text("schema: v1\n", encoding="utf-8")
+        result = self._ok(pack_root, self._open_in(180))
+        assert result.returncode != 0
+        assert "forecasts.yaml" in result.stdout
