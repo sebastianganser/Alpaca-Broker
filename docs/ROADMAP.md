@@ -325,6 +325,7 @@ Die früheren Sprints 11 (Backtest Framework) und 12 (Paper Trading Integration)
 - [x] Plan-Schritt 7 (Doku-Durchgang 30.10.: Mission, Referenz-Dokumente, Sprint 11/12 beim separaten Bot, `sprint10_readiness.py` → `forecast_readiness.py`) erledigt
 - [x] Deploy der Skript-Umbenennung `scripts/forecast_readiness.py` (`572e30d`, 30.10. 17:00; im Container gelaufen: 29/31, GO, offen wie zuvor Ranking-Stabilität und Options-IV-Historie)
 - [x] Nach Schritt 6 beobachtet (02.11.): Chain vom 31.10. `success`, `target_backfill` ohne Fehler, 33 s; Monatsbericht vom 01.11. ohne Barrier-Ziel `success`. VM-Lauf 31.10.: Pack um 07:30 sofort gefunden, OAuth-Fehler wurde im selben Versuch abgefangen. News ohne `partial` trotz 6.974 Artikeln in einem Lauf
+- [x] 06.11.: Code-Review des Pakets vom 30.10. mit Claude und Codex: drei Korrekturen (Altersgrenze und Vergleichsdatum des Hinweises „Tabelle nicht aktuell“ `cba7fb7`, abgesicherter OAuth-Neustart der VM `cd9e4e2`), deployt 18:38, VM per Git-Bundle aktualisiert ([SESSION_LOG](SESSION_LOG.md), Session 38)
 - [ ] Backlog: `options_iv`-Zeilen vom 2026-10-05 weiterhin nicht repariert; mögliche Sektor-Obergrenze für Screen/v2; Delisting-Renditen; XBRL-Quartale öfter als wöchentlich holen (in der Berichtssaison zeigt rund die Hälfte der Ticker „Tabelle nicht aktuell“); auf der VM hängt seit dem 18.10. ein Kernel-Thread im Zustand D (Load immer 1,0, bisher ohne Wirkung; beim nächsten VM-Neustart ansehen)
 
 ### Sprint 10 – Composite Score (F1) als Eingang für die Prognosen
