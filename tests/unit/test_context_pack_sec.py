@@ -154,6 +154,22 @@ class TestTableLagsBehindSection15:
         rows = [filing(form="10-Q", filing_date=self.NEWER)]
         assert filings_after_table([], rows) == []
 
+    def test_a_late_filed_older_quarter_does_not_hide_a_newer_report(self):
+        # A row's `filed` is the latest `filed` of its figures: a Q1 figure first
+        # reported in a late amendment must not mask the missing Q3 10-Q.
+        q1 = quarter(SESSION - timedelta(days=200), filed=SESSION - timedelta(days=2))
+        q2 = quarter(SESSION - timedelta(days=110), filed=SESSION - timedelta(days=75))
+        q3_report = filing(form="10-Q", filing_date=SESSION - timedelta(days=5))
+        assert filings_after_table([q1, q2], [q3_report]) == [q3_report]
+
+    def test_a_restated_newest_quarter_does_not_hide_a_newer_report(self):
+        # the newest quarter counts from its FIRST report, not from a later restatement
+        end = SESSION - timedelta(days=110)
+        first = quarter(end, filed=SESSION - timedelta(days=75))
+        restated = quarter(end, filed=SESSION - timedelta(days=2))
+        q3_report = filing(form="10-Q", filing_date=SESSION - timedelta(days=5))
+        assert filings_after_table([first, restated], [q3_report]) == [q3_report]
+
     def test_the_warning_reaches_the_ticker_file(self, tmp_path):
         def lagging(t):
             t.quarters = self.quarters()
@@ -186,19 +202,45 @@ class TestTableLagsBehindSection15:
     def test_an_old_quarter_end_warns_without_a_listed_report(self, tmp_path):
         # the missing 10-Q was filed before the 90-day window of section 15
         def old(t):
-            t.quarters = (quarter(SESSION - timedelta(days=200)),)
+            t.quarters = (quarter(SESSION - timedelta(days=200), fiscal_period="Q2"),)
             t.sec_filings = ()
 
         text = section(render(tmp_path, raw=old), 4)
         assert "das neueste Quartal endete vor 200 Tagen" in text
 
-    def test_the_age_limit_allows_for_the_filing_deadline(self):
+    @pytest.mark.parametrize(
+        "fiscal_period, limit",
+        [
+            ("Q1", 165),  # next: a 10-Q, quarter up to 17 weeks + 45 days
+            ("Q2", 165),
+            ("Q4", 165),
+            ("Q3", 210),  # next: the 10-K, quarter up to 17 weeks + 90 days
+            (None, 210),  # unknown: the lenient limit, no false alarm
+        ],
+    )
+    def test_the_age_limit_allows_for_the_deadline_of_the_next_report(
+        self, fiscal_period, limit
+    ):
         def age(days):
-            quarters = (quarter(SESSION - timedelta(days=days)),)
-            return stale_table_days(quarters, SESSION)
+            end = SESSION - timedelta(days=days)
+            newest = quarter(end, fiscal_period=fiscal_period)
+            return stale_table_days((newest,), SESSION)
 
-        assert age(140) is None
-        assert age(141) == 141
+        assert age(limit) is None
+        assert age(limit + 1) == limit + 1
+
+    def test_a_calendar_year_company_waiting_for_its_10k_does_not_warn(self):
+        # Q3 ended 2025-09-30; the 10-K is due by early March (60-90 days after
+        # the fiscal year end), so 2026-02-27 is still on time
+        q3 = quarter(date(2025, 9, 30), fiscal_period="Q3")
+        assert stale_table_days((q3,), date(2026, 2, 27)) is None
+
+    def test_the_newest_quarter_decides_the_limit(self):
+        q2 = quarter(SESSION - timedelta(days=270), fiscal_period="Q2")
+        q3 = quarter(SESSION - timedelta(days=180), fiscal_period="Q3")
+        assert stale_table_days((q2, q3), SESSION) is None
+
+    def test_no_quarters_means_no_age(self):
         assert stale_table_days([], SESSION) is None
 
     def test_a_report_filed_after_the_session_does_not_warn(self, tmp_path):

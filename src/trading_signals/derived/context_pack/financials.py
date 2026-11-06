@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from trading_signals.derived.context_pack.constants import (
-    QUARTER_STALE_DAYS,
+    QUARTER_STALE_DAYS_10K,
+    QUARTER_STALE_DAYS_10Q,
     SHARES_FLAT_BAND,
     YEAR_DAYS,
     YEAR_TOLERANCE_DAYS,
@@ -40,19 +41,28 @@ def newest_first(quarters: Sequence[QuarterRow]) -> list[QuarterRow]:
 def filings_after_table(
     quarters: Sequence[QuarterRow], filings: Sequence[SecFilingRow]
 ) -> list[SecFilingRow]:
-    """Visible 10-Qs / 10-Ks newer than the newest quarter of the table, newest first.
+    """Visible 10-Qs / 10-Ks filed after the newest quarter's first report.
+
+    Newest filing first.
 
     The table can lag behind section 15: the collector runs weekly, the SEC
     publishes the XBRL facts of a filing with a delay, and some filings never reach
     its ``companyfacts`` feed (2026-10-30: 20 of 40 sampled tickers).
+
+    The reference is the earliest ``filed`` of the newest quarter end: a row's
+    ``filed`` is the latest ``filed`` of its figures, so an older quarter completed
+    by a late amendment, or a restated row of the newest quarter, would otherwise
+    hide a missing report. An original 10-Q / 10-K filed after that first report
+    belongs to a later quarter.
     """
     if not quarters:
         return []
-    newest_filed = max(q.filed for q in quarters)
+    newest_end = max(q.period_end for q in quarters)
+    first_report = min(q.filed for q in quarters if q.period_end == newest_end)
     newer = [
         f
         for f in filings
-        if f.form in PERIODIC_FORMS and f.filing_date > newest_filed
+        if f.form in PERIODIC_FORMS and f.filing_date > first_report
     ]
     return sorted(newer, key=lambda f: f.filing_date, reverse=True)
 
@@ -61,12 +71,20 @@ def stale_table_days(quarters: Sequence[QuarterRow], session: date) -> int | Non
     """Age of the newest quarter end if a newer report should exist by now, else None.
 
     Catches the lag that :func:`filings_after_table` cannot see: a missing report
-    filed before the 90-day window of section 15.
+    filed before the 90-day window of section 15. After fiscal Q3 the next report
+    is the 10-K with its longer deadline; an unknown fiscal period gets that
+    lenient limit, too (a false alarm misleads more than a late one).
     """
     if not quarters:
         return None
-    age = (session - max(q.period_end for q in quarters)).days
-    return age if age > QUARTER_STALE_DAYS else None
+    newest = newest_first(quarters)[0]
+    limit = (
+        QUARTER_STALE_DAYS_10Q
+        if newest.fiscal_period in ("Q1", "Q2", "Q4")
+        else QUARTER_STALE_DAYS_10K
+    )
+    age = (session - newest.period_end).days
+    return age if age > limit else None
 
 
 def free_cash_flow(q: QuarterRow) -> float | None:

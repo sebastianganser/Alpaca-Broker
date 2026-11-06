@@ -75,9 +75,13 @@ SEC_EXCERPT_CHARS = (500, 300)
 SEC_TEXT_FETCH_CHARS = 800
 #: Quarters shown in the quarterly table of section 4.
 QUARTER_ROWS = 8
-#: A quarter end older than this should have a successor: the next quarter ends after
-#: about 92 days and its 10-Q is due at most 45 days later.
-QUARTER_STALE_DAYS = 140
+#: A quarter end older than this should have a successor. The next quarter spans
+#: up to 17 weeks (119 days: the 16/17-week quarters of collectors/sec_xbrl.py) and
+#: its report is due at most 45 days (10-Q) or, after fiscal Q3, 90 days (10-K)
+#: after its end - the deadlines of the slowest filer category. Shorter limits
+#: flagged every calendar-year company still waiting for its 10-K from mid-February.
+QUARTER_STALE_DAYS_10Q = 165
+QUARTER_STALE_DAYS_10K = 210
 #: Calendar days of quarterly financials loaded: 8 shown quarters plus the
 #: quarters a year before each of them (year-on-year growth) and a margin.
 FINANCIALS_LOOKBACK_DAYS = 1200
