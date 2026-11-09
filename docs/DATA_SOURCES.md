@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** 30 October 2026 (operational scripts table; sources unchanged since 18 October 2026)
+**Last updated:** 9 November 2026 (House Clerk added as primary politician source, Senate eFD off; operational scripts)
 
 ---
 
@@ -19,7 +19,8 @@
 | **arkfunds.io** | Smart Money (ARK ETFs) | Free | Daily EOD | ~1 hour | 2 | ✅ Active |
 | **SEC EDGAR – Form 4** | Insider Trades | Free | Rolling | 2 business days (legal) | 3 | ✅ Active |
 | **SEC EDGAR – Form 13F** | Institutional Holdings | Free | Quarterly | Up to 45 days | 3 | ✅ Active |
-| **Senate eFD** | Politician Trades | Free | Weekly | 30–45 days | 4 | ✅ Active |
+| **House Clerk** (disclosures-clerk.house.gov) | Politician Trades (House) | Free | Daily | 30–45 days | 4 / 2026-11-09 | ✅ Active (primary) |
+| **Senate eFD** | Politician Trades (Senate) | Free | off (`POLITICIAN_SENATE_ENABLED=false`) | 30–45 days | 4 | ⛔ Blocked (HTTP 403 since 2026-10-18), code kept |
 | **yfinance – Fundamentals** | P/E, Revenue, EPS | Free | Weekly | ~ | 5 | ✅ Active |
 | **yfinance – Ratings** | Analyst Upgrades/Downgrades | Free | Daily | ~ | 5 | ✅ Active |
 | **yfinance – Earnings** | Earnings Dates + Surprises | Free | Weekly | ~ | 5 | ✅ Active |
@@ -175,10 +176,26 @@ Berkshire Hathaway, Scion Capital, Pershing Square, Tiger Global, Renaissance Te
 
 ---
 
-## 6. Senate eFD – Politician Trades (Congress)
+## 6. Politician Trades (Congress): House Clerk + Senate eFD
+
+Both chambers write to `politician_trades` (`chamber` = `'House'` / `'Senate'`); the job `politician_trades_collector` runs **daily 02:30** since 2026-11-09 ([SCHEDULER.md](SCHEDULER.md), [DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-11-09).
+
+### 6a. House Clerk (primary since 2026-11-09)
+
+**URL:** https://disclosures-clerk.house.gov/public_disc
+**Status:** ✅ Implemented (`collectors/house_disclosures.py`, used by `politician_trades_collector`)
+
+- **Free**, official, no key. Plain `requests` with an honest User-Agent (`alpaca-broker-research/1.0 (private, non-commercial)`), at most 2 requests/s, no robots.txt. The statutory use restriction of the Clerk (no commercial use) fits this private project.
+- **Index:** `financial-pdfs/{YEAR}FD.zip` (updated daily) → `{YEAR}FD.txt`; `FilingType == "P"` is a PTR. **PTR PDF:** `ptr-pdfs/{YEAR}/{DocID}.pdf`.
+- **Electronic PTRs** (8-digit DocID starting with 2, ~85 %) are text PDFs, read with **pdfplumber** layout mode (dependency `pdfplumber>=0.11`). **Paper PTRs** (DocIDs 8…/9…, scans, ~15 %) are skipped and counted - known limit, no OCR.
+- **Mapping:** only stocks `[ST]` are stored; P → Purchase, S / S (partial) → Sale, E → Exchange; owner none/SP/JT/DC → Self/Spouse/Joint/Child; `disclosure_date` = the index `FilingDate` (posting can lag about a day); `party` NULL (the `congress_members` lookup is Senate-only, features do not use party); state from `StateDst`.
+- **Limits:** the dedup key collapses rows that differ only by sub-account (`S O:`); House trades are stored even for tickers outside the universe and never onboard tickers.
+- **Window:** the daily run looks at filings of the last 60 days; history via `scripts/backfill_house_ptrs.py` (dry run default, `--sample N`, `--since`, `--year`, `--apply`; dry run of 2026-11-09: 2,692 PTRs since 2021-10-01, 2,285 electronic, 407 paper).
+
+### 6b. Senate eFD (off by default)
 
 **URL:** https://efdsearch.senate.gov/search/
-**Status:** ✅ Implemented (Sprint 4)
+**Status:** ⛔ Blocked since 2026-10-18 (HTTP 403, Akamai, also for a real browser; never circumvent). Code intact; enable with `POLITICIAN_SENATE_ENABLED=true` only when eFD is reachable again.
 
 ### What It Delivers
 All Periodic Transaction Reports (PTRs) from US senators – official financial disclosure per STOCK Act. Politician name, ticker, transaction type, date, amount range, owner.
@@ -192,7 +209,7 @@ All Periodic Transaction Reports (PTRs) from US senators – official financial 
 ### Limitations
 - **Delay: 30–45 days** (STOCK Act allows up to 45 days)
 - **Amount ranges** instead of exact amounts
-- **Senate only** – House PTRs are PDF-only (future enhancement)
+- **Senate only** – House PTRs come from the House Clerk (6a)
 
 ### Realistic Assessment
 Due to delay, probably not a strong alpha signal, but useful as a feature in aggregate.
@@ -478,6 +495,8 @@ All data in the system is bounded by `DATA_START_DATE = 2021-01-01` (defined in 
 | `scripts/forecast_readiness.py` | Forecast Readiness: data depth, target fill, feature-group coverage, ranking stability (replaces the archived `sprint8_readiness.py` / `sprint9_readiness.py`; renamed from `sprint10_readiness.py` on 2026-10-30) | Periodic; next check early December 2026 |
 | `scripts/archive/diag_insider.py` | Quick insider trade diagnostics | Ad-hoc debugging |
 | `scripts/backfill_party_mapping.py` | Backfill party affiliation for politician_trades | One-time after C3 deploy |
+| `scripts/backfill_house_ptrs.py` | Dry run (default, `--sample N` parses N random filings) / `--apply`: House PTR history back to `data_start_date()` (commits per year, resumable; ~30-60 min via `alpaca-ops run-bg`) | Once after the deploy of the House source (apply needs Sebastian's OK) |
+| `scripts/repair/recompute_politician_features.py` | Dry run (default) / `--apply`: recompute only the four politician feature columns of `feature_snapshots` (vectorised, spot-checked against `FeaturePipeline` before writing, only changed rows; refuses 04:15-05:15) | After the House backfill (apply needs Sebastian's OK) |
 | `scripts/repair/backfill_sec_filings.py` | Dry run (default) / `--apply` of the SEC filings + press release backfill (120 days) | Once after the deploy of migration 040 (needs Sebastian's OK) |
 | `scripts/repair/backfill_sec_financials.py` | Dry run (default) / `--apply` of the SEC XBRL quarterly financials | Once after the deploy of migration 040 (needs Sebastian's OK) |
 | `scripts/repair/fix_sec_filing_subjects.py` | Dry run (default) / `--apply`: re-attribute stored 13D/13G/144 rows to the subject company of their SEC header, delete those whose subject is not a universe company (≈ 5,500 header requests, ≈ 20-25 min) | Once after the deploy of the multi-party fix (apply needs Sebastian's OK) |

@@ -168,8 +168,8 @@ JOB_DEFINITIONS: list[tuple[str, object, dict, str]] = [
     (
         "politician_trades_collector",
         jobs.run_politician_trades_collector,
-        {"day_of_week": "sun", "hour": 11, "minute": 0},
-        "Weekly Politician Trades (Senate eFD)",
+        {"hour": 2, "minute": 30},
+        "Daily Politician Trades (House Clerk PTRs; Senate eFD off by default)",
     ),
     (
         "short_interest_positions_collector",

@@ -210,9 +210,10 @@ class TestCreateScheduler:
         job = create_scheduler().get_job("short_interest_positions_collector")
         f = {x.name: str(x) for x in job.trigger.fields}
         assert (f["day_of_week"], f["hour"], f["minute"]) == ("sun", "12", "0")
-        # after the politician trades collector (Sunday 11:00)
+        # politician trades run daily at 02:30 (House Clerk), not on Sundays
         pol = create_scheduler().get_job("politician_trades_collector")
-        assert _hm(pol) == ("11", "0")
+        assert _hm(pol) == ("2", "30")
+        assert str({f.name: f for f in pol.trigger.fields}["day_of_week"]) == "*"
 
     def test_chain_steps_paused_after_start(self):
         sched = create_scheduler()

@@ -42,7 +42,7 @@
           │ HTTPS (outbound only)
           ▼
   Alpaca (Paper Trading ONLY – Market Data + News), SEC EDGAR, arkfunds.io,
-  Senate eFD, yfinance, FRED, Massive (ex-Polygon), OpenFIGI, Wikipedia
+  House Clerk, Senate eFD (off), yfinance, FRED, Massive (ex-Polygon), OpenFIGI, Wikipedia
   → details: DATA_SOURCES.md
 ```
 
@@ -135,13 +135,14 @@ Alpaca-Broker/
 │   │                                #   backfill_short_term_features, form13f_resolve_tickers,
 │   │                                #   collect_short_interest, backfill_short_interest_features,
 │   │                                #   rebuild_sp500_membership + onboard_removed_members – S&P 500
-│   │                                #   survivorship repair, dry run by default, …)
+│   │                                #   survivorship repair, recompute_politician_features – the four politician
+│   │                                #   columns after the House backfill, dry run by default, …)
 │   ├── analysis/                    # Research: screen_backtest (neutral screen validation),
 │   │                                #   simulate_criterion_size (size/power of the forecast criterion),
 │   │                                #   event_study (20/60-session raw and excess returns), collect_buyback_events
 │   ├── archive/                     # Obsolete one-time scripts (kept for reference)
 │   ├── forecast_readiness.py        # Forecast Readiness: data-maturity check for the forecast work (renamed from sprint10_readiness.py, 2026-10-30)
-│   └── *.py                         # Universe init/sync/validate, recompute helpers, backfills
+│   └── *.py                         # Universe init/sync/validate, recompute helpers, backfills (backfill_house_ptrs.py: House PTR history)
 ├── notebooks/                       # Exploratory analyses (01–03, plain .py)
 ├── frontend/                        # Vite + React SPA (built into the image)
 │   └── src/  App.tsx, Layout.tsx, api.ts, queries.ts, components/, hooks/,
@@ -182,7 +183,9 @@ trading_signals/
 │   ├── sec_filings_collector.py # SEC filings (8-K + items, 10-Q/K, 144, 13D/G, S-1/S-3, DEF 14A) + press release / 8-K excerpts (EDGAR submissions API, daily 04:00)
 │   ├── sec_financials_collector.py / sec_xbrl.py # XBRL quarterly financials (companyfacts API, weekly Sunday) / pure companyfacts parser
 │   ├── cusip_resolver.py   # CUSIP → ticker (cusip_map cache, local tables, OpenFIGI)
-│   ├── disclosure_client.py / politician_trades_collector.py  # Senate eFD PTRs
+│   ├── politician_trades_collector.py  # Congress PTRs, daily: House Clerk (primary) + Senate eFD (off by default)
+│   ├── house_disclosures.py # House Clerk index + PTR PDF client and text parser (pdfplumber)
+│   ├── disclosure_client.py # Senate eFD client (blocked since 2026-10-18)
 │   ├── yfinance_client.py  # Shared yfinance client (rate limit, batching, backoff)
 │   ├── fundamentals_collector.py / analyst_ratings_collector.py /
 │   │   earnings_calendar_collector.py / estimates_collector.py   # yfinance sources
@@ -200,6 +203,7 @@ trading_signals/
 │   ├── sentiment_scorer.py       # FinBERTScorer (CPU) behind a SentimentScorer ABC
 │   ├── sentiment_computer.py     # Scores unscored articles → news_sentiment
 │   ├── short_term_features.py    # 9 st_* price features (1–14 session horizon)
+│   ├── politician_features.py    # 4 politician features, vectorised over many sessions of one ticker (used by `recompute_politician_features.py`; semantics = `FeaturePipeline._politician_features`)
 │   ├── short_interest_features.py # 2 FINRA short-interest features (9-session lag; pure + vectorised, kept identical by a test)
 │   ├── feature_pipeline.py       # ~97 features / 17 groups (incl. st_*, short_interest_*) per PIT-universe ticker and session
 │   ├── target_backfill.py        # Forward returns 1/5/20/60d (entry open(d+1)); "only missing" = any of the four still NULL
@@ -257,7 +261,7 @@ trading_signals/
 
 ```mermaid
 flowchart TD
-    SRC["External sources: Alpaca prices + news, arkfunds.io, SEC EDGAR, Senate eFD, yfinance, FRED, Massive"] --> COL["Collectors (scheduled, BaseCollector)"]
+    SRC["External sources: Alpaca prices + news, arkfunds.io, SEC EDGAR, House Clerk (Senate eFD off), yfinance, FRED, Massive"] --> COL["Collectors (scheduled, BaseCollector)"]
     COL --> RAW["Raw tables: prices_daily, ark_holdings, insider_trades, form13f_holdings, politician_trades, fundamentals_snapshot, analyst_ratings, earnings_calendar, estimates_snapshot, options_iv_snapshot, short_volume, short_interest, macro_series, news_articles"]
     RAW --> DER["Derived: technical_indicators, ark_deltas, insider_clusters, news_sentiment (FinBERT)"]
     RAW --> CHAIN

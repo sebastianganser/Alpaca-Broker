@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** 18 October 2026
+**Last updated:** 9 November 2026
 
 ---
 
@@ -417,3 +417,11 @@ Not a defect: ACM's `sec_filings.report_date` 2026-07-03 vs `period_end` 2026-06
 - A rejection message that names a value ("TRUE") different from the file content is the hint that the parser changed the value; test a parser with the real ambiguous inputs.
 - A file whose review is stored by hash is never re-read: a parser fix needs an explicit repair path for the rows it dropped.
 **Status:** parser fixed with tests; repair script built and tested, production dry run/apply pending Sebastian's OK.
+
+### [2026-11-09] 🐛 House PTR PDFs: pdfplumber Instead of pypdf, Lower-Case Capitals in Old Filings, Sub-Account Dedup
+**Observation:** While building the House Clerk parser ([DECISIONS_DATA.md](DECISIONS_DATA.md) 2026-11-09): (1) pypdf's layout mode returned empty text for page 1 of most electronic PTR PDFs. (2) PDFs of 2021/22 use a font whose capitals some extractors read as lower case: asset codes like `[gS]` and tickers like `(AAPl)`. A random sample of 60 filings (569 rows, 470 stock rows) had exactly one kind of asset-code/row mismatch, this case problem. (3) Rows that differ only by sub-account (`S O:` label) are identical under the dedup key.
+**Lesson:**
+- Extract with pdfplumber layout mode (adds the dependency `pdfplumber>=0.11`); do not trust a PDF library on one sample file, compare libraries on a random sample.
+- Upper-case asset codes and tickers before matching. A sanity check that compares the number of asset codes with the parsed rows found the case problem; keep it as the run's `partial` trigger.
+- The sub-account collapse is accepted: it is one decision, distinct politician counts are unaffected.
+**Status:** parser fixed and covered by tests (fixtures in `tests/fixtures/house_ptr/`); sub-account limit documented, not changed.

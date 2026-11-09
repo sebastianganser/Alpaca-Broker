@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · Related: [DECISIONS_ARCHITECTURE.md](DECISIONS_ARCHITECTURE.md) · [DECISIONS_FEATURES.md](DECISIONS_FEATURES.md)
 
-**Last updated:** 18 October 2026
+**Last updated:** 9 November 2026
 
 ---
 
@@ -474,3 +474,20 @@
 - Request volume: filings ≈ 650 + 10-60 text requests per night (≈ 5-10 minutes), financials ≈ 650 per week (≈ 250 MB, ≈ 5-10 minutes), both at 9 requests/s.
 - Known limits: a company that re-incorporated under a new CIK (ExxonMobil Holdings, CIK 2115436 since 2026) only shows the filings and quarters of its new registrant; banks have no gross profit/operating income/capex; Berkshire's per-class EPS and share counts are not in `companyfacts`; derived-quarter EPS is an approximation.
 - Open: a decision on the 8-10 h bias of `parse_acceptance_datetime` for the insider features, and a `Form 4` read of the new `144` notices as a planned-sale signal.
+
+### [2026-11-09] House Clerk Replaces the Blocked Senate eFD as Politician-Trades Source
+
+**Context:** Senate eFD has answered HTTP 403 (Akamai) since 2026-10-18, also for a real browser; four weekly runs in a row failed. Circumventing the block is not an option. Alternatives researched on 2026-11-09: A House Clerk (official, free, reachable), B Quiver (30 USD/month), C Disclosed Capitol (from 6 USD/month), D leave it. Sebastian approved A on 2026-11-09.
+
+**Decision:**
+- **Source:** the official House Clerk site (`disclosures-clerk.house.gov`): yearly index `{YEAR}FD.zip` (FilingType `P` = PTR) + one PDF per PTR. Plain `requests` with an honest User-Agent, at most 2 requests/s, no robots.txt; the Clerk's statutory use restriction (no commercial use) fits this private project ([DATA_SOURCES.md](DATA_SOURCES.md) 6a).
+- **Parsing:** electronic PTRs (8-digit DocID starting with 2, ~85 %) are text PDFs, read with pdfplumber layout mode (new dependency `pdfplumber>=0.11`). Paper PTRs (DocIDs 8.../9..., scans, ~15 %) are skipped and counted (known limit, no OCR). Only stocks `[ST]` are stored; P → Purchase, S / S (partial) → Sale, E → Exchange; owner none/SP/JT/DC → Self/Spouse/Joint/Child. `disclosure_date` = index `FilingDate` (same rule as Senate; posting may lag about a day - known limit). `party` is NULL for House (the `congress_members` lookup is Senate-only, features do not use party); state from `StateDst`.
+- **Storage:** same table `politician_trades`, `chamber = 'House'`, no schema change, no migration. The existing dedup key (politician, ticker, transaction date, type, amount, owner) collapses identical rows that differ only by sub-account (`S O:`) - accepted (one decision; distinct counts are unaffected).
+- **Universe:** House trades never add tickers (only Senate rows go to `NewTickerOnboarder`; the 25 senators had already added 133 tickers) and are stored even for tickers outside the universe.
+- **Senate:** code kept, off by default (`POLITICIAN_SENATE_ENABLED=false`); enable only when eFD is reachable again.
+- **Schedule:** `politician_trades_collector` daily 02:30 Berlin (was Sunday 11:00; 15 daily / 7 weekly jobs, total 29). Daily window: filings of the last 60 days; filings without stock rows are re-checked inside it. Parse sanity check: asset codes vs. parsed rows, a mismatch marks the run `partial` with the DocIDs. Filings are stored all or nothing: a stored `source_url` marks a filing as done, so a filing with a mismatch or an unmappable stock row stores no row and is fetched again inside the window or by a backfill rerun (Codex review). Backfills refuse `--since` before the retention cut-off; the collector clamps to `data_start_date()`.
+- **Backfill + feature recompute (not run, each needs Sebastian's explicit OK):** `scripts/backfill_house_ptrs.py` (dry run default; 2026-11-09: window 2021-10-01 to today, 2,692 PTRs, 2,285 electronic, 407 paper; est. 30-60 min via `alpaca-ops run-bg`), then `scripts/repair/recompute_politician_features.py` for the four `politician_*` columns of `feature_snapshots`.
+
+**Rationale:** The politician features count both chambers. Without the recompute the history would be Senate-only and the future Senate + House, a break in the monthly feature analysis. The screen excludes politician features, `forecaster_version` and the pack format are unchanged, so the pre-registered 300-session sample ([FORECASTS.md](FORECASTS.md) 6) is not affected. The official source avoids paying for an aggregator and any circumvention of the Senate block.
+
+**Consequence:** Supersedes "House PTRs: Deferred to Future Sprint" (2026-04-13) for the House. Until the backfill runs, the House history only starts at the deploy date (60-day window); until the recompute runs the stored features are Senate-only. Known limits: paper filings (~15 %), sub-account collapse, filing-date lag, no Senate data since 2026-10-18 (rows before stay).

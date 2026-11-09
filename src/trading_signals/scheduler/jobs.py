@@ -193,10 +193,11 @@ def run_sec_financials_collector() -> None:
 
 
 def run_politician_trades_collector() -> None:
-    """Weekly politician trades collection from official disclosure portals.
+    """Daily politician trades collection (House Clerk PTRs; Senate eFD off).
 
-    Scheduled for Sundays at 11:00 Europe/Berlin (after Form 13F).
-    Politician trades are 30-45 days delayed, weekly check is sufficient.
+    Scheduled daily at 02:30 Europe/Berlin. The House Clerk index is updated
+    daily; PTRs are filed up to 45 days after the trade. Senate eFD runs only
+    with ``POLITICIAN_SENATE_ENABLED=true`` (blocked since 2026-10-18).
     """
     from trading_signals.collectors.politician_trades_collector import (
         PoliticianTradesCollector,

@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     # with a free key (openfigi.com/api): 100 CUSIPs/request, 25 req/6 s.
     OPENFIGI_API_KEY: str = ""
 
+    # ── Politician trades ─────────────────────────────────────────────
+    # Senate eFD has blocked this network with HTTP 403 since 2026-10-18
+    # (Akamai; never circumvent). The House Clerk part always runs; set this
+    # to true only when eFD is reachable again.
+    POLITICIAN_SENATE_ENABLED: bool = False
+
     # ── Logging ───────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
 

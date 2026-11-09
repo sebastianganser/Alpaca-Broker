@@ -530,13 +530,14 @@ class TestPoliticianTradesCollector:
             },
         ]
 
-        collector = PoliticianTradesCollector()
+        collector = PoliticianTradesCollector(senate_enabled=True)
         collector.client = DisclosureClient.__new__(DisclosureClient)
         collector.client.fetch_senate_ptrs = mock_ptrs
         collector.client.fetch_senate_ptr_transactions = mock_txns
 
         session = MagicMock()
-        trades = collector.fetch(session)
+        with patch.object(collector, "fetch_house", return_value=[]):
+            trades = collector.fetch(session)
 
         # Only AAPL should be included (empty ticker filtered)
         assert len(trades) == 1
@@ -583,7 +584,7 @@ class TestPoliticianTradesCollector:
 
     def test_fetch_skips_already_stored_filings(self):
         """Filings whose source_url is stored are not downloaded again (M6)."""
-        collector = PoliticianTradesCollector()
+        collector = PoliticianTradesCollector(senate_enabled=True)
         collector._reset_run_state()
         collector.client = MagicMock()
         collector.client.fetch_senate_ptrs.return_value = [
@@ -598,7 +599,8 @@ class TestPoliticianTradesCollector:
             ("https://example.com/ptr/old",)
         ]
 
-        collector.fetch(session)
+        with patch.object(collector, "fetch_house", return_value=[]):
+            collector.fetch(session)
 
         collector.client.fetch_senate_ptr_transactions.assert_called_once_with(
             "https://example.com/ptr/new"

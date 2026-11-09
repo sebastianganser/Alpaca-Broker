@@ -30,6 +30,9 @@ logger = get_logger(__name__)
 # Be conservative with government sites
 RATE_LIMIT_DELAY = 0.5  # seconds between requests (2 req/s max)
 
+#: Valid ticker shape of a stock disclosure (1-5 letters, optional class suffix).
+TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
+
 SENATE_BASE_URL = "https://efdsearch.senate.gov"
 SENATE_SEARCH_URL = f"{SENATE_BASE_URL}/search/"
 SENATE_SEARCH_HOME = f"{SENATE_BASE_URL}/search/home/"
