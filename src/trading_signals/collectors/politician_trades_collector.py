@@ -430,7 +430,8 @@ class PoliticianTradesCollector(BaseCollector):
             logger.warning(
                 f"[{self.name}] House PTR {filing.doc_id}: incomplete parse "
                 f"({parsed.codes_found} asset codes, {len(parsed.rows)} rows, "
-                f"{parsed.incomplete_amounts} incomplete amounts, {invalid} "
+                f"{parsed.incomplete_amounts} incomplete amounts, "
+                f"{parsed.stray_rows} missed transaction lines, {invalid} "
                 f"unmappable stock rows) - nothing stored, fetched again later"
             )
             return []

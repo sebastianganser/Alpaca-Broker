@@ -425,3 +425,11 @@ Not a defect: ACM's `sec_filings.report_date` 2026-07-03 vs `period_end` 2026-06
 - Upper-case asset codes and tickers before matching. A sanity check that compares the number of asset codes with the parsed rows found the case problem; keep it as the run's `partial` trigger.
 - The sub-account collapse is accepted: it is one decision, distinct politician counts are unaffected.
 **Status:** parser fixed and covered by tests (fixtures in `tests/fixtures/house_ptr/`); sub-account limit documented, not changed.
+
+### [2026-11-09] 🐛 House PTR Backfill: Split `Over` Amounts and Quoted Asset Codes
+**Observation:** The first backfill pass (2,692 PTRs since 2021-10-01, 18,707 stock trades stored) rejected 28 filings as parse mismatches - all or nothing, so nothing was stored half. Two causes the 60-filing sample had not shown: (1) the amount classes `Over $50,000,000` and `Spouse/DC Over $1,000,000` print `Over` / `Spouse/DC Over` on the transaction line and the dollar figure on the next line (24 filings, two of them with 102 stock rows); (2) some filers type the asset code into the asset name or a description (`... B/E CPN [CS] [CS]`), so the code count exceeded the rows (4 filings).
+**Lesson:**
+- A random sample of 60 misses rare formats. The all-or-nothing rule plus the logged DocIDs turned the full backfill into the test set; a rerun after the fix fetches exactly the rejected filings.
+- `Over` / `Spouse/DC Over` is a pending amount completed by the next line. A run of the same code (`[GS] [GS]`) counts once. Codes in free text (description, comments) count only on lines with a date or a dollar amount, and a transaction date pair inside label text is a missed row. The Codex review showed that simply ignoring free-text codes would hide a missed row whose dates wrap after a description; hence the date/amount condition (fail-safe: a false mismatch stores nothing, a missed row would store a partial filing for good).
+- Context pack: politician amounts are shown with up to 26 characters, so the longest ranges (`$25,000,001 - $50,000,000`, `Spouse/DC Over $1,000,000`) are no longer cut.
+**Status:** fixed, all 28 filings parse; old and new parser agree on a random sample of 120 filings except one previously rejected filing.

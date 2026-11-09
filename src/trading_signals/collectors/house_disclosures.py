@@ -202,7 +202,12 @@ def extract_pdf_text(pdf_bytes: bytes) -> str:
 # PTR text parser
 # ============================================================================
 
-_AMOUNT = r"(?:Over\s+)?\$[\d,]+(?:\s*-(?:\s*\$[\d,]+)?)?"
+#: ``$1,001 - $15,000``, ``Over $50,000,000`` or ``Spouse/DC Over $1,000,000``;
+#: a range ending in ``-`` or ``Over`` continues with ``$...`` on the next line.
+_AMOUNT = (
+    r"(?:Spouse/DC\s+)?Over(?:\s+\$[\d,]+)?"
+    r"|\$[\d,]+(?:\s*-(?:\s*\$[\d,]+)?)?"
+)
 _ROW_RE = re.compile(
     r"^(?P<lead>.*?)\s(?P<type>S \(partial\)|P|S|E)\s+"
     r"(?P<tdate>\d{2}/\d{2}/\d{4})\s+(?P<ndate>\d{2}/\d{2}/\d{4})\s+"
@@ -217,6 +222,14 @@ _LABEL_RE = re.compile(
 #: Asset type code. Case-insensitive: the font of 2021/22 filings extracts some
 #: capitals in lower case (``[gS]``, ``(AAPl)``); codes are upper-cased.
 _CODE_RE = re.compile(r"\[([A-Za-z0-9]{2})\]")
+#: A run of the same code (``[GS] [GS]``: some filers type the code into the
+#: asset name) is one code when counting rows.
+_CODE_RUN_RE = re.compile(r"\[([A-Za-z0-9]{2})\](?:\s*\[\1\])*", re.IGNORECASE)
+#: Transaction date + notification date, as on every transaction line.
+_TXN_DATES_RE = re.compile(r"\d{2}/\d{2}/\d{4}\s+\d{2}/\d{2}/\d{4}")
+#: A (partial) date or a dollar amount: a free-text line carrying one of them
+#: may be a missed transaction line, so its codes count.
+_TXN_HINT_RE = re.compile(r"\d{2}/\d{2}/|\$\d")
 _AMOUNT_TAIL_RE = re.compile(r"(?:^|\s{2,})(\$[\d,]+)\s*$")
 _TABLE_START_RE = re.compile(r"^\s*\$200\?\s*$")
 _TABLE_END_PREFIX = "* For the complete list"
@@ -231,10 +244,16 @@ _LABEL_KEYS = {
     "s o": "subholding", "subholding of": "subholding",
     "d": "description", "description": "description",
 }
+#: Label keys holding free text (``C:``/``COMMENTS`` and the rest map to other).
+_FREE_TEXT_LABELS = {"description", "other"}
 
 
 def _squash(text: str) -> str:
     return " ".join(text.split())
+
+
+def _count_codes(text: str) -> int:
+    return len(_CODE_RUN_RE.findall(text))
 
 
 def ticker_from_asset(asset_text: str) -> str | None:
@@ -271,6 +290,9 @@ class ParsedPtr:
     codes_found: int = 0
     #: Rows whose amount range could not be completed.
     incomplete_amounts: int = 0
+    #: Lines with a transaction date pair that the row pattern did not match
+    #: (inside label text, or before the first row): a lost row.
+    stray_rows: int = 0
 
     @property
     def mismatch(self) -> bool:
@@ -278,6 +300,7 @@ class ParsedPtr:
         return (
             self.codes_found != len(self.rows)
             or self.incomplete_amounts > 0
+            or self.stray_rows > 0
             or any(r.asset_code is None for r in self.rows)
         )
 
@@ -300,7 +323,7 @@ class _RowBuilder:
 
     @property
     def amount_pending(self) -> bool:
-        return self.amount.endswith("-")
+        return self.amount.endswith(("-", "Over"))
 
     def _find_code(self) -> str | None:
         codes = _CODE_RE.findall(" ".join(self.asset_parts))
@@ -388,12 +411,13 @@ def parse_ptr_text(text: str) -> ParsedPtr:
         if row:
             finish()
             current = _RowBuilder(row.group("lead"), row)
-            parsed.codes_found += len(_CODE_RE.findall(row.group("lead")))
+            parsed.codes_found += _count_codes(row.group("lead"))
             continue
         if current is None:
-            # e.g. a first transaction line the row pattern missed: its code
-            # still counts, so the lost row shows up as a mismatch
-            parsed.codes_found += len(_CODE_RE.findall(line))
+            # e.g. a first transaction line the row pattern missed: it still
+            # counts, so the lost row shows up as a mismatch
+            parsed.codes_found += _count_codes(line)
+            parsed.stray_rows += bool(_TXN_DATES_RE.search(line))
             continue
 
         body = line
@@ -402,7 +426,16 @@ def parse_ptr_text(text: str) -> ParsedPtr:
             if tail:
                 current.add_amount_tail(tail.group(1))
                 body = body[: tail.start()]
-        parsed.codes_found += len(_CODE_RE.findall(body))
+        # Free text (description, comments) may quote asset codes ("... B/E
+        # CPN [CS] [CS]"): its codes count only on a line with a date or a
+        # dollar amount, which may be a missed transaction line (fail-safe:
+        # a false mismatch stores nothing, a missed row would store a partial
+        # filing for good). A transaction date pair in label text means the
+        # row pattern missed the next row.
+        if current.label not in _FREE_TEXT_LABELS or _TXN_HINT_RE.search(body):
+            parsed.codes_found += _count_codes(body)
+        if current.label is not None:
+            parsed.stray_rows += bool(_TXN_DATES_RE.search(body))
         body = body.strip()
         if not body:
             continue

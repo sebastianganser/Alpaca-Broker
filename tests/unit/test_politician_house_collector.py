@@ -247,9 +247,12 @@ class TestHouseFetch:
         c = _collector(FakeHouseClient({RECENT.year: idx}), SINCE)
 
         def broken(pdf: bytes) -> str:
+            # a transaction line the row pattern misses (unknown type "X"),
+            # once after a subholding label, once after a description
             return _fixture_extract(pdf).replace(
                 "* For the complete list",
-                "  Orphan Corp (ORPH) [ST]\n* For the complete list",
+                "  Orphan Corp (ORPH) [ST] X 12/01/2022 12/02/2022 $1,001 - $15,000"
+                "\n* For the complete list",
             )
 
         with patch(EXTRACT, side_effect=broken):

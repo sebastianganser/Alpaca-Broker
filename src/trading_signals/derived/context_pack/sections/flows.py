@@ -377,7 +377,9 @@ def render_politicians(ctx: TickerContext) -> list[str]:
                     day(p.disclosure_date),
                     who,
                     kind,
-                    clean_text(p.amount_range, 22),
+                    # 26: the longest ranges ("$25,000,001 - $50,000,000",
+                    # "Spouse/DC Over $1,000,000") fit uncut
+                    clean_text(p.amount_range, 26),
                     day(p.transaction_date, DASH),
                     lag_text,
                     clean_text(p.owner, 10),

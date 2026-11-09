@@ -158,7 +158,8 @@ def run_sample(client, filings: list[HouseFiling]) -> SampleStats:
             stats.mismatches.append(f.doc_id)
             flag = (
                 f"  MISMATCH ({parsed.codes_found} codes, "
-                f"{parsed.incomplete_amounts} incomplete amounts)"
+                f"{parsed.incomplete_amounts} incomplete amounts, "
+                f"{parsed.stray_rows} missed transaction lines)"
             )
         out(
             f"  {f.doc_id} {f.name}: {len(parsed.rows)} rows, "

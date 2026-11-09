@@ -245,6 +245,77 @@ class TestParseElectronic:
         assert "225 Bush Street in San Francisco, CA." in r.description
         assert not p.mismatch
 
+    def test_spouse_dc_over_amount_split_over_two_lines(self):
+        # "Spouse/DC Over" on the transaction line, "$1,000,000" below it
+        p = _parse("20019787")
+        assert len(p.rows) == 6 and p.codes_found == 6
+        assert not p.mismatch
+        assert [r.amount for r in p.rows] == [
+            "Spouse/DC Over $1,000,000",
+            "$250,001 - $500,000",
+            "$50,001 - $100,000",
+            "Spouse/DC Over $1,000,000",
+            "$250,001 - $500,000",
+            "$500,001 - $1,000,000",
+        ]
+        assert p.rows[0].asset_text == "Bay Area Toll Rev [gS]"
+        assert p.rows[0].transaction_date == date(2021, 10, 14)
+        assert {r.asset_code for r in p.rows} == {"GS"}
+
+    def test_spouse_dc_over_amount_on_the_last_row(self):
+        p = _parse("20019621")
+        assert len(p.rows) == 3 and not p.mismatch
+        assert p.rows[2].amount == "Spouse/DC Over $1,000,000"
+        assert p.rows[2].raw_type == "S"
+
+    def test_over_amount_split_keeps_the_stock_rows_of_the_filing(self):
+        # "Over" on the line, "$50,000,000" below: before the fix the treasury
+        # row was lost and the whole filing (3 stock rows) was dropped
+        p = _parse("20022032")
+        assert not p.mismatch
+        assert [r.ticker for r in _stock(p)] == ["BX", "TJX", "TMUS"]
+        assert p.rows[3].asset_code == "CS"
+        assert p.rows[3].amount == "Over $50,000,000"
+        assert p.rows[3].description.startswith("Maturity date is 05/04/2023")
+
+    def test_repeated_code_in_the_asset_name_counts_once(self):
+        # "... 10/01/2038 [GS] [GS]": the filer typed the code into the name
+        p = _parse("20024205")
+        assert len(p.rows) == 1 and not p.mismatch
+        assert p.rows[0].asset_code == "GS"
+        assert p.rows[0].amount == "$15,001 - $50,000"
+
+    def test_codes_quoted_in_a_wrapped_description_are_not_rows(self):
+        # "D: Tobacco Settlement ... TAXABLE" / "SENIOR B/E CPN [CS] [CS]"
+        p = _parse("20023094")
+        assert not p.mismatch
+        assert len(p.rows) == p.codes_found
+        assert p.rows[0].asset_code == "CS"
+        assert p.rows[0].description.endswith("SENIOR B/E CPN [CS] [CS]")
+        assert {r.asset_code for r in p.rows[1:]} == {"GS"}
+
+    def test_row_missed_after_a_label_is_still_a_mismatch(self):
+        # an unknown amount format makes the row pattern miss the DIS buy; the
+        # line follows a label of the previous row and must not vanish
+        text = _text("20022087").replace(
+            "P 11/16/2022 11/18/2022 $15,001 -", "P 11/16/2022 11/18/2022 ~15k -"
+        )
+        p = hd.parse_ptr_text(text)
+        assert len(p.rows) == 3
+        assert p.mismatch
+
+    def test_row_with_wrapped_dates_after_a_description_is_a_mismatch(self):
+        # Codex review: the DIS buy follows the SYK description and its two
+        # dates are split over two lines - neither the row pattern nor the
+        # date pair matches, its [ST] code must still count
+        text = _text("20022087").replace(
+            "P 11/16/2022 11/18/2022 $15,001 -",
+            "P 11/16/2022\n              11/18/2022 $15,001 -",
+        )
+        p = hd.parse_ptr_text(text)
+        assert len(p.rows) == 3
+        assert p.mismatch
+
     def test_other_samples_have_no_mismatch(self):
         for doc_id, n in [
             ("20033616", None), ("20035710", 3), ("20035727", 8),

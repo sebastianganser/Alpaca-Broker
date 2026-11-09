@@ -6,6 +6,7 @@ validated by the real ``forecasts.yaml`` parser (``derived/forecasts.py``).
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from datetime import UTC, date, datetime, timedelta
 from unittest.mock import MagicMock
@@ -565,6 +566,19 @@ def test_politician_lag_over_45_days_is_flagged_and_chamber_party_shown(tmp_path
         render(tmp_path / "x", raw=late).split("### Politiker")[1].split("## 8.")[0]
     )
     assert "125 T (>45)" in flagged and "| Verkauf |" in flagged
+
+
+def test_politician_longest_amount_ranges_are_not_cut(tmp_path):
+    for amount in ("Spouse/DC Over $1,000,000", "$25,000,001 - $50,000,000"):
+
+        def long_amount(t, amount=amount):
+            t.politicians[0] = dataclasses.replace(
+                t.politicians[0], amount_range=amount
+            )
+
+        out = render(tmp_path / amount[:3].strip("$/"), raw=long_amount)
+        pol = out.split("### Politiker")[1].split("## 8.")[0]
+        assert f"| {amount} |" in pol
 
 
 def test_13f_holders_changes_and_staleness(tmp_path):
