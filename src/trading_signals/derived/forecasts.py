@@ -43,6 +43,31 @@ from trading_signals.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+
+class _ForecastLoader(yaml.SafeLoader):
+    """``SafeLoader`` without the YAML 1.1 boolean words.
+
+    PyYAML reads ``yes / no / on / off / true / false`` (any usual casing) as
+    booleans, so ``ticker: ON`` (ON Semiconductor) became ``True`` and then the
+    ticker ``"TRUE"``. No field of ``forecasts/v1`` is a boolean, so these
+    words stay strings and every ticker is read as written. Dates, timestamps,
+    numbers and null resolve exactly as in ``yaml.SafeLoader``.
+    """
+
+
+# the resolver table of the base class is shared: replace it on the subclass
+# with a filtered copy, never mutate it (the global SafeLoader stays as is)
+_ForecastLoader.yaml_implicit_resolvers = {
+    first: [(tag, rx) for tag, rx in resolvers if tag != "tag:yaml.org,2002:bool"]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+
+
+def load_forecast_yaml(text: str):
+    """Parse the YAML of a forecast file; tickers and other words stay strings."""
+    return yaml.load(text, Loader=_ForecastLoader)  # noqa: S506 - safe subclass
+
+
 SCHEMA_ID = "forecasts/v1"
 FORECASTS_FILE = "forecasts.yaml"
 HORIZONS = (5, 20, 60)
@@ -377,7 +402,7 @@ def parse_forecasts(text: str, folder_date: date) -> ParsedFile:
             (German message).
     """
     try:
-        doc = yaml.safe_load(text)
+        doc = load_forecast_yaml(text)
     except yaml.YAMLError as e:
         raise ForecastFileError(f"kein gültiges YAML: {e}") from e
     if not isinstance(doc, dict):
@@ -765,6 +790,34 @@ def _store_review(
         return False
 
 
+def forecast_records(
+    kept: Sequence[ParsedForecast],
+    parsed: ParsedFile,
+    entry_open: datetime,
+    on_time: bool,
+) -> list[ForecastRecord]:
+    """The rows to store for the accepted forecasts of one file."""
+    return [
+        ForecastRecord(
+            session_date=parsed.session_date,
+            ticker=f.ticker,
+            horizon_days=f.horizon_days,
+            direction=f.direction,
+            confidence=f.confidence,
+            conviction=f.conviction,
+            expected_pct=f.expected_pct,
+            drivers=list(f.drivers),
+            reason=f.reason,
+            risks=f.risks,
+            forecaster_version=parsed.forecaster_version,
+            decided_at=parsed.decided_at,
+            valid_from=entry_open,
+            on_time=on_time,
+        )
+        for f in kept
+    ]
+
+
 def ingest_forecasts(
     store: ForecastStore,
     root: Path,
@@ -862,25 +915,7 @@ def ingest_forecasts(
             STATUS_OK if not rejected else (STATUS_PARTIAL if kept else STATUS_REJECTED)
         )
         messages = [_message(r.message()) for r in rejected]
-        records = [
-            ForecastRecord(
-                session_date=folder_date,
-                ticker=f.ticker,
-                horizon_days=f.horizon_days,
-                direction=f.direction,
-                confidence=f.confidence,
-                conviction=f.conviction,
-                expected_pct=f.expected_pct,
-                drivers=list(f.drivers),
-                reason=f.reason,
-                risks=f.risks,
-                forecaster_version=parsed.forecaster_version,
-                decided_at=parsed.decided_at,
-                valid_from=entry_open,
-                on_time=on_time,
-            )
-            for f in kept
-        ]
+        records = forecast_records(kept, parsed, entry_open, on_time)
         review = ReviewRecord(
             session_date=folder_date,
             file_path=str(path),
@@ -935,8 +970,10 @@ __all__ = [
     "RowError",
     "SqlForecastStore",
     "clean_text",
+    "forecast_records",
     "ingest_forecasts",
     "is_on_time",
+    "load_forecast_yaml",
     "next_session_open",
     "parse_forecasts",
 ]

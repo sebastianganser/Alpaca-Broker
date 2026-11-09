@@ -407,3 +407,13 @@ Not a defect: ACM's `sec_filings.report_date` 2026-07-03 vs `period_end` 2026-06
 - A retry that is "free" must prove it is free (cost 0 in the result) and re-check every guard of the first launch.
 - A second, independent reviewer (Codex) confirmed both pack findings with concrete dates; agreement between two reviewers is a good signal, disagreement a reason to look again.
 **Status:** ✅ fixed in `cba7fb7` (context pack) and `cd9e4e2` (forecast VM), tests first (14 new); VM repo at `cd9e4e2` by git bundle on 2026-11-06, first run Sat 2026-11-07 07:30.
+
+### [2026-11-09] 🐛 PyYAML Reads `ticker: ON` as a Boolean (YAML 1.1)
+**Observation:** On session 2026-11-02 the forecaster wrote two valid forecasts for ON Semiconductor (`ticker: ON`, horizon 20 and 60). The nightly `forecast_review` of 2026-11-04 (status `partial`) rejected both rows with "TRUE hat am 2026-11-02 keinen Feature-Snapshot (nicht im Universum)". ON is an S&P 500 member with a full ticker file in that pack.
+**Cause:** `parse_forecasts` used `yaml.safe_load`. PyYAML implements YAML 1.1, where `yes/no/on/off/true/false` (usual casings) are booleans, so `ON` became `True`; the row parser did `str(value).upper()` and got `"TRUE"`. Other real tickers at risk: ON, NO, YES, OFF (and TRUE/FALSE). The same hash is already stored as a review, and the review skips known hashes, so the file was never re-read.
+**Fix:** a `yaml.SafeLoader` subclass for forecast files whose resolver table is a filtered copy without the boolean resolver (`derived/forecasts.load_forecast_yaml`); the global `SafeLoader` is untouched. No field of `forecasts/v1` is a boolean, dates, timestamps, numbers and null resolve as before; only boolean-looking strings change (in numeric fields they are still rejected). The two lost rows are added by `scripts/repair/reingest_forecast_file.py` (seal hash must match, rows go to the existing review).
+**Lesson:**
+- Never feed identifiers through a YAML 1.1 parser with implicit typing: tickers such as ON, NO, Y-like words are valid and collide with booleans. Either quote them or (better) do not resolve the type at all.
+- A rejection message that names a value ("TRUE") different from the file content is the hint that the parser changed the value; test a parser with the real ambiguous inputs.
+- A file whose review is stored by hash is never re-read: a parser fix needs an explicit repair path for the rows it dropped.
+**Status:** parser fixed with tests; repair script built and tested, production dry run/apply pending Sebastian's OK.

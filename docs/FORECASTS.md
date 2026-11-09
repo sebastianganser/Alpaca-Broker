@@ -63,6 +63,8 @@ forecasts:
 | `drivers` | no | up to 5 tags from a controlled vocabulary: the 12 screen groups (`trend`, `reversal`, `value`, `quality`, `revisions`, `surprise`, `analyst`, `insider`, `institutional`, `short_interest`, `short_volume`, `sentiment`) plus `news`, `earnings`, `sector`, `macro`, `other`. Unknown tags are rejected. Used for the descriptive by-driver table |
 | `reason`, `risks` | no | free text, at most 1,000 characters each |
 
+**Scalars are read as written (2026-11-09).** The YAML is parsed with a loader that does not turn the YAML 1.1 words `yes / no / on / off / true / false` (any casing) into booleans (`derived/forecasts.load_forecast_yaml`): `ticker: ON` (ON Semiconductor) is the ticker `ON`, so the forecaster does not need to quote tickers. Dates, timestamps, numbers and `null` parse as in standard YAML. Before this fix `ON` became `True` and the ticker `TRUE`, and the two ON rows of session 2026-11-02 were rejected ([LEARNINGS.md](LEARNINGS.md) 2026-11-09).
+
 **Forbidden fields.** Anything that belongs to the bot is rejected by the parser with a specific message: `limit`, `limit_price`, `entry`, `exit`, `target`, `target_pct`, `target_price`, `price_target`, `stop`, `stop_pct`, `stop_price`, `stop_loss`, `take_profit`, `trailing`, `size`, `position`, `position_size`, `quantity`, `qty`, `shares`, `weight`, `leverage`, `order`, `action`, `buy`, `sell`. Unknown fields are rejected as well (a typo fails loudly instead of being silently ignored).
 
 ## 4. What is measured

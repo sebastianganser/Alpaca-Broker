@@ -351,3 +351,68 @@ def test_control_characters_are_stripped_from_text_fields():
 def test_a_text_field_of_only_control_characters_becomes_empty():
     r = parse_forecasts(_file(_row(reason="\x00\x01")), D)
     assert r.forecasts[0].reason is None
+
+
+# ── YAML 1.1 booleans: tickers are read verbatim ─────────────────────
+
+BOOL_LOOKING = ["ON", "on", "NO", "Yes", "OFF", "TRUE", "false"]
+
+RAW_HEADER = """\
+schema: forecasts/v1
+session: 2026-10-16
+decided_at: 2026-10-17T09:40:00+02:00
+forecaster_version: aktien-analyse/2026-10-17+claude-opus-4
+forecasts:
+"""
+
+
+def _raw_rows(tickers: list[str]) -> str:
+    return RAW_HEADER + "".join(
+        f"  - ticker: {t}\n    horizon_days: 20\n    direction: neutral\n"
+        for t in tickers
+    )
+
+
+@pytest.mark.parametrize("raw", BOOL_LOOKING)
+def test_boolean_looking_ticker_is_read_as_written(raw: str):
+    parsed = parse_forecasts(_raw_rows([raw]), D)
+    assert not parsed.rejected
+    assert [f.ticker for f in parsed.forecasts] == [raw.upper()]
+
+
+def test_file_with_boolean_looking_tickers_is_fully_valid():
+    tickers = ["ON", "NO", "Yes", "OFF", "TRUE", "false"]  # distinct after upper()
+    parsed = parse_forecasts(_raw_rows(tickers), D)
+    assert not parsed.rejected
+    assert [f.ticker for f in parsed.forecasts] == [t.upper() for t in tickers]
+
+
+def test_other_scalars_parse_as_before():
+    parsed = parse_forecasts(VALID, D)
+    first = parsed.forecasts[0]
+    assert parsed.session_date == D
+    assert parsed.decided_at == datetime(
+        2026, 10, 17, 9, 40, tzinfo=timezone(timedelta(hours=2))
+    )
+    assert (first.horizon_days, first.confidence, first.conviction) == (60, 0.62, 4)
+    assert first.expected_pct == 4.5
+    neutral = parsed.forecasts[1]
+    assert neutral.confidence is None and neutral.conviction is None
+    assert neutral.expected_pct is None
+
+
+def test_boolean_values_in_numeric_fields_are_still_rejected():
+    for bad in ("yes", "true", "off"):
+        text = _raw_rows(["NVDA"]).replace(
+            "direction: neutral",
+            f"direction: up\n    confidence: {bad}\n    conviction: 3",
+        )
+        parsed = parse_forecasts(text, D)
+        assert not parsed.forecasts and len(parsed.rejected) == 1
+
+
+def test_global_safe_loader_still_resolves_booleans():
+    loaded = yaml.safe_load("a: ON\nb: no\nc: true")
+    assert loaded == {"a": True, "b": False, "c": True}
+    parse_forecasts(_raw_rows(["ON"]), D)
+    assert yaml.safe_load("a: ON") == {"a": True}
