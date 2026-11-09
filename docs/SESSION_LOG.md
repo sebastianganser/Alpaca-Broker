@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ROADMAP.md](ROADMAP.md)
 
-**Last updated:** 2 November 2026 (Session 37: Prüfung der ersten Chain nach Migration 041 und der Sonntagsläufe vom 01.11.)
+**Last updated:** 9 November 2026 (Session 39: Wochenprüfung, YAML-Fehler bei Tickern wie ON behoben, Senats-Quelle weiter gesperrt)
 
 ---
 
@@ -560,3 +560,13 @@ Offen ist kein Reparatur-Skript. **Nicht über die API prüfbar:** ob nach dem 1
 - **Nebenbei:** Der Container war um etwa 14:53 neu gestartet (Ursache nicht untersucht); die Siegel um 15:00/15:15/15:25 liefen trotzdem `success`
 - **Werkzeug:** Der Codex-Wrapper `codex-review-gated.mjs` (außerhalb des Repos) scheitert mit codex-cli 0.166, weil `--base`/`--uncommitted` keinen Prompt mehr zulassen; Codex lief deshalb direkt mit `-c developer_instructions`
 - **Offen:** wie in Session 37 – 08.11. Politiker-Collector; nach 22.11. `form13f_collector`; 02.12. Monatsbericht und Forecast Readiness
+
+### Session 39 – 9. November 2026 – Wochenprüfung, YAML-Fehler bei Tickern wie ON, Politiker-Alternativen
+- **Log-Check seit 02.11.:** Health ok, Alembic `041`, 29 Jobs. Chains Di–Sa `success` außer 04.11. `partial` (siehe unten). Je Sitzung genau ein Siegel um 15:00. Kriterium: 14/300 Sitzungen, 468 Prognosen, keine verspätet. Sonntagsläufe in Ordnung (`sec_financials` 12.481 Zeilen, +242). Der Hinweis des Log-Agenten auf einen Uptime-Widerspruch war ein Rechenfehler (Start passt zum Deploy 06.11. 18:38)
+- **Neustart am 06.11. gegen 14:30:** VM und Container liefen neu an (vermutlich Neustart des Servers); alles kam von selbst wieder, das Siegel um 15:00 lief normal
+- **Prognose-VM:** täglich Paket um 07:30 gefunden; der OAuth-Fehler trat an 4 von 5 Tagen auf und wurde jedes Mal mit einem Neuversuch im selben Versuch abgefangen (90 s). Rechnerisch 4,0–4,4 USD je Lauf
+- **Fehler gefunden und behoben (`1481708`):** Die Prognose-Datei vom 02.11. enthielt zwei gültige Prognosen für ON Semiconductor (`ticker: ON`). `yaml.safe_load` folgt YAML 1.1 und liest `ON` als `True`; daraus wurde der Ticker „TRUE“, `forecast_review` lehnte beide Zeilen ab (Chain 04.11. `partial`). Prognose-Dateien werden jetzt ohne YAML-Wahrheitswerte gelesen; Datumsangaben, Zahlen und `null` unverändert, globaler `SafeLoader` unberührt; Skill und `forecaster_version` unverändert. Neue Tests zuerst rot; 2213 passed ohne DB; Review von Claude und Codex ohne Befund. Deploy 08:05
+- **Nachtragen:** `scripts/repair/reingest_forecast_file.py` (Probelauf lokal, nur lesend: Datei = Siegel, 2 Zeilen ON 20/60 Tage, rechtzeitig, Tag danach `ok`); `--apply` wartet auf Sebastians OK
+- **Politiker-Daten:** am 08.11. vierte 403 in Folge, die Sperre gilt auch für einen echten Browser. Alternativen recherchiert (A Register des Repräsentantenhauses – offiziell, kostenlos, erreichbar, PDFs lesbar; B Quiver 30 $/Monat; C Disclosed Capitol ab 6 $/Monat; D so lassen). Empfehlung A, Entscheidung bei Sebastian
+- **Kenvue (KVUE):** Übernahme durch Kimberly-Clark; `universe_validation` meldet `partial`, KVUE bleibt aktiv, bis `index_sync` am 01.12. die Indexliste nachzieht
+- **Offen:** OK für die ON-Nachtragung; Wahl der Politiker-Quelle; nach 22.11. `form13f_collector`; 02.12. Monatsbericht und Forecast Readiness
