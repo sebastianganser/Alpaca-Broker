@@ -93,9 +93,22 @@ Claude Code reaches the production system through three channels (no SSH):
 |---------|--------|----------|
 | Production API | `http://192.168.1.93:8090/api/v1/…`, read-only `GET` via `curl`: `health`, `dashboard/summary` (collectors with `last_status`/`is_running`, `table_stats`, `system_health` incl. Alembic revision and job count), `logs` (filters `status`, `collector`, `page`, `limit`) | Health and log checks (agent `log-checker`, skill `log-check`) |
 | Context-pack share | `\\HOMENAS\Workfiles\AlpacaBroker\context_packs\` – read-only, by hostname (access via IP is denied) | Context packs, `forecasts.yaml`, `forecast_auswertung.md` |
-| Unraid WebGUI | `http://192.168.1.93` in Claude Code's built-in browser pane; Sebastian logs in himself. One User Script **`alpaca-ops`** (Settings → User Scripts → Run Script, argument = command: `status`, `logs [N] [SINCE]`, `deploy`, `deploy-log`, `restart`, `run scripts/…py [args]`, and for long runs `run-bg scripts/…py [args]` / `run-log [N]` / `run-stop` – detached, output in `ops/bg-job.log`). The wrapper fetches [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) from `origin/main` on every run (a push changes the ops logic, the deployed app only changes with `deploy`) and mirrors each run's output to `\\HOMENAS\Workfiles\AlpacaBroker\ops\<command>.log` | Deploy (skill `deploy`), container state, container logs, project scripts in the container |
+| Unraid WebGUI | `http://192.168.1.93` in Claude Code's built-in browser pane; Sebastian logs in himself. One User Script **`alpaca-ops`** (Settings → User Scripts → "Run Script" → argument dialog; commands in the table below). The wrapper fetches [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) from `origin/main` on every run (a push changes the ops logic, the deployed app only changes with `deploy`) and mirrors each run's output to `\\HOMENAS\Workfiles\AlpacaBroker\ops\<command>.log` | Deploy (skill `deploy`), container state, container logs, project scripts in the container |
 
-Scope and guard rules: in the WebGUI only the container `alpaca-broker`, its folders and its own User Scripts may be touched – never other containers (GynOrg, PostgreSQL), array, shares, users, network or security settings. Deploys/restarts are not allowed between 22:15 and 05:15 (collectors + nightly chain), while a job is running (`is_running` in `dashboard/summary`) or while a project script runs in the container (`docker top`; started via `run` or `run-bg`). `run` and `run-bg` are refused in the night window at the start; a detached `run-bg` is not stopped at 22:15, so it must end before the chain (04:30, Tue–Sat) or be stopped with `run-stop` (decision [2026-10-17](DECISIONS_ARCHITECTURE.md)). The shared Claude Code setup (permissions, subagents, skills) lives in `.claude/`; the working rules are in [CLAUDE.md](../CLAUDE.md).
+**`alpaca-ops` commands** (argument in the "Run Script" dialog; "Run In Background" skips the dialog and always runs the default `status`):
+
+| Argument | Effect |
+|---|---|
+| `status` | container state/health, deployed vs. fetched commit, disk, alpaca-related cron entries |
+| `logs [N] [SINCE]` | last N container log lines (default 500, max 5000), e.g. `logs 2000 12h` |
+| `deploy` / `deploy-log` | git pull → build → recreate, detached (guards: not 22:15–05:15, not while a job or a project script runs) / its progress |
+| `restart` | container restart (same guards) |
+| `run scripts/…py [args]` | project script inside the container as `99:100` (e.g. repair dry runs); tied to the popup – closing it aborts the script |
+| `run-bg scripts/…py [args]` / `run-log [N]` / `run-stop` | same script detached (for long runs such as `features_rebuild.py`; one at a time, output `ops/bg-job.log`) / state + log tail / SIGTERM. Not stopped at 22:15 – a run must end before the nightly chain (04:30 Tue–Sat) |
+
+**Working with it:** change the ops logic only by pushing [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) (the wrapper fetches it from `origin/main` on every run), never by editing the script in the WebGUI. Read results as text from `//HOMENAS/Workfiles/AlpacaBroker/ops/<command>.log` (Git Bash path), not from screenshots. Windows caches share files: a log that was rewritten in place (e.g. `deploy-worker.log`) can show stale content for minutes – trust `ops/deployed.txt`, file mtimes (`ls -la`) and the API over a stale log (a finished `run.log` once showed only its first 4 lines for minutes). The "Run Script" popup shows the live output – read it as text via the browser pane's JS (`document.querySelectorAll('iframe')[1].contentDocument.body.innerText`) or with a screenshot/zoom; during long runs check every ~30–60 s (popup, API `uptime_seconds`/`alembic_revision`/`is_running`/`last_status`) instead of blocking on one long wait loop (Sebastian, 2026-10-16). Deploy workflow: skill `/deploy`.
+
+Scope and guard rules: in the WebGUI only the container `alpaca-broker`, its folders and its own User Scripts may be touched – never other containers (GynOrg, PostgreSQL), array, shares, users, network or security settings. Deploys/restarts are not allowed between 22:15 and 05:15 (collectors + nightly chain), while a job is running (`is_running` in `dashboard/summary`) or while a project script runs in the container (`docker top`; started via `run` or `run-bg`). `run` and `run-bg` are refused in the night window at the start; a detached `run-bg` is not stopped at 22:15, so it must end before the chain (04:30, Tue–Sat) or be stopped with `run-stop` (decision [2026-10-17](DECISIONS_ARCHITECTURE.md)). The shared Claude Code setup (permissions, hook, subagents, skills) lives in `.claude/`; the working rules are in [CLAUDE.md](../CLAUDE.md).
 
 ### Forecast VM and Reboot Resilience
 
@@ -111,7 +124,9 @@ Scope and guard rules: in the WebGUI only the container `alpaca-broker`, its fol
 Alpaca-Broker/
 ├── CLAUDE.md / README.md            # Project entry point / GitHub overview
 ├── .claude/                         # Claude Code project setup (shared via Git)
-│   ├── settings.json                # Shared permissions (settings.local.json is git-ignored)
+│   ├── settings.json                # Shared permissions + hook registration (settings.local.json is git-ignored)
+│   ├── hooks/guard-env.mjs          # PreToolUse hook (Node): blocks calls naming .env, .env.local, .env.production (.env.example allowed)
+│   ├── hooks/guard-env.test.mjs     # Its tests: node .claude/hooks/guard-env.test.mjs
 │   ├── agents/                      # Subagents: log-checker (Haiku), doc-keeper (Sonnet), code-reviewer (Opus)
 │   └── skills/                      # Workflows: log-check, deploy, session-end, signal-warehouse-prognose (forecast skill, run by the forecast VM)
 ├── docs/                            # Documentation (INDEX.md = navigator)

@@ -13,7 +13,7 @@ Access path: Unraid WebGUI (http://192.168.1.93) in Claude Code's built-in brows
 
 1. Working tree clean: `git status` shows nothing to commit.
 2. Pushed: `git fetch origin`, then `git rev-parse HEAD` equals `git rev-parse origin/main`.
-3. `uv run pytest` is green (note the count). If the diff since the deployed commit contains a migration or a change to collectors, features, targets or the scheduler and it has not been reviewed yet, run the `code-reviewer` agent first; with a migration also run the fresh-DB test from CLAUDE.md (`upgrade head` + `alembic check` clean) – a failing migration sends the new container into a restart loop.
+3. `uv run pytest` is green (note the count). If the diff since the deployed commit contains a migration or a change to collectors, features, targets or the scheduler and it has not been reviewed yet, run the `code-reviewer` agent first; with a migration also run the fresh-DB test ([DATABASE.md](../../../docs/DATABASE.md) "Testing migrations on a fresh DB": `upgrade head` + `alembic check` clean) – a failing migration sends the new container into a restart loop.
 4. Timing, from the production API (`curl -s http://192.168.1.93:8090/api/v1/dashboard/summary`) and `date`:
    - local Berlin time is **outside 22:15–05:15** (collectors 22:30–~03:00, nightly chain 04:30);
    - **no collector has `is_running: true`** (includes the Sunday daytime jobs `form13f_collector` 10:00, `politician_trades_collector` 11:00, `short_interest_positions_collector` 12:00 and `universe_validation` 13:00);
@@ -44,7 +44,7 @@ Poll `curl -s -m 10 http://192.168.1.93:8090/api/v1/health` until HTTP 200 (star
 
 ## 4. Record
 
-1. Update the **Deployment** line in CLAUDE.md (commit, date, Alembic revision) and, if the status block changed, Phase/Next step.
+1. Update the **Deployment** line in CLAUDE.md (commit, date, Alembic revision) and, if the status block changed, Phase/Next step. Replace the old value instead of appending: one short line, no deploy history (that goes into the SESSION_LOG entry below).
 2. Add a SESSION_LOG entry (German, via the `doc-keeper` agent or inline): commit range deployed, build result, API verification, anything unexpected. Tick the matching ROADMAP items ("nicht deployt" notes).
 3. Commit `docs: record deploy of <hash>` and push (docs-only, no new deploy needed).
 

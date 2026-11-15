@@ -3,7 +3,7 @@
 > Central navigator for all project documentation.
 > Start here to find the right document for your question.
 
-**Last updated:** 30 October 2026 (documentation pass of plan step 7: statuses of the strategy-neutral documents updated; no document added or renamed; last entry of the session log is Session 36)
+**Last updated:** 15 November 2026 (Claude Code setup tidied, CLAUDE.md slimmed; no document added or renamed; last entry of the session log is Session 40)
 
 ---
 
@@ -12,7 +12,7 @@
 | I'm looking for... | Document |
 |---|---|
 | Project overview, mission, principles, current status | [CLAUDE.md](../CLAUDE.md) |
-| **Where did the last session stop? What is deployed? What is open?** | [SESSION_LOG.md](SESSION_LOG.md) – last entry (Session 36) · [ROADMAP.md](ROADMAP.md) – "Offene Punkte" |
+| **Where did the last session stop? What is deployed? What is open?** | [SESSION_LOG.md](SESSION_LOG.md) – last entry (Session 40) · [ROADMAP.md](ROADMAP.md) – "Offene Punkte" |
 | How is the system deployed and structured? | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | What database tables exist? (DDL, migrations 001–041, retention) | [DATABASE.md](DATABASE.md) |
 | When do jobs run? (schedule, nightly chain) | [SCHEDULER.md](SCHEDULER.md) |
@@ -41,7 +41,7 @@
 |---|---|---|
 | [CLAUDE.md](../CLAUDE.md) | Entry point for every AI session – project identity, principles, status, quick facts, session checklists | Status after every session |
 | [README.md](../README.md) | GitHub-facing project overview | After major milestones |
-| [.claude/](../.claude/) | Shared Claude Code setup: subagents (`log-checker` Haiku, `doc-keeper` Sonnet, `code-reviewer` Opus), skills (`/log-check`, `/deploy`, `/session-end`, and the forecast skill `signal-warehouse-prognose` run by the forecast VM), permissions (`settings.json`) | When the workflow changes |
+| [.claude/](../.claude/) | Shared Claude Code setup: subagents (`log-checker` Haiku, `doc-keeper` Sonnet, `code-reviewer` Opus), skills (`/log-check`, `/deploy`, `/session-end`, and the forecast skill `signal-warehouse-prognose` run by the forecast VM), permissions and hook registration (`settings.json`), PreToolUse hook `hooks/guard-env.mjs` (Node; blocks access to the local environment files via shell, search and file tools) | When the workflow changes |
 | [infra/forecast-vm/](../infra/forecast-vm/README.md) | Package for the Linux forecast VM: `run-forecast.sh` (headless `claude -p`, pinned model), `sync.sh`, systemd timers / cron, settings example (German README) | When the forecast run changes |
 | [infra/unraid/alpaca-ops.sh](../infra/unraid/alpaca-ops.sh) | Host operations (status, logs, deploy, run, run-bg) behind the Unraid User Script `alpaca-ops` | When ops change |
 

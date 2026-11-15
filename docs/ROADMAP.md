@@ -5,7 +5,7 @@
 >
 > See also: [INDEX.md](INDEX.md)
 
-**Last updated:** 9 November 2026 (House-Clerk-Politikerquelle umgesetzt, siehe Offene Punkte; vorher 30 October 2026: strategy-neutral rework complete: plan steps 1–7 done, step 6 deployed 2026-10-30 as `0da513c` / Alembic 041; documentation pass done; former Sprints 11/12 moved to the section "Separater Bot"; post-vacation check done – see [SESSION_LOG.md](SESSION_LOG.md), Session 36)
+**Last updated:** 15 November 2026 (Claude-Code-Einrichtung aufgeräumt; die Punkte aus dem früheren CLAUDE.md-Statusblock stehen jetzt in „Nächste Schritte“ und „Nach dem Urlaub prüfen“; davor 9 November 2026: House-Clerk-Politikerquelle umgesetzt – ältere Stände im [SESSION_LOG.md](SESSION_LOG.md))
 
 ---
 
@@ -308,8 +308,8 @@ Die früheren Sprints 11 (Backtest Framework) und 12 (Paper Trading Integration)
 3. ✅ Short Interest: deployt (`b873d4d`, Migration 036), Historie befüllt (94.370 Zeilen, 120 Stichtage 2021-10-15 bis 2026-09-30), Features nachgerechnet (610.887 Snapshots, Abdeckung im ML-Fenster 99 %) – erste Bewertung im Monatsbericht vom 17.10. (`days_to_cover` negativer Rank-IC, nicht signifikant; `change_1m` nichts), weiter beobachten 01.11. / Forecast Readiness Anfang Dezember
 4. ✅ **S&P-500-Survivorship-Reparatur abgeschlossen (17.10.):** Code, `index_membership`, Austritte/PARA/BF.B, Feature-Neuaufbau (676.953 Snapshots), Deploy `f92fb28` und Analysen-Neulauf (K1, B, D2 unverändert, Readiness 29/31 GO). Monatliche `feature_analysis` ebenfalls am 17.10. neu gelaufen (kein signifikantes Feature). Offen: Log-Check der Nightly Chain am Di 20.10. 04:30 (erster Lauf auf dem reparierten Universum), `index_sync` am 01.11. darf für den S&P 500 nichts ändern – siehe Offene Punkte
 5. ✅ **Strategieneutraler Umbau, alle sieben Schritte erledigt (Stand 30.10.)** (Screen, `forecast_eval`, Context Pack v2, Prognose-Ingest + `forecast_seal` mit Migration 039, SEC-Daten mit Migration 040, Prognose-VM; Trailing-Label am 17.10. entfernt, Migration 038). Schritt 6 (Rückbau Barrier-Label und Hit-Modell, Migration **041**) am 30.10. deployt, Schritt 7 (Doku-Durchgang) am 30.10. erledigt – siehe Offene Punkte „Prognose-Ziel neutral“.
-6. Daten weiter sammeln und Prognosen aufzeichnen (Kriterium: 300 Sitzungen, [FORECASTS.md §6](FORECASTS.md)); Forecast Readiness (`scripts/forecast_readiness.py`) Anfang Dezember erneut prüfen (16.10.: 29/31 „GO“, aber Ranking-Stabilität 0/10). K5 ist durch die Prognose-Pipeline ersetzt und läuft produktiv
-7. Sprint 10 (Composite Score F1 als Eingang für die Prognosen, keine Handelslogik) frühestens ab Mitte Dezember 2026 – Inhalt hängt davon ab, ob ein Ranking auf den neutralen Zielen `return_20d` / `return_60d` den Walk-forward besteht
+6. Daten weiter sammeln und Prognosen aufzeichnen (Kriterium: 300 Sitzungen, [FORECASTS.md §6](FORECASTS.md)); Forecast Readiness (`scripts/forecast_readiness.py`) Anfang Dezember erneut prüfen (16.10.: 29/31 „GO“, aber Ranking-Stabilität 0/10). K5 ist durch die Prognose-Pipeline ersetzt und läuft produktiv. Stand 09.11.: 14 von 300 Sitzungen. Die VM kostet rund 3,85 USD je Lauf (Produktionsstart; Session 39 rechnerisch 4,0–4,4 USD)
+7. Sprint 10 (Composite Score F1 als Eingang für die Prognosen, keine Handelslogik) frühestens ab Mitte Dezember 2026 – Inhalt hängt davon ab, ob ein Ranking auf den neutralen Zielen `return_20d` / `return_60d` den Walk-forward besteht; aktuell verfrüht, solange kein Feature signifikant und das Ranking instabil ist
 8. ✅ **Urlaub (Sebastian, 18.10. abends bis 30.10.2026, Prüfung danach siehe unten):** Dev-PC aus, nur Unraid läuft. Das System läuft unbeaufsichtigt: Collectors, Nightly Chain (erster Pack-v2-Lauf Di 20.10. 04:30), Prognose-VM Di–Sa 07:30 (Wiederholungen 09:30/11:30), `forecast_seal` Mo–Fr 09:00/09:15/09:25 New York, `forecast_review` in der Chain. Zeitumstellung: Europa stellt am 25.10. um, die USA erst am 01.11. – vom 26. bis 30.10. beträgt der Abstand Berlin–New York nur 5 h (Frist 09:30 New York = 14:30 Berlin, Siegel 14:00/14:15/14:25 Berlin, kein Deploy 13:55–14:35)
 
 #### Nach dem Urlaub prüfen (geprüft am 30.10.2026, Details: [SESSION_LOG](SESSION_LOG.md), Session 36)
@@ -322,6 +322,9 @@ Die früheren Sprints 11 (Backtest Framework) und 12 (Paper Trading Integration)
 - [x] House-Politiker nachgeladen und Merkmale neu berechnet (09.11., auf Sebastians Anweisung): Backfill seit 2021-10-01 in zwei Durchläufen (dazwischen Parser-Fix `c7b09e9`, deployt 12:56) – 18.769 Aktien-Trades, 28 zunächst verworfene Meldungen im zweiten Durchlauf gelesen, 0 Abweichungen; danach die vier Politiker-Spalten in `feature_snapshots`: 499.138 von 686.673 Zeilen aktualisiert (470.810 NULL → Wert, kein Wert → NULL), Kontroll-Probelauf 0 Änderungen. Screen und Prognose-Stichprobe (300 Sitzungen) bleiben unberührt
 - [ ] Erste Tage des täglichen House-Laufs prüfen (ab Di 10.11. 02:30; `partial` bei Parse-Abweichung, DocIDs in den Notizen) – erster Lauf 10.11. 02:30 `success`, 2 neue Trades, keine Abweichung; Nightly Chain 04:30 `success`; monatliche `feature_analysis` am 01.12. ist die erste mit beiden Kammern
 - [x] 01.11.: `index_sync`: S&P 500 unverändert (503); Nasdaq 100: MRNA rein, WBD raus (wirksam 09.10.); 19 veraltete Mitglieds-Kennzeichen geleert, LAZR als ETF deaktiviert (kein Indexmitglied). `feature_analysis`: kein signifikantes Feature, H14 0/250 wie geplant. `sec_financials`: 12.239 Zeilen (+243), COST, AZO, KR und die verspäteten Ticker nachgetragen; ABT, C, NEE u. a. fehlen weiter im SEC-Feed (Hinweis „Tabelle nicht aktuell“ im Pack)
+- [ ] `form13f_collector` nach dem 22.11. mit `/log-check` prüfen: 0 Einträge seit 11.10. sind zwischen den Abgabefristen normal, die Q3-Frist ist der 16.11.
+- [ ] 02.12.: Monatsbericht vom 01.12. und `scripts/forecast_readiness.py` prüfen
+- [ ] Nächstes Entwicklungsthema entscheidet Sebastian; Empfehlung nach der Dezember-Prüfung, in dieser Reihenfolge: (1) XBRL-Quartale öfter als wöchentlich holen (klein), (2) Bot-Schnittstelle `GET /api/v1/forecasts` (ab Ende November, siehe „Separater Bot“), (3) Composite Score F1 (Sprint 10, verfrüht solange kein Feature signifikant und das Ranking instabil ist)
 - [ ] H14: Out-of-sample-Start 2026-10-19 (nur Handelstage ab diesem Datum zählen)
 - [x] VM-Passwort: bleibt laut Sebastian (30.10.) unverändert, Risiko bewusst akzeptiert – nicht mehr erinnern. Windows-Aufgabe `signal-warehouse-prognose` ist deaktiviert (geprüft 18.10.)
 - [x] Plan-Schritt 7 (Doku-Durchgang 30.10.: Mission, Referenz-Dokumente, Sprint 11/12 beim separaten Bot, `sprint10_readiness.py` → `forecast_readiness.py`) erledigt
@@ -351,7 +354,7 @@ Die früheren Sprints 11 (Backtest Framework) und 12 (Paper Trading Integration)
 
 **Schnittstelle: was der Bot von Alpaca-Broker bezieht** ([Plan](2026-10-17_Plan_Strategieneutral.md) §5)
 - Vorhanden: append-only Tabelle `forecasts` (Sitzung, Zeitpunkt, Horizont, Richtung, Wahrscheinlichkeit, Konviktion, Treiber; dazu `forecast_reviews`, `forecast_file_seals`, `forecast_criterion_samples`, [DATABASE.md](DATABASE.md)); `trade_ideas.yaml` neben der Prognose ([TRADE_IDEAS.md](TRADE_IDEAS.md), nicht versiegelt, nie ausgewertet)
-- Geplant, noch nicht gebaut: View `forecast_outcomes` (Prognose + realisierte Renditen), `GET /api/v1/forecasts` (nach ca. einem Monat Prognosen), Risikokontext je Ticker (Kurs, ATR, ADV, Earnings-Termin, Sektor), Kalibrierungskennzahlen, Feature-Export
+- Geplant, noch nicht gebaut: View `forecast_outcomes` (Prognose + realisierte Renditen), `GET /api/v1/forecasts` (nach ca. einem Monat Prognosen, also ab Ende November), Risikokontext je Ticker (Kurs, ATR, ADV, Earnings-Termin, Sektor), Kalibrierungskennzahlen, Feature-Export
 - Stops, Ziele, Trailing, Positionsgröße und Orders bleiben im Bot
 
 ---

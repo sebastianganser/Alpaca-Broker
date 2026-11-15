@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ROADMAP.md](ROADMAP.md)
 
-**Last updated:** 9 November 2026 (Session 39: Wochenprüfung, YAML-Fehler bei Tickern wie ON behoben, Senats-Quelle gesperrt, Quelle Repräsentantenhaus umgesetzt)
+**Last updated:** 15 November 2026 (Session 40: Claude-Code-Einrichtung geprüft und aufgeräumt; davor Session 39: Wochenprüfung, YAML-Fehler bei Tickern wie ON behoben, Quelle Repräsentantenhaus umgesetzt)
 
 ---
 
@@ -581,3 +581,11 @@ Offen ist kein Reparatur-Skript. **Nicht über die API prüfbar:** ob nach dem 1
 - **House-Backfill, Durchlauf 2** (12:57–13:03, Exit 0): 0 Abweichungen, 62 weitere Trades (2022: 3, 2024: 59; die übrigen verworfenen Meldungen enthielten keine Aktien) – zusammen 18.769 House-Trades, `politician_trades` 20.016 Zeilen
 - **Neuberechnung der Politiker-Merkmale** (auf Sebastians Anweisung): Probelauf 13:04 (Stichprobe 200 Schlüssel gegen `FeaturePipeline._politician_features`, 0 Abweichungen; 499.138 von 686.673 Zeilen ändern sich, 470.810 NULL → Wert, kein Wert → NULL), `--apply` 13:05–13:06: 499.138 Zeilen aktualisiert wie geplant; Kontroll-Probelauf 13:07: 0 Änderungen. `computed_at`/`feature_version` unverändert, keine Zeilen angelegt oder gelöscht
 - **Offen:** erster täglicher House-Lauf Di 10.11. 02:30 (`/log-check`); ON-Nachtrag ist erledigt; nach 22.11. `form13f_collector`; 02.12. Monatsbericht und Forecast Readiness
+
+### Session 40 – 15. November 2026 – Claude-Code-Einrichtung geprüft und aufgeräumt
+- **Prüfung:** keine Antigravity-Altlasten (nur noch Historie in DECISIONS_ARCHITECTURE und SESSION_LOG); die Claude-Einrichtung ist vollständig: CLAUDE.md, INDEX, `settings.json`, 3 Agenten, 4 Skills, Gedächtnis
+- **CLAUDE.md gekürzt** (220 → 185 Zeilen): Statusblock auf wenige Zeilen ohne Verlauf, `alpaca-ops`-Argumenttabelle und Bedienhinweise nach ARCHITECTURE „Operations Access“, Rezept für Migrationstests nach DATABASE.md, Dokumententabelle durch einen Verweis auf INDEX ersetzt; aus dem Statusblock übernommene Punkte stehen jetzt in der ROADMAP (Nächste Schritte, „Nach dem Urlaub prüfen“)
+- **Neuer PreToolUse-Hook `.claude/hooks/guard-env.mjs`** (Node, in `.claude/settings.json` registriert): blockiert Aufrufe, die die lokalen Umgebungsdateien (`.env`, `.env.local`, `.env.production`) nennen; `.env.example` bleibt erlaubt. Die Deny-Regeln allein greifen nur bei Read/Edit ([DECISIONS_ARCHITECTURE](DECISIONS_ARCHITECTURE.md) 2026-11-15). Schutz gegen Versehen, keine Sicherheitsgrenze (Platzhalter wie `cat .en*` oder Variablen werden nicht erkannt). Ausnahme: wörtlicher Text von Commit-Nachrichten
+- **Review:** drei Codex-Runden fanden sieben Umgehungen (Umleitung nach Heredoc-Start, Heredoc eines Folgebefehls, Grep-Globs wie `*.env` oder mit Verzeichnis-Präfix, `\$` in PowerShell, abschließende Punkte unter Windows, `{`/`@` vor dem Namen), alle behoben; Tests in `.claude/hooks/guard-env.test.mjs` (77 Fälle, `node .claude/hooks/guard-env.test.mjs`)
+- **INDEX aktualisiert** (Stand, Session-Verweis, Zeile `.claude/`); Regel für einen kurzen Statusblock im Agenten `doc-keeper` und im Skill `/deploy`
+- **Offen:** wie in Session 39 – House-Lauf weiter beobachten, nach 22.11. `form13f_collector`, 02.12. Monatsbericht und Forecast Readiness

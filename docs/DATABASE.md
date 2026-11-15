@@ -1133,3 +1133,11 @@ Alembic migrations are stored in `src/alembic/versions/`. Current state: migrati
 > Migration 024 was extended after production had applied it (commit `81446a4` added `sector_relative_return_20d` / `sector_relative_momentum`), so 025 (`32168a0`) created the two columns in production. On an empty database both added them and `alembic upgrade head` failed at 025. **Fixed 2026-10-16:** 025 uses `ADD COLUMN IF NOT EXISTS` and its downgrade is a no-op (024's downgrade drops the columns). Verified on a throwaway `postgres:18`: fresh `upgrade head` → 035, round trip `025 → 023 → head`, and the production history (old 024 without the columns → 025 creates them). No effect on databases already at 025 or later.
 
 **Migrations and ORM are aligned** (2026-10-16): the live schema is defined by the migrations (no `metadata.create_all` in `src/` or `scripts/`); the ORM models mirror it exactly – nullability, server defaults, all indexes (incl. the partial `idx_prices_extrapolated` and `ix_collection_log_collector_started` on `started_at DESC`), column comments. `technical_indicators.ticker` has **no** FK to `universe` (none was ever migrated; derived table). Gate: `alembic check` on a fresh `upgrade head` – `src/alembic/env.py` compares the `signals` schema only (`include_schemas` + `include_name`) and server defaults (`compare_server_default`); expected output "No new upgrade operations detected." A schema change therefore always means a new migration **and** the matching ORM change in the same commit.
+
+### Testing migrations on a fresh DB
+
+Test every new migration before deploying (a failing migration sends the container into a restart loop). Docker Desktop on the dev machine:
+
+1. `docker run -d --rm --name alpaca-migtest -e POSTGRES_USER=migtest -e POSTGRES_PASSWORD=migtest -e POSTGRES_DB=broker_data -p 127.0.0.1:55435:5432 postgres:18`
+2. With `DB_HOST=127.0.0.1 DB_PORT=55435 DB_NAME=broker_data DB_USER=migtest DB_PASSWORD=migtest` (set **all** `DB_*` – the local `.env` points at production): `.venv/Scripts/alembic.exe upgrade head` and `.venv/Scripts/alembic.exe check` (must print "No new upgrade operations detected.").
+3. `docker rm -f alpaca-migtest`
