@@ -522,8 +522,10 @@ def _forecast_seal_body() -> JobOutcome:
     SHA-256 was recorded before 09:30 New York of the next session. Fires at
     09:00, 09:15 and 09:25 New York on every weekday; a holiday, a missing
     file and a delayed run (at or after the open: nothing is sealed) are
-    reported, none of them can seal anything.
+    reported, none of them can seal anything. A file still missing at the
+    last run (09:25) fails the run: that session gets no forecast at all.
     """
+    from datetime import UTC, datetime
     from pathlib import Path
 
     from trading_signals.config import get_settings
@@ -531,19 +533,28 @@ def _forecast_seal_body() -> JobOutcome:
     from trading_signals.derived import forecast_seal as seal
 
     root = Path(get_settings().CONTEXT_PACK_PATH)
+    now = datetime.now(UTC)
     with get_session() as session:
-        result = seal.seal_forecast_file(seal.SqlSealStore(session), root)
+        result = seal.seal_forecast_file(seal.SqlSealStore(session), root, now)
+    notes = result.notes()
     if result.status in (seal.SEALED, seal.UNCHANGED):
         status = job_status.SUCCESS
     elif result.status == seal.TOO_LATE:
         status = job_status.PARTIAL  # a seal opportunity was lost: alert
+    elif result.status == seal.NO_FILE and seal.is_last_seal_run(now):
+        # the forecast VM wrote nothing in time (2026-11-17..20 went unnoticed)
+        status = job_status.FAILED
+        notes += (
+            "; no forecasts.yaml at the last seal before the open"
+            " - check the forecast VM"
+        )
     else:  # no NYSE session today / no forecasts.yaml (yet)
         status = job_status.SKIPPED
     return JobOutcome(
         status=status,
         records_written=1 if result.status == seal.SEALED else 0,
         records_fetched=0 if result.sha256 is None else 1,
-        notes=result.notes(),
+        notes=notes,
     )
 
 

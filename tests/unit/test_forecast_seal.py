@@ -211,7 +211,7 @@ def _fake_session(session):
     yield session
 
 
-def _run_body(status: str, sha: str | None = None):
+def _run_body(status: str, sha: str | None = None, last_run: bool = False):
     result = seal.SealResult(status, PACK_DAY, sha, 12 if sha else None)
     settings = SimpleNamespace(CONTEXT_PACK_PATH="/packs")
     with (
@@ -221,9 +221,28 @@ def _run_body(status: str, sha: str | None = None):
             lambda: _fake_session(MagicMock()),
         ),
         patch.object(seal, "seal_forecast_file", return_value=result) as run,
+        patch.object(seal, "is_last_seal_run", return_value=last_run),
     ):
         out = jobs._forecast_seal_body()
     return out, run
+
+
+def test_the_last_seal_run_is_the_one_shortly_before_the_open():
+    assert seal.is_last_seal_run(AT_0925)
+    assert not seal.is_last_seal_run(AT_0900)
+    assert not seal.is_last_seal_run(OPEN)  # at the open nothing is sealed any more
+    delayed_0915 = datetime(2026, 10, 19, 13, 20, tzinfo=UTC)  # 09:15 + 5 min grace
+    assert not seal.is_last_seal_run(delayed_0915)
+    saturday = datetime(2026, 10, 17, 13, 25, tzinfo=UTC)
+    assert not seal.is_last_seal_run(saturday)
+
+
+def test_a_missing_file_at_the_last_seal_fails_so_it_alerts():
+    # 2026-11-17..20: the forecast VM was logged out for days and nobody saw it
+    out, _ = _run_body(seal.NO_FILE, last_run=True)
+    assert out.status == job_status.FAILED
+    assert "status=no_file" in out.notes
+    assert "no forecasts.yaml at the last seal" in out.notes
 
 
 def test_the_job_reports_a_seal_as_success():

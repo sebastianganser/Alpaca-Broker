@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -40,6 +40,10 @@ UNCHANGED = "unchanged"  # this content was sealed before
 NO_FILE = "no_file"  # no forecasts.yaml in the folder (yet)
 NO_SESSION = "no_session"  # today is not an NYSE session
 TOO_LATE = "too_late"  # at or after the open: nothing is sealed any more
+
+#: A seal run this close to the open is the last one (the 09:25 New York run;
+#: a 09:15 run delayed by the 5-minute misfire grace is still outside).
+LAST_RUN_MARGIN = timedelta(minutes=7)
 
 
 class SealStore(Protocol):
@@ -89,6 +93,17 @@ def seal_target(now: datetime) -> tuple[date, datetime] | None:
         return None
     pack_day = previous_trading_day(today)
     return pack_day, next_session_open(pack_day)
+
+
+def is_last_seal_run(now: datetime) -> bool:
+    """True for the last seal run before the open (within ``LAST_RUN_MARGIN``).
+
+    A file still missing then means the session gets no forecast at all.
+    """
+    target = seal_target(now)
+    if target is None:
+        return False
+    return timedelta(0) < target[1] - now <= LAST_RUN_MARGIN
 
 
 def seal_forecast_file(
@@ -162,6 +177,7 @@ class SqlSealStore:
 
 
 __all__ = [
+    "LAST_RUN_MARGIN",
     "NO_FILE",
     "NO_SESSION",
     "SEALED",
@@ -170,6 +186,7 @@ __all__ = [
     "SealResult",
     "SealStore",
     "SqlSealStore",
+    "is_last_seal_run",
     "seal_forecast_file",
     "seal_target",
 ]
