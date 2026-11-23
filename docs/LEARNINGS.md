@@ -433,3 +433,12 @@ Not a defect: ACM's `sec_filings.report_date` 2026-07-03 vs `period_end` 2026-06
 - `Over` / `Spouse/DC Over` is a pending amount completed by the next line. A run of the same code (`[GS] [GS]`) counts once. Codes in free text (description, comments) count only on lines with a date or a dollar amount, and a transaction date pair inside label text is a missed row. The Codex review showed that simply ignoring free-text codes would hide a missed row whose dates wrap after a description; hence the date/amount condition (fail-safe: a false mismatch stores nothing, a missed row would store a partial filing for good).
 - Context pack: politician amounts are shown with up to 26 characters, so the longest ranges (`$25,000,001 - $50,000,000`, `Spouse/DC Over $1,000,000`) are no longer cut.
 **Status:** fixed (`c7b09e9`, deployed 2026-11-09), all 28 filings parse; old and new parser agree on a random sample of 120 filings except one previously rejected filing; the backfill rerun stored 62 more trades with 0 mismatches.
+
+### [2026-11-23] 🐛 Forecast VM Lost Its Login and Nobody Noticed for Six Days
+**Observation:** On 2026-11-17 07:30 the Claude CLI on the forecast VM failed to refresh its OAuth token; from the next run on it reported "not logged in" (exit 10) every time. `forecast_seal` logged each day only as `skipped` (no file), so neither the health check nor `/logs?status=failed` showed anything; the log check of 2026-11-23 found four sessions without forecasts (lost for good, their seals had passed).
+**Lesson:**
+- A missing output of a daily duty must be an alert, not a skip: the last seal run before the open now fails when `forecasts.yaml` is missing.
+- Unattended CLI runs need a long-lived credential (`claude setup-token`, one year, file mode 600) instead of the interactive login with its refresh flow.
+- A machine nobody can maintain fails silently: the VM now has a key-only admin account with passwordless sudo for Claude and a reproducible rebuild (`infra/forecast-vm/autoinstall/`, `provision.sh`).
+- A rebuilt Ubuntu gets a new DHCP client id (machine-id based), so the same MAC brought a new address (.251 instead of .250); the Unraid VM list shows it via the guest agent.
+**Status:** fixed 2026-11-23 (`649ff82`, `879dd06`), first regular run Tue 2026-11-24 07:30.

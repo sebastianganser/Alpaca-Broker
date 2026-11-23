@@ -50,9 +50,9 @@ Critical paths (data fetching, computations; likewise the later separate trading
 
 **Phase:** 🟡 Sprint 9.5c (Candidate Pipeline MVP), Phase 2 – the strategy-neutral rework ([plan](docs/2026-10-17_Plan_Strategieneutral.md)) is complete (steps 1–7 done and deployed); short-term research K1–K4 ended without a usable edge, K5 is replaced by the forecast pipeline
 **Current sprint:** 9.5c Phase 2 – the forecast pipeline runs end to end (nightly pack v2 → forecast VM writes `forecasts.yaml` → `forecast_seal` → `forecast_review`); collecting forecasts for the pre-registered criterion (300 sessions, [FORECASTS.md](docs/FORECASTS.md) §6)
-**Next step:** keep collecting data and forecasts; `/log-check` the daily House politician run; after 2026-11-22 `form13f_collector`; 2026-12-02 monthly report + `scripts/forecast_readiness.py`; the next development topic is Sebastian's choice – details in [ROADMAP.md](docs/ROADMAP.md) "Nächste Schritte" / "Offene Punkte"
-**Last updated:** 15 November 2026 (Claude Code setup tidied, CLAUDE.md slimmed)
-**Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `c7b09e9` (deployed 2026-11-09), Alembic revision `041`, 29 jobs. Forecast VM `forecast-vm` (192.168.1.250, `infra/forecast-vm/`), timer Tue–Sat 07:30, VM repo at `cd9e4e2`
+**Next step:** keep collecting data and forecasts; check the first regular run of the rebuilt forecast VM (Tue 2026-11-24 07:30) with `/log-check`; 2026-12-02 monthly report + `scripts/forecast_readiness.py`; the next development topic is Sebastian's choice – details in [ROADMAP.md](docs/ROADMAP.md) "Nächste Schritte" / "Offene Punkte"
+**Last updated:** 23 November 2026 (forecast VM rebuilt and handed to Claude, seal alarm deployed, 13F Q3 filings arrived)
+**Deployment:** ✅ Unraid Docker (192.168.1.93:8090), commit `879dd06` (deployed 2026-11-23), Alembic revision `041`, 29 jobs. Forecast VM `forecast-vm` (192.168.1.251, managed by Claude via `claudeadmin`, `infra/forecast-vm/`), timer Tue–Sat 07:30, VM repo at `879dd06`
 
 See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 
@@ -73,7 +73,7 @@ See [ROADMAP.md](docs/ROADMAP.md) for detailed progress.
 | **Price data** | Alpaca Market Data API, **SIP feed** (`ALPACA_DATA_FEED`, default `sip`; production logs show `feed=sip`), automatic IEX fallback marks the run `partial` |
 | **News sentiment** | Alpaca News API + ProsusAI/finbert (local CPU inference) |
 | **Universe** | 760 active tickers (2026-10-17; S&P 500 + Nasdaq 100 + ARK + benchmark/sector ETFs, other ETFs filtered via blacklist, never a current index member); features use the point-in-time universe |
-| **Tests** | 2348 tests, none needs a database (2026-11-09); run with `uv run pytest` |
+| **Tests** | 2350 tests, none needs a database (2026-11-23); run with `uv run pytest` |
 | **Deployment** | Docker Compose on Unraid (1 container: Collector + API + UI, port 8090, runs as `99:100`) |
 | **Broker (later)** | Alpaca Paper Trading (NEVER live!) |
 | **Version control** | Git, [GitHub](https://github.com/sebastianganser/Alpaca-Broker) |

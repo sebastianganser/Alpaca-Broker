@@ -4,7 +4,7 @@
 >
 > See also: [INDEX.md](INDEX.md) · [ROADMAP.md](ROADMAP.md)
 
-**Last updated:** 15 November 2026 (Session 40: Claude-Code-Einrichtung geprüft und aufgeräumt; davor Session 39: Wochenprüfung, YAML-Fehler bei Tickern wie ON behoben, Quelle Repräsentantenhaus umgesetzt)
+**Last updated:** 23 November 2026 (Session 41: Prognose-VM neu aufgebaut und an Claude übergeben, Siegel-Alarm; davor Session 40: Claude-Code-Einrichtung geprüft und aufgeräumt; davor Session 39: Wochenprüfung, YAML-Fehler bei Tickern wie ON behoben, Quelle Repräsentantenhaus umgesetzt)
 
 ---
 
@@ -589,3 +589,11 @@ Offen ist kein Reparatur-Skript. **Nicht über die API prüfbar:** ob nach dem 1
 - **Review:** drei Codex-Runden fanden sieben Umgehungen (Umleitung nach Heredoc-Start, Heredoc eines Folgebefehls, Grep-Globs wie `*.env` oder mit Verzeichnis-Präfix, `\$` in PowerShell, abschließende Punkte unter Windows, `{`/`@` vor dem Namen), alle behoben; Tests in `.claude/hooks/guard-env.test.mjs` (77 Fälle, `node .claude/hooks/guard-env.test.mjs`)
 - **INDEX aktualisiert** (Stand, Session-Verweis, Zeile `.claude/`); Regel für einen kurzen Statusblock im Agenten `doc-keeper` und im Skill `/deploy`
 - **Offen:** wie in Session 39 – House-Lauf weiter beobachten, nach 22.11. `form13f_collector`, 02.12. Monatsbericht und Forecast Readiness
+
+### Session 41 – 23. November 2026 – Log-Check, Prognose-VM neu aufgebaut, Siegel-Alarm
+- **Log-Check seit 13.11.:** Health ok, kein Neustart, kein Fehllauf außer Politiker 12.11. (einmaliger DNS-Fehler, Folgelauf holte alles nach). `form13f_collector` nach der Q3-Frist: 15.11. 3.188 Zeilen, 22.11. 29.921 gespeichert (15 von 20 Fonds, Stichtag 30.09.). `universe_validation` 15.11.: ROKU deaktiviert (Übernahme durch FOXA), KVUE bleibt bis `index_sync` 01.12.
+- **Fehler gefunden:** Die Prognose-VM war seit 17.11. 07:30 abgemeldet (OAuth-Erneuerung gescheitert, danach jeder Lauf Exit 10). Sitzungen 16.–19.11. ohne Prognose, Siegel verpasst – endgültig verloren; Kriterium blieb bei 20/300. `forecast_seal` hatte die Tage nur als `skipped` eingetragen
+- **VM neu aufgebaut** (Sebastian: alte löschen, neue erstellen, Claude ist Verwalter): Ubuntu 26.04.1 per Autoinstall (Seed-ISO auf dem Alpaca-Share), gleiche Ressourcen und MAC, virtiofs `alpacabroker`, Autostart. Konten ohne Passwort: `claudeadmin` (SSH-Schlüssel, `sudo` ohne Passwort) und `forecast` (Lauf, ohne `sudo`). `provision.sh` richtet Repo (Git-Bundle), Claude Code 2.1.330, Konfiguration und Timer ein. DHCP gab 192.168.1.251. Anmeldung jetzt per Jahrestoken (`claude setup-token` durch Sebastian, Datei 600). Codex fand zwei Fehler im Skript (Bundle auf sich selbst kopiert, Zweig beim Klonen), beide behoben
+- **Paket 20.11. gerettet:** Lauf 07:49–07:54, 34 Prognosen, 3,47 USD, Version unverändert (`swp-v2+claude-opus-5-5+pack2`, Skill `2881fd9`)
+- **Siegel-Alarm (`649ff82`):** fehlt beim letzten Siegel (09:25 New York) die Datei, ist der Lauf `failed` statt `skipped`. Tests 2350 ohne DB. Deploy `879dd06` 07:50–07:54: Health ok, Alembic `041`, 29 Jobs
+- **Offen:** Siegel heute 15:00 für das Paket 20.11.; erster regulärer VM-Lauf Di 24.11. 07:30; 01.12. `index_sync` und `feature_analysis`; 02.12. Monatsbericht und Forecast Readiness
