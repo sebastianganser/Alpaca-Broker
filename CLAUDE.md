@@ -167,7 +167,7 @@ The full catalog lives in [docs/INDEX.md](docs/INDEX.md). After every session up
 
 ### Unraid WebGUI scope
 
-In the WebGUI only the container `alpaca-broker`, its folders (`/mnt/user/appdata/alpaca-broker`, `/mnt/user/Workfiles/AlpacaBroker`) and its own User Scripts may be touched, plus – approved by Sebastian on 2026-10-18 – the one VM `forecast-vm` (create/configure/start/stop it in the VMS tab; Ubuntu Server for the headless forecast runs, `infra/forecast-vm/`). Never other VMs. Inside a VM Claude never creates users, enters passwords or logs in – Sebastian does the OS installation's user setup and the Claude CLI login. **Never** other containers (GynOrg! – this includes the PostgreSQL container), and never array, shares, users, network or security settings. Sebastian logs in himself; Claude never types credentials.
+In the WebGUI only the container `alpaca-broker`, its folders (`/mnt/user/appdata/alpaca-broker`, `/mnt/user/Workfiles/AlpacaBroker`) and its own User Scripts may be touched, plus the one VM `forecast-vm`, which Claude fully manages since 2026-11-23 (Sebastian handed it over: stop, delete, recreate, configure; admin account `claudeadmin` with SSH key and passwordless sudo, run user `forecast`; rebuild and setup in [infra/forecast-vm/README.md](infra/forecast-vm/README.md)). Never other VMs (Hashwatch, hermes). Claude never types passwords; the only step left to Sebastian is the Claude CLI login on the VM (`claude setup-token` with his account). **Never** other containers (GynOrg! – this includes the PostgreSQL container), and never array, shares, users, network or security settings. Sebastian logs in himself; Claude never types credentials.
 
 ### Responsibility
 

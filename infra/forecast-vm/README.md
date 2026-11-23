@@ -10,6 +10,29 @@ VM  07:30 Di–Sa:  run-forecast.sh ─▶ claude -p "/signal-warehouse-prognose
 Container forecast_seal  09:00 / 09:15 / 09:25 New York: SHA-256 von forecasts.yaml  ·  forecast_review 04:30: liest sie ein
 ```
 
+## Stand seit 23.11.2026: von Claude verwaltete VM
+
+Sebastian hat die VM am 23.11.2026 an Claude übergeben: neu aufgebaut, Claude verwaltet sie vollständig selbst (Betriebssystem, Updates, Timer, Fehlersuche). Die Abschnitte 1–8 unten beschreiben den früheren Handaufbau und bleiben als Referenz.
+
+| | |
+|---|---|
+| VM | `forecast-vm` in Unraid: 2 vCPU (cpu 7/15), 4 GB, 30 GB `/mnt/user/domains/forecast-vm/vdisk1.img`, MAC `52:54:00:84:63:44`, Adresse per DHCP **192.168.1.251** (die aktuelle Adresse zeigt die Unraid-VM-Liste dank Gast-Agent), Autostart an, virtiofs `/mnt/user/Workfiles/AlpacaBroker` → Tag `alpacabroker` → `/mnt/alpaca` |
+| Betriebssystem | Ubuntu Server 26.04.1, unbeaufsichtigt installiert aus `autoinstall/user-data` (Seed-ISO mit `autoinstall/mkseed.py`) |
+| Konto `claudeadmin` | Verwaltung durch Claude: nur SSH-Schlüssel (`~/.ssh/forecast_vm_ed25519` auf dem Dev-PC), **kein Passwort**, `sudo` ohne Passwort |
+| Konto `forecast` | führt die Prognose aus (Timer, Claude Code CLI); nur SSH-Schlüssel, kein Passwort, kein `sudo` |
+| Einrichtung | `provision.sh` (als `claudeadmin`: `sudo bash provision.sh <bundle>`): Pakete, Zeitzone, virtiofs, Linger, Repo aus Git-Bundle, Claude Code, `forecast.env`, `settings.json`, Timer |
+| Claude-Anmeldung | einmalig durch Sebastian: `claude setup-token` (sein Claude-Konto), Token allein in `/home/forecast/.config/forecast-vm/claude.token` (Modus 600). Gilt ein Jahr; danach dasselbe noch einmal |
+
+Verwaltung (Claude, vom Dev-PC):
+
+```
+ssh -i ~/.ssh/forecast_vm_ed25519 claudeadmin@192.168.1.251           # Verwaltung, sudo ohne Passwort
+ssh -i ~/.ssh/forecast_vm_ed25519 forecast@192.168.1.251 'tail -n 40 ~/alpaca/logs/run.log'
+git bundle create /tmp/alpaca.bundle main && scp … && sudo bash provision.sh /tmp/alpaca.bundle   # Repo aktualisieren
+```
+
+Neuaufbau: Seed-ISO bauen (`autoinstall/mkseed.py`), VM in Unraid mit den Werten oben anlegen (Ubuntu-ISO als Installations-CD, Seed-ISO als zweite vdisk, Pfad manuell), auf der Konsole `yes` bestätigen, nach dem Abschalten beide Medien entfernen, starten, `provision.sh` ausführen, Token von Sebastian.
+
 **Dateien in diesem Ordner**
 
 | Datei | Zweck |
@@ -21,6 +44,9 @@ Container forecast_seal  09:00 / 09:15 / 09:25 New York: SHA-256 von forecasts.y
 | `claude-settings.example.json` | Beispiel für `~/.claude/settings.json` (Berechtigungen) |
 | `systemd/*.service`, `systemd/*.timer` | Timer-Units (systemd `--user`) |
 | `crontab.example` | Alternative zu systemd |
+| `provision.sh` | Einrichtung nach der unbeaufsichtigten Installation (seit 23.11.2026) |
+| `autoinstall/user-data`, `autoinstall/meta-data`, `autoinstall/mkseed.py` | Vorlage der unbeaufsichtigten Ubuntu-Installation und Bau der Seed-ISO |
+| `setup-vm-root.sh` | frühere Einmal-Einrichtung durch Sebastian (Handaufbau, nicht mehr nötig) |
 
 Keine Zugangsdaten im Repository: SMB-Passwort in `/etc/forecast-vm/smb.cred`, Claude-Login in `~/.claude/`, optional ein Token in einer eigenen 600-Datei – nichts davon gehört in Git.
 

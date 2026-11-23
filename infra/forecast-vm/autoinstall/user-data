@@ -1,0 +1,46 @@
+#cloud-config
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: de
+  timezone: Europe/Berlin
+  storage:
+    layout:
+      name: direct
+  ssh:
+    install-server: true
+    allow-pw: false
+  packages:
+    - git
+    - rsync
+    - jq
+    - curl
+    - ca-certificates
+    - util-linux
+    - qemu-guest-agent
+  user-data:
+    hostname: forecast-vm
+    preserve_hostname: false
+    timezone: Europe/Berlin
+    users:
+      - name: forecast
+        gecos: Alpaca forecast runs
+        shell: /bin/bash
+        groups: [users]
+        lock_passwd: true
+        ssh_authorized_keys:
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAszZgGRpskbaUa4hzfzbRrUTzj8D+HljEyaRuFRs+BO claude-code@alpaca-broker forecast-vm
+      - name: claudeadmin
+        gecos: Claude Code maintenance
+        shell: /bin/bash
+        groups: [adm, sudo, users]
+        sudo: "ALL=(ALL) NOPASSWD:ALL"
+        lock_passwd: true
+        ssh_authorized_keys:
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAszZgGRpskbaUa4hzfzbRrUTzj8D+HljEyaRuFRs+BO claude-code@alpaca-broker forecast-vm
+  late-commands:
+    - mkdir -p /target/mnt/alpaca
+    - echo 'alpacabroker /mnt/alpaca virtiofs defaults,nofail 0 0' >> /target/etc/fstab
+    - mkdir -p /target/var/lib/systemd/linger && touch /target/var/lib/systemd/linger/forecast
+  shutdown: poweroff
